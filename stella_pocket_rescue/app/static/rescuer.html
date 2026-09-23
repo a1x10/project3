@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Rescue — спасатели</title>
+<style>
+  :root { --bg:#0f1115; --panel:#1a1d24; --line:#2c323d; --text:#eef0f4; --muted:#9aa3b2;
+          --red:#e5484d; --yellow:#f5b82e; --green:#30a46c; --unknown:#8b95a7; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  .pill { padding:2px 10px; border-radius:10px; font-weight:700; color:#111; }
+  .p-red { background:var(--red); color:#fff; } .p-yellow { background:var(--yellow); }
+  .p-green { background:var(--green); color:#fff; } .p-unknown { background:var(--unknown); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap:12px; padding:12px 16px; }
+  @media (max-width: 800px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; min-width:0; }
+  h2 { font-size:14px; color:var(--muted); margin:0 0 8px; text-transform:uppercase; letter-spacing:.04em; }
+  svg { width:100%; height:auto; background:#0b0d11; border-radius:8px; display:block; }
+  .card { border-left:5px solid var(--unknown); background:#20242c; border-radius:6px; padding:8px 10px;
+          margin-bottom:8px; cursor:pointer; }
+  .card.sel { outline:2px solid #93c5fd; }
+  .card.red { border-color:var(--red); } .card.yellow { border-color:var(--yellow); }
+  .card.green { border-color:var(--green); } .card.resolved { opacity:.45; }
+  .meta { color:var(--muted); font-size:13px; }
+  .tags span { display:inline-block; background:#343a46; border-radius:6px; padding:0 6px; margin:2px 4px 0 0; font-size:13px; }
+  #detail .msg { padding:4px 0; border-bottom:1px solid var(--line); white-space:pre-wrap; }
+  #detail .role { color:var(--muted); font-size:12px; margin-right:6px; }
+  button, input, select, textarea { font:inherit; }
+  button { background:#2f6fed; color:#fff; border:0; border-radius:8px; padding:6px 12px; cursor:pointer; }
+  input, textarea, select { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  .row { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .row > input, .row > textarea { flex:1; min-width:0; }
+  #login { max-width:320px; margin:15vh auto; padding:16px; }
+</style>
+</head>
+<body>
+<section id="login">
+  <h2>Вход для спасателей</h2>
+  <div class="row"><input id="pin" type="password" inputmode="numeric" placeholder="PIN"><button id="enter">Войти</button></div>
+  <p class="meta" id="loginErr"></p>
+</section>
+
+<div id="app" hidden>
+<header>
+  <h1>Stella Rescue</h1>
+  <span class="pill p-red" id="c-red">0</span>
+  <span class="pill p-yellow" id="c-yellow">0</span>
+  <span class="pill p-unknown" id="c-unknown">0</span>
+  <span class="pill p-green" id="c-green">0</span>
+  <span class="meta" id="llm"></span>
+  <form class="row" id="bcForm" style="margin:0 0 0 auto">
+    <input id="bcText" maxlength="500" placeholder="Объявление всем (пункт сбора, вода…)">
+    <button>📢</button>
+  </form>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Карта (центр — хаб)</h2>
+      <svg id="map" viewBox="0 0 400 300" role="img" aria-label="Карта пострадавших"></svg>
+      <p class="meta" id="mapNote"></p>
+    </section>
+    <section id="detail" style="margin-top:12px"><h2>Выберите вызов</h2></section>
+  </div>
+  <section><h2>Вызовы по приоритету</h2><div id="list"></div></section>
+</main>
+</div>
+
+<script>
+(function () {
+  var pin = '', selected = null, data = null;
+  var COLORS = { red:'#e5484d', yellow:'#f5b82e', green:'#30a46c', unknown:'#8b95a7' };
+  var LABEL = { red:'КРИТИЧНО', yellow:'СРОЧНО', green:'ЛЁГКИЙ', unknown:'НЕТ ДАННЫХ' };
+  var STATUS = { new:'новый', assigned:'группа выехала', resolved:'закрыт' };
+  var ROLE = { user:'Пострадавший', assistant:'Диспетчер', advice:'Первая помощь', rescuer:'Спасатель' };
+  try { pin = sessionStorage.getItem('stella_pin') || ''; } catch (e) {}
+
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    for (var k in attrs || {}) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function api(method, url, body) {
+    return fetch(url, { method: method, headers: { 'Content-Type':'application/json', 'X-Rescuer-Pin': pin },
+                        body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) { var err = new Error(j.error || r.status); err.status = r.status; throw err; } return j; }); });
+  }
+
+  function login() {
+    pin = document.getElementById('pin').value || pin;
+    api('GET', '/api/rescuer/incidents').then(function (d) {
+      try { sessionStorage.setItem('stella_pin', pin); } catch (e) {}
+      document.getElementById('login').hidden = true;
+      document.getElementById('app').hidden = false;
+      render(d); setInterval(refresh, 5000); health(); setInterval(health, 30000);
+    }).catch(function (e) { document.getElementById('loginErr').textContent = e.message; });
+  }
+  document.getElementById('enter').onclick = login;
+  document.getElementById('pin').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
+  if (pin) login();
+
+  function refresh() { api('GET', '/api/rescuer/incidents').then(render).catch(function () {}); if (selected && document.activeElement.id !== 'replyText') showDetail(selected); }
+  function health() {
+    fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
+      document.getElementById('llm').textContent = h.llm ? 'ИИ-диспетчер: работает' : 'ИИ-диспетчер: выкл (резервные ответы)';
+    });
+  }
+
+  function render(d) {
+    data = d;
+    ['red','yellow','unknown','green'].forEach(function (p) {
+      document.getElementById('c-' + p).textContent = LABEL[p] + ': ' + d.counts[p];
+    });
+    var list = document.getElementById('list');
+    list.textContent = '';
+    d.incidents.forEach(function (it) {
+      var c = el('div', { 'class': 'card ' + it.priority + (it.status === 'resolved' ? ' resolved' : '') + (it.id === selected ? ' sel' : '') });
+      c.appendChild(el('div', {}, '#' + it.id + ' · ' + LABEL[it.priority] + ' · ' + STATUS[it.status] + (it.panic ? ' · паника' : '')));
+      c.appendChild(el('div', { 'class': 'meta' },
+        (it.location_text || (it.lat != null ? it.lat.toFixed(5) + ', ' + it.lon.toFixed(5) : 'место неизвестно')) +
+        ' · людей: ' + (it.people != null ? it.people : '?') + ' · ждёт ' + it.waiting_min + ' мин'));
+      var tags = el('div', { 'class': 'tags' });
+      it.tags.forEach(function (t) { tags.appendChild(el('span', {}, t)); });
+      c.appendChild(tags);
+      c.onclick = function () { selected = it.id; showDetail(it.id); render(data); };
+      list.appendChild(c);
+    });
+    drawMap(d);
+  }
+
+  // Карта без интернета: локальная проекция в метрах вокруг хаба (или центра точек).
+  function drawMap(d) {
+    var svg = document.getElementById('map'), NS = 'http://www.w3.org/2000/svg';
+    svg.textContent = '';
+    var pts = d.incidents.filter(function (i) { return i.lat != null && i.status !== 'resolved'; });
+    var c = d.hub.lat != null ? d.hub : (pts.length ? { lat: avg(pts, 'lat'), lon: avg(pts, 'lon') } : null);
+    var W = 400, H = 300;
+    function add(tag, a) { var e = document.createElementNS(NS, tag); for (var k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; }
+    var noCoords = d.incidents.filter(function (i) { return i.lat == null && i.status !== 'resolved'; }).length;
+    document.getElementById('mapNote').textContent = noCoords
+      ? 'Без координат: ' + noCoords + ' (они в зоне Wi-Fi хаба, ≈50–100 м — см. описание места)' : '';
+    if (!c) { var t = add('text', { x: W/2, y: H/2, fill: '#9aa3b2', 'text-anchor': 'middle' }); t.textContent = 'Нет вызовов с координатами'; return; }
+    var m = pts.map(function (p) {
+      return { p: p, x: (p.lon - c.lon) * 111320 * Math.cos(c.lat * Math.PI / 180), y: (p.lat - c.lat) * 110540 };
+    });
+    var R = Math.max(100, Math.max.apply(null, m.map(function (q) { return Math.max(Math.abs(q.x), Math.abs(q.y)); }).concat([0])) * 1.15);
+    var s = (H / 2 - 12) / R;
+    [0.25, 0.5, 1].forEach(function (f) {
+      add('circle', { cx: W/2, cy: H/2, r: (H/2 - 12) * f, fill: 'none', stroke: '#2c323d' });
+      var t = add('text', { x: W/2 + 4, y: H/2 - (H/2 - 12) * f + 12, fill: '#5b6472', 'font-size': 10 });
+      t.textContent = Math.round(R * f) + ' м';
+    });
+    add('rect', { x: W/2 - 5, y: H/2 - 5, width: 10, height: 10, fill: '#93c5fd' });
+    m.sort(function (a, b) { return a.p.priority === 'red' ? 1 : -1; });   // красные рисуем сверху
+    m.forEach(function (q) {
+      var dot = add('circle', { cx: W/2 + q.x * s, cy: H/2 - q.y * s, r: q.p.id === selected ? 9 : 7,
+                                fill: COLORS[q.p.priority], stroke: '#fff', 'stroke-width': q.p.id === selected ? 2 : 0.5 });
+      dot.style.cursor = 'pointer';
+      dot.onclick = function () { selected = q.p.id; showDetail(q.p.id); render(data); };
+      var t = add('text', { x: W/2 + q.x * s + 9, y: H/2 - q.y * s + 4, fill: '#eef0f4', 'font-size': 11 });
+      t.textContent = '#' + q.p.id;
+    });
+  }
+  function avg(a, k) { return a.reduce(function (s, x) { return s + x[k]; }, 0) / a.length; }
+
+  function showDetail(id) {
+    api('GET', '/api/rescuer/incidents/' + id + '/messages').then(function (d) {
+      var box = document.getElementById('detail'), it = d.incident;
+      var draft = box.querySelector('#replyText'); draft = draft ? draft.value : '';
+      box.textContent = '';
+      box.appendChild(el('h2', {}, 'Вызов #' + it.id + ' — ' + LABEL[it.priority]));
+      var row = el('div', { 'class': 'row' });
+      ['new', 'assigned', 'resolved'].forEach(function (s) {
+        var b = el('button', {}, STATUS[s]);
+        if (it.status === s) b.style.background = '#30a46c';
+        b.onclick = function () { api('PATCH', '/api/rescuer/incidents/' + id, { status: s }).then(refresh); };
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+      d.messages.forEach(function (m) {
+        var div = el('div', { 'class': 'msg' });
+        div.appendChild(el('span', { 'class': 'role' }, ROLE[m.role] || m.role));
+        div.appendChild(document.createTextNode(m.text));
+        box.appendChild(div);
+      });
+      var f = el('form', { 'class': 'row' });
+      var input = el('input', { id: 'replyText', maxlength: 500, placeholder: 'Написать пострадавшему напрямую' });
+      input.value = draft;
+      f.appendChild(input); f.appendChild(el('button', {}, 'Отправить'));
+      f.onsubmit = function (e) {
+        e.preventDefault();
+        if (!input.value.trim()) return;
+        api('POST', '/api/rescuer/incidents/' + id + '/reply', { text: input.value }).then(function () { input.value = ''; showDetail(id); });
+      };
+      box.appendChild(f);
+    });
+  }
+
+  document.getElementById('bcForm').onsubmit = function (e) {
+    e.preventDefault();
+    var t = document.getElementById('bcText');
+    if (!t.value.trim()) return;
+    api('POST', '/api/rescuer/broadcast', { text: t.value }).then(function () { t.value = ''; alert('Объявление отправлено всем'); });
+  };
+})();
+</script>
+</body>
+</html>

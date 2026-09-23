@@ -1,0 +1,16 @@
+[Unit]
+Description=Stella Rescue: веб-портал и триаж (FastAPI)
+After=network.target
+
+[Service]
+User=stella
+WorkingDirectory=/opt/stella
+EnvironmentFile=/etc/stella/stella.env
+ExecStart=/opt/stella/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=2
+# Портал важнее модели: при нехватке ресурсов ядро приоритизирует его
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

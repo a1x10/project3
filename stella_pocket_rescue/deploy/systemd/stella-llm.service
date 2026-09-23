@@ -1,0 +1,16 @@
+[Unit]
+Description=Stella Rescue: локальная языковая модель (llama.cpp)
+After=network.target
+
+[Service]
+User=stella
+EnvironmentFile=/etc/stella/stella.env
+ExecStart=/usr/bin/taskset -c ${LLAMA_CPUS} /opt/stella/llama.cpp/build/bin/llama-server \
+    -m ${LLAMA_MODEL} --host 127.0.0.1 --port 8081 \
+    -c ${LLAMA_CTX} -t ${LLAMA_THREADS} --parallel 1
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
