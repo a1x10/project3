@@ -1,0 +1,13 @@
+[Unit]
+Description=Stella Rescue: адрес хаба и файрвол на wlan0
+Before=hostapd.service dnsmasq.service
+After=sys-subsystem-net-devices-wlan0.device
+Wants=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/stella/deploy/stella-net.sh
+
+[Install]
+WantedBy=multi-user.target
