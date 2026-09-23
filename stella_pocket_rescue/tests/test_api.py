@@ -30,7 +30,7 @@ def test_captive_portal_redirects_foreign_hosts(client):
 def test_portal_page_served(client):
     c, _ = client
     r = c.get("/", headers={"Host": "10.42.0.1"})
-    assert r.status_code == 200 and "SOS" in r.text
+    assert r.status_code == 200 and "экстренной" in r.text
 
 
 def test_chat_flow_and_triage(client):
@@ -91,6 +91,47 @@ def test_broadcast_visible_to_victims(client):
 def test_bad_session_rejected(client):
     c, _ = client
     assert c.post("/api/chat", json={"session_id": "../x", "text": "hi"}).status_code == 400
+
+
+def test_session_stores_device_info(client):
+    c, _ = client
+    sid = c.post("/api/session", json={"device": {
+        "ua": "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36",
+        "platform": "Linux armv8l", "lang": "ru-RU", "screen": "1080x2400",
+        "cores": 8, "memory_gb": 6, "battery": 0.42, "charging": False,
+        "net_type": "4g", "downlink": 5.5,
+    }}).json()["session_id"]
+    inc = c.get("/api/rescuer/incidents", headers={"X-Rescuer-Pin": "123456"}).json()["incidents"][0]
+    assert inc["device"] == "Samsung SM-G991B"
+    assert inc["battery"] == 0.42 and inc["charging"] is False
+    assert inc["device_info"]["cores"] == 8 and inc["device_info"]["tz"] is None
+
+
+def test_heartbeat_updates_battery_and_location(client):
+    c, _ = client
+    sid = c.post("/api/session", json={"device": {"ua": "iPhone"}}).json()["session_id"]
+    c.post(f"/api/heartbeat?session_id={sid}", json={"battery": 0.15, "charging": False,
+                                                     "lat": 43.24, "lon": 76.89, "accuracy": 8})
+    inc = c.get("/api/rescuer/incidents", headers={"X-Rescuer-Pin": "123456"}).json()["incidents"][0]
+    assert inc["device"] == "iPhone"
+    assert inc["battery"] == 0.15 and (inc["lat"], inc["lon"]) == (43.24, 76.89)
+    assert inc["online"] is True
+
+
+def test_connection_appears_before_any_message(client):
+    c, _ = client
+    c.post("/api/session", json={"device": {"ua": "Pixel 7"}})
+    data = c.get("/api/rescuer/incidents", headers={"X-Rescuer-Pin": "123456"}).json()
+    assert data["incidents"][0]["device"] == "Pixel 7"      # видно подключение до чата
+    assert data["incidents"][0]["priority"] == "unknown"
+    assert "server" in data and "connections" not in data
+
+
+def test_connections_endpoint_requires_pin(client):
+    c, _ = client
+    assert c.get("/api/rescuer/connections").status_code == 401
+    body = c.get("/api/rescuer/connections", headers={"X-Rescuer-Pin": "123456"}).json()
+    assert "connections" in body and body["hub"]["ssid"] == "SOS-STELLA-RESCUE"
 
 
 def test_llm_reply_used_when_available(client, monkeypatch):

@@ -18,7 +18,7 @@ esac
 
 echo "==> Пакеты"
 apt-get update
-apt-get install -y hostapd dnsmasq nginx iptables python3-venv python3-pip \
+apt-get install -y hostapd dnsmasq nginx iptables iw python3-venv python3-pip \
     git cmake build-essential curl util-linux
 
 echo "==> Пользователь и файлы"

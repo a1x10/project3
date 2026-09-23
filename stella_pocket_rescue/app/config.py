@@ -31,3 +31,15 @@ HUB_LON = _float("STELLA_HUB_LON", "")
 
 MAX_MESSAGE_LEN = 1000
 MIN_SECONDS_BETWEEN_MESSAGES = float(os.getenv("STELLA_MIN_INTERVAL", "1.5"))
+
+# --- сеть и определение близости по Wi-Fi ---
+SSID = os.getenv("STELLA_SSID", "SOS-STELLA-RESCUE")
+HUB_MODE = os.getenv("STELLA_HUB_MODE", "field")   # просто метка для панели
+WLAN_IFACE = os.getenv("STELLA_WLAN", "wlan0")
+DHCP_LEASES = os.getenv("STELLA_LEASES", "/var/lib/misc/stella.leases")
+# Модель затухания сигнала: d = 10 ^ ((TxRef - RSSI) / (10 * n))
+# TxRef — уровень сигнала (dBm) на расстоянии 1 м, n — коэффициент среды (в здании 2.7–4).
+RSSI_REF_DBM = float(os.getenv("STELLA_RSSI_REF", "-40"))
+RSSI_PATH_LOSS = float(os.getenv("STELLA_RSSI_N", "3.0"))
+# Сессия считается онлайн, если опрашивала сервер за последние N секунд
+ONLINE_WINDOW = float(os.getenv("STELLA_ONLINE_WINDOW", "20"))

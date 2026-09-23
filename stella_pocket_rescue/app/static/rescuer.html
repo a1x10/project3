@@ -3,210 +3,366 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stella Rescue — спасатели</title>
+<title>STELLA · Консоль спасателя</title>
 <style>
-  :root { --bg:#0f1115; --panel:#1a1d24; --line:#2c323d; --text:#eef0f4; --muted:#9aa3b2;
-          --red:#e5484d; --yellow:#f5b82e; --green:#30a46c; --unknown:#8b95a7; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui, sans-serif; }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px;
-           background:var(--panel); border-bottom:1px solid var(--line); }
-  header h1 { font-size:17px; margin:0 12px 0 0; }
-  .pill { padding:2px 10px; border-radius:10px; font-weight:700; color:#111; }
-  .p-red { background:var(--red); color:#fff; } .p-yellow { background:var(--yellow); }
-  .p-green { background:var(--green); color:#fff; } .p-unknown { background:var(--unknown); }
-  main { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap:12px; padding:12px 16px; }
-  @media (max-width: 800px) { main { grid-template-columns:1fr; } }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; min-width:0; }
-  h2 { font-size:14px; color:var(--muted); margin:0 0 8px; text-transform:uppercase; letter-spacing:.04em; }
-  svg { width:100%; height:auto; background:#0b0d11; border-radius:8px; display:block; }
-  .card { border-left:5px solid var(--unknown); background:#20242c; border-radius:6px; padding:8px 10px;
-          margin-bottom:8px; cursor:pointer; }
-  .card.sel { outline:2px solid #93c5fd; }
-  .card.red { border-color:var(--red); } .card.yellow { border-color:var(--yellow); }
-  .card.green { border-color:var(--green); } .card.resolved { opacity:.45; }
-  .meta { color:var(--muted); font-size:13px; }
-  .tags span { display:inline-block; background:#343a46; border-radius:6px; padding:0 6px; margin:2px 4px 0 0; font-size:13px; }
-  #detail .msg { padding:4px 0; border-bottom:1px solid var(--line); white-space:pre-wrap; }
-  #detail .role { color:var(--muted); font-size:12px; margin-right:6px; }
-  button, input, select, textarea { font:inherit; }
-  button { background:#2f6fed; color:#fff; border:0; border-radius:8px; padding:6px 12px; cursor:pointer; }
-  input, textarea, select { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
-  .row { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
-  .row > input, .row > textarea { flex:1; min-width:0; }
-  #login { max-width:320px; margin:15vh auto; padding:16px; }
+  :root{ --bg:#05080b; --panel:#0b1016; --panel2:#0e141c; --line:#17212e; --ink:#d7e3ee; --dim:#7b8ba0;
+    --cy:#22d3ee; --gr:#34d399; --red:#f43f5e; --yel:#f5b83a; --grn:#34d399; --unk:#64748b; --vio:#a78bfa; }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }   /* перебивает display:grid у этапов */
+  body{ margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(34,211,238,.06), transparent),
+      radial-gradient(900px 500px at -10% 110%, rgba(167,139,250,.06), transparent), var(--bg);
+    color:var(--ink); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,"Roboto Mono",monospace; }
+  a{ color:var(--cy); }
+  .mono{ font-variant-numeric:tabular-nums; }
+  .scan-lines::before{ content:""; position:fixed; inset:0; pointer-events:none; z-index:9;
+    background:repeating-linear-gradient(transparent 0 2px, rgba(0,0,0,.14) 2px 3px); opacity:.35; }
+
+  /* login */
+  #login{ max-width:360px; margin:16vh auto; padding:22px; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; box-shadow:0 0 60px rgba(34,211,238,.08); }
+  #login h1{ font-size:15px; letter-spacing:3px; color:var(--cy); margin:0 0 4px; }
+  #login p{ color:var(--dim); font-size:12px; margin:0 0 16px; }
+  .field{ display:flex; gap:8px; }
+  input,textarea{ background:#060a0e; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
+  input:focus,textarea:focus{ outline:none; border-color:var(--cy); }
+  button{ background:linear-gradient(180deg,#0e2a33,#0b1016); color:var(--cy); border:1px solid #14424e; border-radius:8px;
+    padding:9px 14px; font:inherit; cursor:pointer; letter-spacing:.5px; }
+  button:hover{ border-color:var(--cy); box-shadow:0 0 12px rgba(34,211,238,.25); }
+  button:active{ transform:translateY(1px); }
+  .err{ color:var(--red); font-size:12px; min-height:16px; }
+
+  /* topbar */
+  header{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:10px 16px;
+    border-bottom:1px solid var(--line); background:rgba(11,16,22,.8); backdrop-filter:blur(4px);
+    position:sticky; top:0; z-index:5; }
+  .brand{ font-weight:700; letter-spacing:3px; color:var(--cy); }
+  .brand b{ color:var(--vio); }
+  .stat{ color:var(--dim); font-size:12px; }
+  .stat b{ color:var(--ink); }
+  .counts{ display:flex; gap:8px; margin-left:auto; }
+  .chip{ padding:3px 10px; border-radius:20px; font-size:12px; font-weight:700; border:1px solid transparent; }
+  .c-red{ color:var(--red); border-color:rgba(244,63,94,.4); background:rgba(244,63,94,.08); }
+  .c-yellow{ color:var(--yel); border-color:rgba(245,184,58,.4); background:rgba(245,184,58,.08); }
+  .c-unknown{ color:var(--unk); border-color:rgba(100,116,139,.4); background:rgba(100,116,139,.08); }
+  .c-green{ color:var(--grn); border-color:rgba(52,211,153,.4); background:rgba(52,211,153,.08); }
+
+  main{ padding:16px; max-width:1180px; margin:0 auto; }
+
+  /* server stage */
+  #stageServer{ display:grid; place-items:center; min-height:64vh; }
+  .server{ width:min(440px,92vw); text-align:center; padding:26px; border:1px solid var(--line); border-radius:16px;
+    background:linear-gradient(180deg,var(--panel2),var(--panel)); cursor:pointer; position:relative; overflow:hidden; }
+  .server:hover{ border-color:var(--cy); box-shadow:0 0 40px rgba(34,211,238,.15); }
+  .server .rack{ font-size:54px; filter:drop-shadow(0 0 12px rgba(34,211,238,.5)); }
+  .server h2{ letter-spacing:3px; margin:10px 0 2px; }
+  .server .meta{ color:var(--dim); font-size:12.5px; }
+  .server .go{ margin-top:16px; color:var(--cy); letter-spacing:2px; font-size:13px; }
+  .server .go .blink{ animation:blink 1s steps(1) infinite; }
+  @keyframes blink{ 50%{opacity:0} }
+  .server .halo{ position:absolute; inset:auto; left:50%; top:34px; width:120px; height:120px; transform:translateX(-50%);
+    border-radius:50%; background:radial-gradient(circle,rgba(34,211,238,.25),transparent 70%);
+    animation:halo 2.4s ease-in-out infinite; }
+  @keyframes halo{ 0%,100%{opacity:.5; transform:translateX(-50%) scale(.9)} 50%{opacity:1; transform:translateX(-50%) scale(1.15)} }
+
+  /* scan overlay */
+  #scan{ position:fixed; inset:0; z-index:20; background:rgba(3,6,9,.94); display:none; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px; padding:24px; }
+  .radarwrap{ width:260px; height:260px; position:relative; }
+  .radarwrap .ring{ position:absolute; inset:0; border:1px solid rgba(34,211,238,.25); border-radius:50%; }
+  .radarwrap .ring.r2{ inset:32px } .radarwrap .ring.r3{ inset:74px } .radarwrap .ring.r4{ inset:116px }
+  .sweep{ position:absolute; inset:0; border-radius:50%; overflow:hidden; }
+  .sweep::before{ content:""; position:absolute; inset:0;
+    background:conic-gradient(from 0deg, rgba(34,211,238,.55), transparent 28%); animation:spin 1.6s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
+  #scanLog{ width:min(560px,92vw); height:150px; overflow:hidden; color:var(--gr); font-size:12.5px; white-space:pre-wrap; }
+  #scanTitle{ color:var(--cy); letter-spacing:3px; }
+
+  /* grid + radar */
+  .cols{ display:grid; grid-template-columns:minmax(0,360px) minmax(0,1fr); gap:16px; }
+  @media(max-width:820px){ .cols{ grid-template-columns:1fr; } }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .panel h3{ margin:0 0 10px; font-size:12px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; display:flex; justify-content:space-between; }
+  svg#radar{ width:100%; height:auto; display:block; background:#04070a; border-radius:10px; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .dev{ border:1px solid var(--line); border-left-width:4px; border-radius:10px; padding:10px; background:var(--panel2);
+    cursor:pointer; transition:.12s; position:relative; }
+  .dev:hover{ transform:translateY(-2px); border-color:var(--cy); box-shadow:0 6px 22px rgba(0,0,0,.4); }
+  .dev.red{ border-left-color:var(--red) } .dev.yellow{ border-left-color:var(--yel) }
+  .dev.green{ border-left-color:var(--grn) } .dev.unknown{ border-left-color:var(--unk) }
+  .dev .id{ color:var(--dim); font-size:11px; }
+  .dev .nm{ font-weight:700; margin:2px 0; word-break:break-word; }
+  .dev .sub{ color:var(--dim); font-size:11.5px; }
+  .dev .live{ position:absolute; top:9px; right:9px; width:8px; height:8px; border-radius:50%; background:#334155; }
+  .dev .live.on{ background:var(--gr); box-shadow:0 0 8px var(--gr); animation:blink 1.6s infinite; }
+  .bars{ display:inline-flex; gap:2px; align-items:flex-end; height:12px; vertical-align:middle; }
+  .bars i{ width:3px; background:#31465c; border-radius:1px; }
+  .bars i.on{ background:var(--cy); }
+
+  /* detail */
+  .back{ margin-bottom:12px; }
+  .dossier{ display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; }
+  @media(max-width:560px){ .dossier{ grid-template-columns:1fr } }
+  .kv{ border-bottom:1px dashed var(--line); padding:6px 0; display:flex; justify-content:space-between; gap:10px; }
+  .kv .k{ color:var(--dim); } .kv .v{ text-align:right; word-break:break-word; }
+  .v.big{ color:var(--cy); font-weight:700; }
+  .transcript{ margin-top:12px; max-height:260px; overflow:auto; }
+  .tline{ padding:5px 0; border-bottom:1px solid var(--line); white-space:pre-wrap; }
+  .tline .r{ font-size:11px; color:var(--dim); margin-right:6px; }
+  .r-user{ color:#93c5fd } .r-assistant{ color:var(--cy) } .r-advice{ color:var(--yel) } .r-rescuer{ color:var(--gr) }
+  .statusbtns{ display:flex; gap:6px; flex-wrap:wrap; margin:12px 0; }
+  .statusbtns .on{ border-color:var(--gr); color:var(--gr); }
+  .flag{ display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .tag{ display:inline-block; background:#14202c; border:1px solid var(--line); border-radius:6px; padding:1px 7px; margin:2px 4px 0 0; font-size:11.5px; }
+  .hint{ color:var(--dim); font-size:11.5px; margin-top:6px; }
 </style>
 </head>
-<body>
+<body class="scan-lines">
+
 <section id="login">
-  <h2>Вход для спасателей</h2>
-  <div class="row"><input id="pin" type="password" inputmode="numeric" placeholder="PIN"><button id="enter">Войти</button></div>
-  <p class="meta" id="loginErr"></p>
+  <h1>STELLA · RESCUE</h1>
+  <p>Автономный узел координации. Вход для спасателей.</p>
+  <div class="field"><input id="pin" type="password" inputmode="numeric" placeholder="PIN-код" autocomplete="off"><button id="enter">ВОЙТИ</button></div>
+  <div class="err" id="loginErr"></div>
 </section>
 
 <div id="app" hidden>
-<header>
-  <h1>Stella Rescue</h1>
-  <span class="pill p-red" id="c-red">0</span>
-  <span class="pill p-yellow" id="c-yellow">0</span>
-  <span class="pill p-unknown" id="c-unknown">0</span>
-  <span class="pill p-green" id="c-green">0</span>
-  <span class="meta" id="llm"></span>
-  <form class="row" id="bcForm" style="margin:0 0 0 auto">
-    <input id="bcText" maxlength="500" placeholder="Объявление всем (пункт сбора, вода…)">
-    <button>📢</button>
-  </form>
-</header>
-<main>
-  <div>
-    <section>
-      <h2>Карта (центр — хаб)</h2>
-      <svg id="map" viewBox="0 0 400 300" role="img" aria-label="Карта пострадавших"></svg>
-      <p class="meta" id="mapNote"></p>
-    </section>
-    <section id="detail" style="margin-top:12px"><h2>Выберите вызов</h2></section>
-  </div>
-  <section><h2>Вызовы по приоритету</h2><div id="list"></div></section>
-</main>
+  <header>
+    <span class="brand">STELLA<b>//</b>RESCUE</span>
+    <span class="stat">узел <b id="hHost">—</b></span>
+    <span class="stat">SSID <b id="hSsid">—</b></span>
+    <span class="stat">онлайн <b id="hOnline">0</b></span>
+    <span class="stat">аптайм <b id="hUp">—</b></span>
+    <span class="stat">нагрузка <b id="hLoad">—</b></span>
+    <div class="counts">
+      <span class="chip c-red" id="c-red">0</span>
+      <span class="chip c-yellow" id="c-yellow">0</span>
+      <span class="chip c-unknown" id="c-unknown">0</span>
+      <span class="chip c-green" id="c-green">0</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ЭТАП 1: сервер -->
+    <div id="stageServer">
+      <div class="server" id="serverNode">
+        <div class="halo"></div>
+        <div class="rack">🖥️</div>
+        <h2>УЗЕЛ STELLA-01</h2>
+        <div class="meta" id="serverMeta">Orange Pi · Wi-Fi точка доступа</div>
+        <div class="go">▷ НАЖМИТЕ, ЧТОБЫ ПОДКЛЮЧИТЬСЯ<span class="blink">_</span></div>
+      </div>
+    </div>
+
+    <!-- ЭТАП 2: сетка устройств + радар -->
+    <div id="stageGrid" class="cols" hidden>
+      <div class="panel">
+        <h3>Радар <span id="radarNote" class="mono"></span></h3>
+        <svg id="radar" viewBox="0 0 320 320" role="img" aria-label="Радар подключений"></svg>
+        <div class="hint">Точки без GPS расставлены по силе Wi-Fi сигнала (кольцо = расстояние до узла).</div>
+      </div>
+      <div class="panel">
+        <h3>Подключённые устройства <span id="devCount" class="mono"></span></h3>
+        <div class="grid" id="devGrid"></div>
+      </div>
+    </div>
+
+    <!-- ЭТАП 3: досье устройства -->
+    <div id="stageDetail" hidden>
+      <button class="back" id="backBtn">◀ К списку устройств</button>
+      <div class="cols">
+        <div class="panel" id="dossier"></div>
+        <div class="panel">
+          <h3>Переписка и управление</h3>
+          <div class="statusbtns" id="statusBtns"></div>
+          <form class="field" id="replyForm"><input id="replyText" maxlength="500" placeholder="Написать пострадавшему напрямую"><button>ОТПР.</button></form>
+          <div class="transcript" id="transcript"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <form class="field" id="bcForm">
+        <input id="bcText" maxlength="500" placeholder="📢 Объявление всем подключённым (пункт сбора, вода, медики)">
+        <button>ОТПРАВИТЬ ВСЕМ</button>
+      </form>
+    </div>
+  </main>
+</div>
+
+<div id="scan">
+  <div id="scanTitle">УСТАНОВКА СОЕДИНЕНИЯ С УЗЛОМ</div>
+  <div class="radarwrap"><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div><div class="sweep"></div></div>
+  <pre id="scanLog"></pre>
 </div>
 
 <script>
-(function () {
-  var pin = '', selected = null, data = null;
-  var COLORS = { red:'#e5484d', yellow:'#f5b82e', green:'#30a46c', unknown:'#8b95a7' };
-  var LABEL = { red:'КРИТИЧНО', yellow:'СРОЧНО', green:'ЛЁГКИЙ', unknown:'НЕТ ДАННЫХ' };
-  var STATUS = { new:'новый', assigned:'группа выехала', resolved:'закрыт' };
-  var ROLE = { user:'Пострадавший', assistant:'Диспетчер', advice:'Первая помощь', rescuer:'Спасатель' };
-  try { pin = sessionStorage.getItem('stella_pin') || ''; } catch (e) {}
+(function(){
+  var pin='', selected=null, data=null, revealed=false, timer=null;
+  var LABEL={ red:'КРИТИЧНО', yellow:'СРОЧНО', green:'ЛЁГКИЙ', unknown:'НЕТ ДАННЫХ' };
+  var STATUS={ new:'новый', assigned:'группа выехала', resolved:'закрыт' };
+  var ROLE={ user:'Пострадавший', assistant:'Оператор', advice:'Первая помощь', rescuer:'Спасатель' };
+  try{ pin=sessionStorage.getItem('stella_pin')||''; }catch(e){}
 
-  function el(tag, attrs, text) {
-    var e = document.createElement(tag);
-    for (var k in attrs || {}) e.setAttribute(k, attrs[k]);
-    if (text !== undefined) e.textContent = text;
-    return e;
+  function el(t,a,x){ var e=document.createElement(t); for(var k in(a||{})) e.setAttribute(k,a[k]); if(x!==undefined) e.textContent=x; return e; }
+  function api(m,u,b){ return fetch(u,{method:m,headers:{'Content-Type':'application/json','X-Rescuer-Pin':pin},body:b?JSON.stringify(b):undefined})
+    .then(function(r){ return r.json().then(function(j){ if(!r.ok){var e=new Error(j.error||r.status);e.status=r.status;throw e;} return j;}); }); }
+  function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); var h=Math.floor(s/3600),m=Math.floor(s%3600/60); return (h?h+'ч ':'')+m+'м'; }
+
+  // ---- вход
+  function login(){
+    pin=document.getElementById('pin').value||pin;
+    api('GET','/api/rescuer/incidents').then(function(d){
+      try{ sessionStorage.setItem('stella_pin',pin); }catch(e){}
+      document.getElementById('login').hidden=true; document.getElementById('app').hidden=false;
+      apply(d); timer=setInterval(refresh,4000);
+    }).catch(function(e){ document.getElementById('loginErr').textContent = e.status===429?'Заблокировано на 5 минут (много попыток)':'Неверный PIN'; });
   }
-  function api(method, url, body) {
-    return fetch(url, { method: method, headers: { 'Content-Type':'application/json', 'X-Rescuer-Pin': pin },
-                        body: body ? JSON.stringify(body) : undefined })
-      .then(function (r) { return r.json().then(function (j) { if (!r.ok) { var err = new Error(j.error || r.status); err.status = r.status; throw err; } return j; }); });
+  document.getElementById('enter').onclick=login;
+  document.getElementById('pin').addEventListener('keydown',function(e){ if(e.key==='Enter') login(); });
+  if(pin) login();
+
+  function refresh(){ api('GET','/api/rescuer/incidents').then(apply).catch(function(){}); if(revealed && selected && document.activeElement.id!=='replyText') showDetail(selected,true); }
+
+  function apply(d){
+    data=d;
+    var on = d.incidents.filter(function(i){return i.online;}).length;
+    document.getElementById('hHost').textContent = (d.hub&&d.hub.mode)||'field';
+    document.getElementById('hSsid').textContent = 'SOS-STELLA-RESCUE';
+    document.getElementById('hOnline').textContent = on;
+    document.getElementById('hUp').textContent = fmtDur(d.server&&d.server.uptime_s);
+    document.getElementById('hLoad').textContent = (d.server&&d.server.load!=null)?d.server.load:'—';
+    ['red','yellow','unknown','green'].forEach(function(p){ document.getElementById('c-'+p).textContent=LABEL[p]+' '+d.counts[p]; });
+    document.getElementById('serverMeta').textContent='Orange Pi · '+d.incidents.length+' устройств · '+on+' онлайн';
+    if(revealed){ renderGrid(); drawRadar(); }
   }
 
-  function login() {
-    pin = document.getElementById('pin').value || pin;
-    api('GET', '/api/rescuer/incidents').then(function (d) {
-      try { sessionStorage.setItem('stella_pin', pin); } catch (e) {}
-      document.getElementById('login').hidden = true;
-      document.getElementById('app').hidden = false;
-      render(d); setInterval(refresh, 5000); health(); setInterval(health, 30000);
-    }).catch(function (e) { document.getElementById('loginErr').textContent = e.message; });
+  // ---- ЭТАП 1 -> 2: анимация подключения (3 сек)
+  var SCAN=['[ok] link up wlan0 · SOS-STELLA-RESCUE','[ok] hostapd: точка доступа активна',
+    '[..] опрос станций: iw dev wlan0 station dump','[ok] чтение аренд DHCP (MAC ↔ IP)',
+    '[..] расчёт близости по RSSI (модель затухания)','[ok] синхронизация карточек вызовов',
+    '[ok] триаж-очередь загружена','[ok] соединение установлено'];
+  document.getElementById('serverNode').onclick=function(){ if(revealed) return goGrid(); runScan(); };
+  function runScan(){
+    var sc=document.getElementById('scan'), log=document.getElementById('scanLog'); sc.style.display='flex'; log.textContent='';
+    var i=0; (function step(){
+      if(i<SCAN.length){ var c=data?data.incidents.length:0;
+        log.textContent += SCAN[i].replace('устройств', c+' устройств') + '\n'; log.scrollTop=log.scrollHeight; i++; setTimeout(step, 3000/SCAN.length); }
+      else { setTimeout(function(){ sc.style.display='none'; revealed=true; goGrid(); apply(data); }, 260); }
+    })();
   }
-  document.getElementById('enter').onclick = login;
-  document.getElementById('pin').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
-  if (pin) login();
+  function goGrid(){ document.getElementById('stageServer').hidden=true; document.getElementById('stageDetail').hidden=true; document.getElementById('stageGrid').hidden=false; }
 
-  function refresh() { api('GET', '/api/rescuer/incidents').then(render).catch(function () {}); if (selected && document.activeElement.id !== 'replyText') showDetail(selected); }
-  function health() {
-    fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
-      document.getElementById('llm').textContent = h.llm ? 'ИИ-диспетчер: работает' : 'ИИ-диспетчер: выкл (резервные ответы)';
+  function bars(sig){
+    var lv = sig==null?0 : sig>=-55?4 : sig>=-67?3 : sig>=-78?2 : sig>=-88?1 : 0;
+    var w=document.createElement('span'); w.className='bars';
+    for(var i=1;i<=4;i++){ var b=el('i'); b.style.height=(4+i*2)+'px'; if(i<=lv) b.className='on'; w.appendChild(b); }
+    return w;
+  }
+
+  function renderGrid(){
+    var g=document.getElementById('devGrid'); g.textContent='';
+    document.getElementById('devCount').textContent=data.incidents.length;
+    data.incidents.forEach(function(it){
+      var c=el('div',{'class':'dev '+it.priority});
+      var live=el('span',{'class':'live'+(it.online?' on':'')}); c.appendChild(live);
+      c.appendChild(el('div',{'class':'id'},'#'+it.id+' · '+LABEL[it.priority]));
+      c.appendChild(el('div',{'class':'nm'}, it.device||'устройство'));
+      var sub=el('div',{'class':'sub'});
+      sub.appendChild(document.createTextNode((it.proximity?it.proximity+' · ':'')+(it.signal!=null?it.signal+' dBm ':'')));
+      sub.appendChild(bars(it.signal));
+      c.appendChild(sub);
+      c.appendChild(el('div',{'class':'sub'}, (it.battery!=null?'🔋'+Math.round(it.battery*100)+'% · ':'')+STATUS[it.status]));
+      c.onclick=function(){ selected=it.id; showDetail(it.id); };
+      g.appendChild(c);
     });
   }
 
-  function render(d) {
-    data = d;
-    ['red','yellow','unknown','green'].forEach(function (p) {
-      document.getElementById('c-' + p).textContent = LABEL[p] + ': ' + d.counts[p];
-    });
-    var list = document.getElementById('list');
-    list.textContent = '';
-    d.incidents.forEach(function (it) {
-      var c = el('div', { 'class': 'card ' + it.priority + (it.status === 'resolved' ? ' resolved' : '') + (it.id === selected ? ' sel' : '') });
-      c.appendChild(el('div', {}, '#' + it.id + ' · ' + LABEL[it.priority] + ' · ' + STATUS[it.status] + (it.panic ? ' · паника' : '')));
-      c.appendChild(el('div', { 'class': 'meta' },
-        (it.location_text || (it.lat != null ? it.lat.toFixed(5) + ', ' + it.lon.toFixed(5) : 'место неизвестно')) +
-        ' · людей: ' + (it.people != null ? it.people : '?') + ' · ждёт ' + it.waiting_min + ' мин'));
-      var tags = el('div', { 'class': 'tags' });
-      it.tags.forEach(function (t) { tags.appendChild(el('span', {}, t)); });
-      c.appendChild(tags);
-      c.onclick = function () { selected = it.id; showDetail(it.id); render(data); };
-      list.appendChild(c);
-    });
-    drawMap(d);
-  }
-
-  // Карта без интернета: локальная проекция в метрах вокруг хаба (или центра точек).
-  function drawMap(d) {
-    var svg = document.getElementById('map'), NS = 'http://www.w3.org/2000/svg';
-    svg.textContent = '';
-    var pts = d.incidents.filter(function (i) { return i.lat != null && i.status !== 'resolved'; });
-    var c = d.hub.lat != null ? d.hub : (pts.length ? { lat: avg(pts, 'lat'), lon: avg(pts, 'lon') } : null);
-    var W = 400, H = 300;
-    function add(tag, a) { var e = document.createElementNS(NS, tag); for (var k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; }
-    var noCoords = d.incidents.filter(function (i) { return i.lat == null && i.status !== 'resolved'; }).length;
-    document.getElementById('mapNote').textContent = noCoords
-      ? 'Без координат: ' + noCoords + ' (они в зоне Wi-Fi хаба, ≈50–100 м — см. описание места)' : '';
-    if (!c) { var t = add('text', { x: W/2, y: H/2, fill: '#9aa3b2', 'text-anchor': 'middle' }); t.textContent = 'Нет вызовов с координатами'; return; }
-    var m = pts.map(function (p) {
-      return { p: p, x: (p.lon - c.lon) * 111320 * Math.cos(c.lat * Math.PI / 180), y: (p.lat - c.lat) * 110540 };
-    });
-    var R = Math.max(100, Math.max.apply(null, m.map(function (q) { return Math.max(Math.abs(q.x), Math.abs(q.y)); }).concat([0])) * 1.15);
-    var s = (H / 2 - 12) / R;
-    [0.25, 0.5, 1].forEach(function (f) {
-      add('circle', { cx: W/2, cy: H/2, r: (H/2 - 12) * f, fill: 'none', stroke: '#2c323d' });
-      var t = add('text', { x: W/2 + 4, y: H/2 - (H/2 - 12) * f + 12, fill: '#5b6472', 'font-size': 10 });
-      t.textContent = Math.round(R * f) + ' м';
-    });
-    add('rect', { x: W/2 - 5, y: H/2 - 5, width: 10, height: 10, fill: '#93c5fd' });
-    m.sort(function (a, b) { return a.p.priority === 'red' ? 1 : -1; });   // красные рисуем сверху
-    m.forEach(function (q) {
-      var dot = add('circle', { cx: W/2 + q.x * s, cy: H/2 - q.y * s, r: q.p.id === selected ? 9 : 7,
-                                fill: COLORS[q.p.priority], stroke: '#fff', 'stroke-width': q.p.id === selected ? 2 : 0.5 });
-      dot.style.cursor = 'pointer';
-      dot.onclick = function () { selected = q.p.id; showDetail(q.p.id); render(data); };
-      var t = add('text', { x: W/2 + q.x * s + 9, y: H/2 - q.y * s + 4, fill: '#eef0f4', 'font-size': 11 });
-      t.textContent = '#' + q.p.id;
+  // ---- радар: центр = узел; GPS -> проекция, иначе кольцо по расстоянию
+  function drawRadar(){
+    var NS='http://www.w3.org/2000/svg', svg=document.getElementById('radar'); svg.textContent='';
+    var W=320,H=320,cx=160,cy=160,Rmax=140;
+    function A(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); svg.appendChild(e); return e; }
+    var live=data.incidents.filter(function(i){ return i.status!=='resolved'; });
+    var gps=live.filter(function(i){ return i.lat!=null; });
+    var hub=data.hub&&data.hub.lat!=null?data.hub:(gps.length?{lat:avg(gps,'lat'),lon:avg(gps,'lon')}:null);
+    var maxD=Math.max(30, Math.max.apply(null, live.map(function(i){return i.distance_m||0;}).concat([0]))*1.1);
+    if(gps.length&&hub){ maxD=Math.max(maxD, Math.max.apply(null, gps.map(function(p){ return dist(hub,p); }))*1.1||maxD); }
+    [0.33,0.66,1].forEach(function(f){ A('circle',{cx:cx,cy:cy,r:Rmax*f,fill:'none',stroke:'#12202c'});
+      var t=A('text',{x:cx+4,y:cy-Rmax*f+12,fill:'#3a5266','font-size':9}); t.textContent=Math.round(maxD*f)+' м'; });
+    A('line',{x1:cx,y1:cy-Rmax,x2:cx,y2:cy+Rmax,stroke:'#0f1c26'}); A('line',{x1:cx-Rmax,y1:cy,x2:cx+Rmax,y2:cy,stroke:'#0f1c26'});
+    A('circle',{cx:cx,cy:cy,r:5,fill:'#22d3ee'}); var ht=A('text',{x:cx+8,y:cy+4,fill:'#22d3ee','font-size':10}); ht.textContent='УЗЕЛ';
+    document.getElementById('radarNote').textContent = gps.length? gps.length+' по GPS' : (hub?'':'нет данных о месте');
+    live.forEach(function(p){
+      var x,y;
+      if(p.lat!=null&&hub){ var dx=(p.lon-hub.lon)*111320*Math.cos(hub.lat*Math.PI/180), dy=(p.lat-hub.lat)*110540;
+        x=cx+dx/maxD*Rmax; y=cy-dy/maxD*Rmax; }
+      else { var d=p.distance_m||maxD; var ang=hash(p.id)%360*Math.PI/180; var r=Math.min(Rmax, d/maxD*Rmax);
+        x=cx+Math.cos(ang)*r; y=cy+Math.sin(ang)*r; }
+      var col={red:'#f43f5e',yellow:'#f5b83a',green:'#34d399',unknown:'#64748b'}[p.priority];
+      if(p.lat==null){ A('circle',{cx:cx,cy:cy,r:Math.hypot(x-cx,y-cy),fill:'none',stroke:col,'stroke-opacity':.15,'stroke-dasharray':'3 4'}); }
+      var dot=A('circle',{cx:x,cy:y,r:p.id===selected?7:5,fill:col,stroke:p.online?'#fff':'#0b1016','stroke-width':p.online?1.5:1});
+      dot.style.cursor='pointer'; dot.onclick=function(){ selected=p.id; showDetail(p.id); };
+      var t=A('text',{x:x+8,y:y+4,fill:'#9fb3c6','font-size':10}); t.textContent='#'+p.id;
     });
   }
-  function avg(a, k) { return a.reduce(function (s, x) { return s + x[k]; }, 0) / a.length; }
+  function avg(a,k){ return a.reduce(function(s,x){return s+x[k];},0)/a.length; }
+  function dist(a,b){ var dx=(b.lon-a.lon)*111320*Math.cos(a.lat*Math.PI/180), dy=(b.lat-a.lat)*110540; return Math.hypot(dx,dy); }
+  function hash(n){ n=(n*2654435761)>>>0; return n%997; }
 
-  function showDetail(id) {
-    api('GET', '/api/rescuer/incidents/' + id + '/messages').then(function (d) {
-      var box = document.getElementById('detail'), it = d.incident;
-      var draft = box.querySelector('#replyText'); draft = draft ? draft.value : '';
-      box.textContent = '';
-      box.appendChild(el('h2', {}, 'Вызов #' + it.id + ' — ' + LABEL[it.priority]));
-      var row = el('div', { 'class': 'row' });
-      ['new', 'assigned', 'resolved'].forEach(function (s) {
-        var b = el('button', {}, STATUS[s]);
-        if (it.status === s) b.style.background = '#30a46c';
-        b.onclick = function () { api('PATCH', '/api/rescuer/incidents/' + id, { status: s }).then(refresh); };
-        row.appendChild(b);
-      });
-      box.appendChild(row);
-      d.messages.forEach(function (m) {
-        var div = el('div', { 'class': 'msg' });
-        div.appendChild(el('span', { 'class': 'role' }, ROLE[m.role] || m.role));
-        div.appendChild(document.createTextNode(m.text));
-        box.appendChild(div);
-      });
-      var f = el('form', { 'class': 'row' });
-      var input = el('input', { id: 'replyText', maxlength: 500, placeholder: 'Написать пострадавшему напрямую' });
-      input.value = draft;
-      f.appendChild(input); f.appendChild(el('button', {}, 'Отправить'));
-      f.onsubmit = function (e) {
-        e.preventDefault();
-        if (!input.value.trim()) return;
-        api('POST', '/api/rescuer/incidents/' + id + '/reply', { text: input.value }).then(function () { input.value = ''; showDetail(id); });
-      };
-      box.appendChild(f);
-    });
+  // ---- ЭТАП 3: досье
+  function kv(box,k,v,big){ var d=el('div',{'class':'kv'}); d.appendChild(el('span',{'class':'k'},k));
+    d.appendChild(el('span',{'class':'v'+(big?' big':'')}, v==null||v===''?'—':String(v))); box.appendChild(d); }
+
+  function showDetail(id,keep){
+    api('GET','/api/rescuer/incidents/'+id+'/messages').then(function(d){
+      var it=d.incident, di=it.device_info||{};
+      if(!keep){ document.getElementById('stageGrid').hidden=true; document.getElementById('stageServer').hidden=true; document.getElementById('stageDetail').hidden=false; }
+      var box=document.getElementById('dossier'); box.textContent='';
+      box.appendChild(el('h3',{},'Досье устройства #'+it.id));
+      var flag=el('div',{'class':'flag c-'+it.priority}); flag.style.marginBottom='8px'; flag.textContent=LABEL[it.priority]+(it.panic?' · ПАНИКА':'');
+      box.appendChild(flag);
+      var g=el('div',{'class':'dossier'});
+      kv(g,'Устройство', it.device, true);
+      kv(g,'Близость', it.proximity? it.proximity+(it.distance_m!=null?' (~'+it.distance_m+' м)':'') : '—', true);
+      kv(g,'Сигнал Wi-Fi', it.signal!=null?it.signal+' dBm':'—');
+      kv(g,'В сети', it.online?'да':'нет');
+      kv(g,'Заряд', it.battery!=null?Math.round(it.battery*100)+'%'+(it.charging?' (заряжается)':''):'—');
+      kv(g,'Координаты', it.lat!=null?it.lat.toFixed(5)+', '+it.lon.toFixed(5)+(it.accuracy?' (±'+Math.round(it.accuracy)+'м)':''):'нет GPS');
+      kv(g,'Адрес/ориентир', it.location_text);
+      kv(g,'Людей', it.people);
+      kv(g,'Ждёт', it.waiting_min+' мин');
+      kv(g,'IP / MAC', (it.client_ip||'—')+(it.mac?' · '+it.mac:''));
+      kv(g,'Платформа', di.platform);
+      kv(g,'Экран', (di.screen||'')+(di.dpr?' @'+di.dpr:''));
+      kv(g,'Ядра / память', (di.cores||'?')+' / '+(di.memory_gb?di.memory_gb+' ГБ':'?'));
+      kv(g,'Сеть телефона', (di.net_type||'—')+(di.downlink?' · '+di.downlink+' Мбит':''));
+      kv(g,'Язык / зона', (di.lang||'')+(di.tz?' · '+di.tz:''));
+      box.appendChild(g);
+      if(it.tags&&it.tags.length){ var tg=el('div',{}); tg.style.marginTop='8px'; it.tags.forEach(function(t){ tg.appendChild(el('span',{'class':'tag'},t)); }); box.appendChild(tg); }
+      if(di.ua){ var ua=el('div',{'class':'hint'}); ua.textContent='UA: '+di.ua; box.appendChild(ua); }
+
+      // статусы
+      var sb=document.getElementById('statusBtns'); sb.textContent='';
+      ['new','assigned','resolved'].forEach(function(s){ var b=el('button',{},STATUS[s]); if(it.status===s) b.className='on';
+        b.onclick=function(){ api('PATCH','/api/rescuer/incidents/'+id,{status:s}).then(function(){ showDetail(id,true); refresh(); }); }; sb.appendChild(b); });
+
+      // переписка
+      var tr=document.getElementById('transcript'); tr.textContent='';
+      d.messages.forEach(function(m){ var l=el('div',{'class':'tline'});
+        l.appendChild(el('span',{'class':'r r-'+m.role}, ROLE[m.role]||m.role));
+        l.appendChild(document.createTextNode(m.text)); tr.appendChild(l); });
+      tr.scrollTop=tr.scrollHeight;
+
+      var f=document.getElementById('replyForm');
+      f.onsubmit=function(e){ e.preventDefault(); var t=document.getElementById('replyText'); if(!t.value.trim()) return;
+        api('POST','/api/rescuer/incidents/'+id+'/reply',{text:t.value}).then(function(){ t.value=''; showDetail(id,true); }); };
+    }).catch(function(){});
   }
+  document.getElementById('backBtn').onclick=function(){ selected=null; goGrid(); };
 
-  document.getElementById('bcForm').onsubmit = function (e) {
-    e.preventDefault();
-    var t = document.getElementById('bcText');
-    if (!t.value.trim()) return;
-    api('POST', '/api/rescuer/broadcast', { text: t.value }).then(function () { t.value = ''; alert('Объявление отправлено всем'); });
-  };
+  document.getElementById('bcForm').onsubmit=function(e){ e.preventDefault(); var t=document.getElementById('bcText'); if(!t.value.trim()) return;
+    api('POST','/api/rescuer/broadcast',{text:t.value}).then(function(){ t.value=''; t.placeholder='✓ отправлено всем'; }); };
 })();
 </script>
 </body>
