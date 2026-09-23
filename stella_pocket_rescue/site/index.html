@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>Stella Pocket Rescue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#080b11; --bg2:#0c1119; --bg3:#111826; --panel:#0e1521;
+    --line:#1c2635; --line2:#2a3648;
+    --ink:#e9eef5; --muted:#93a1b5; --dim:#5d6c81;
+    --accent:#ff8a3d; --accent2:#35e0c8; --accent-deep:#c65a1e;
+    --red:#ff5470; --yellow:#f5b83a; --green:#35d38a; --unknown:#6b7a8f;
+    --maxw:1180px;
+    --f-disp:"Archivo","Arial Narrow",system-ui,sans-serif;
+    --f-body:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; background:var(--bg); }
+  body{ font-family:var(--f-body); color:var(--ink); line-height:1.55; -webkit-font-smoothing:antialiased;
+    overflow-x:hidden; }
+  a{ color:inherit; text-decoration:none; }
+  h1,h2,h3{ font-family:var(--f-disp); font-weight:800; line-height:1.04; letter-spacing:-.02em;
+    text-wrap:balance; margin:0; }
+  .mono{ font-family:var(--f-mono); }
+  .wrap{ width:100%; max-width:var(--maxw); margin:0 auto; padding-inline:24px; }
+  @media(max-width:560px){ .wrap{ padding-inline:18px; } }
+
+  /* ---------- ambient contour background ---------- */
+  #contour{ position:fixed; inset:0; width:100%; height:100%; z-index:0; opacity:.5; pointer-events:none; }
+  .veil{ position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:
+      radial-gradient(1100px 600px at 78% -8%, rgba(255,138,61,.14), transparent 60%),
+      radial-gradient(900px 620px at 8% 108%, rgba(53,224,200,.10), transparent 60%),
+      linear-gradient(180deg, rgba(8,11,17,.2), rgba(8,11,17,.86) 70%, var(--bg)); }
+  main{ position:relative; z-index:2; }
+
+  /* ---------- nav ---------- */
+  header.nav{ position:sticky; top:env(safe-area-inset-top,0px); z-index:40;
+    backdrop-filter:blur(10px); background:rgba(8,11,17,.72); border-bottom:1px solid var(--line); }
+  .nav .wrap{ display:flex; align-items:center; gap:20px; height:60px; }
+  .logo{ display:flex; align-items:center; gap:10px; font-family:var(--f-disp); font-weight:800; letter-spacing:.02em; }
+  .logo .mk{ width:26px; height:26px; position:relative; flex:none; }
+  .logo .mk::before,.logo .mk::after{ content:""; position:absolute; inset:0; border-radius:50%;
+    border:2px solid var(--accent); }
+  .logo .mk::after{ inset:7px; border-color:var(--accent2); }
+  .logo b{ color:var(--accent); }
+  .nav nav{ display:flex; gap:22px; margin-left:auto; font-size:14px; color:var(--muted); }
+  .nav nav a{ transition:color .2s; }
+  .nav nav a:hover{ color:var(--ink); }
+  .nav .cta{ font-family:var(--f-mono); font-size:12.5px; color:var(--accent);
+    border:1px solid var(--accent-deep); padding:8px 14px; border-radius:8px; transition:.2s; }
+  .nav .cta:hover{ background:rgba(255,138,61,.12); box-shadow:0 0 24px rgba(255,138,61,.2); }
+  @media(max-width:820px){ .nav nav{ display:none; } }
+
+  /* ---------- hero ---------- */
+  .hero{ position:relative; padding-block:88px 72px; }
+  .hero canvas{ position:absolute; inset:0; width:100%; height:100%; z-index:-1; }
+  .eyebrow{ font-family:var(--f-mono); font-size:12.5px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent); display:inline-flex; align-items:center; gap:9px; margin-bottom:22px; }
+  .eyebrow .live{ width:8px; height:8px; border-radius:50%; background:var(--green);
+    box-shadow:0 0 0 0 rgba(53,211,138,.7); animation:pulse 2.2s infinite; }
+  @keyframes pulse{ 70%{ box-shadow:0 0 0 10px rgba(53,211,138,0);} 100%{ box-shadow:0 0 0 0 rgba(53,211,138,0);} }
+  .hero h1{ font-size:clamp(40px,7.4vw,80px); font-weight:900; max-width:14ch; }
+  .hero h1 .g{ background:linear-gradient(100deg,var(--accent),var(--accent2)); -webkit-background-clip:text;
+    background-clip:text; -webkit-text-fill-color:transparent; }
+  .hero p.lead{ margin:26px 0 0; max-width:56ch; font-size:clamp(17px,2.1vw,20px); color:var(--muted); }
+  .hero .actions{ display:flex; flex-wrap:wrap; gap:14px; margin-top:36px; }
+  .btn{ font-family:var(--f-disp); font-weight:700; font-size:15px; padding:14px 24px; border-radius:11px;
+    border:1px solid transparent; cursor:pointer; transition:.22s transform,.22s box-shadow,.22s background; }
+  .btn:active{ transform:translateY(1px); }
+  .btn.primary{ background:linear-gradient(180deg,#ff9a51,var(--accent)); color:#1a0f06;
+    box-shadow:0 10px 34px rgba(255,138,61,.28); }
+  .btn.primary:hover{ box-shadow:0 14px 44px rgba(255,138,61,.42); }
+  .btn.ghost{ border-color:var(--line2); color:var(--ink); background:rgba(255,255,255,.02); }
+  .btn.ghost:hover{ border-color:var(--accent2); color:var(--accent2); }
+  .ticker{ margin-top:44px; border:1px solid var(--line); border-radius:12px; background:rgba(6,9,14,.6);
+    font-family:var(--f-mono); font-size:12.5px; overflow:hidden; }
+  .ticker .bar{ display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line);
+    color:var(--dim); }
+  .ticker .bar b{ color:var(--accent2); } .ticker .bar .r{ color:var(--red); } .ticker .bar .g{ color:var(--green); }
+  .ticker .feed{ height:22px; overflow:hidden; position:relative; padding:9px 14px; color:var(--muted); }
+  .ticker .feed span{ display:block; position:absolute; left:14px; opacity:0; transform:translateY(8px);
+    transition:opacity .5s, transform .5s; }
+  .ticker .feed span.on{ opacity:1; transform:none; }
+
+  /* ---------- section shell ---------- */
+  section{ padding-block:76px; position:relative; }
+  .sec-head{ max-width:62ch; margin-bottom:44px; }
+  .kicker{ font-family:var(--f-mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--accent2); display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .kicker::before{ content:""; width:34px; height:1px; background:var(--accent2); opacity:.7; }
+  h2{ font-size:clamp(28px,4.4vw,44px); }
+  .sec-head p{ color:var(--muted); font-size:17px; margin:16px 0 0; }
+  .rule{ height:1px; background:linear-gradient(90deg,transparent,var(--line2),transparent); border:0; margin:0; }
+
+  /* reveal */
+  .anim .reveal{ opacity:0; transform:translateY(20px); transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1); }
+  .anim .reveal.in{ opacity:1; transform:none; }
+  .anim .reveal.d1{ transition-delay:.08s } .anim .reveal.d2{ transition-delay:.16s }
+  .anim .reveal.d3{ transition-delay:.24s } .anim .reveal.d4{ transition-delay:.32s }
+
+  /* ---------- steps flow ---------- */
+  .flow{ display:grid; grid-template-columns:repeat(4,1fr); gap:0; position:relative; }
+  .flow .step{ padding:26px 22px; border-left:1px solid var(--line); position:relative; }
+  .flow .step:first-child{ border-left:0; }
+  .flow .step .n{ font-family:var(--f-mono); font-size:12px; color:var(--accent); letter-spacing:.1em; }
+  .flow .step .ic{ width:46px; height:46px; margin:16px 0 18px; color:var(--accent2); }
+  .flow .step h3{ font-size:19px; margin-bottom:9px; }
+  .flow .step p{ color:var(--muted); font-size:14.5px; margin:0; }
+  .flow .line{ position:absolute; top:0; left:0; height:2px; width:100%;
+    background:linear-gradient(90deg,var(--accent),var(--accent2)); transform-origin:left; transform:scaleX(0);
+    transition:transform 1.3s ease; }
+  .flow.in .line{ transform:scaleX(1); }
+  @media(max-width:820px){ .flow{ grid-template-columns:1fr 1fr; } .flow .step:nth-child(3){ border-left:0; } }
+  @media(max-width:480px){ .flow{ grid-template-columns:1fr; } .flow .step{ border-left:0; border-top:1px solid var(--line); } .flow .step:first-child{ border-top:0 } }
+
+  /* ---------- diagram ---------- */
+  .diagram{ display:grid; grid-template-columns:1.15fr .85fr; gap:40px; align-items:center; }
+  @media(max-width:820px){ .diagram{ grid-template-columns:1fr; } }
+  .netbox{ border:1px solid var(--line); border-radius:16px; background:
+    radial-gradient(120% 120% at 50% 0%, rgba(53,224,200,.06), transparent 60%), var(--panel); padding:8px; }
+  .diagram .notes .item{ display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--line); }
+  .diagram .notes .item:last-child{ border-bottom:0; }
+  .diagram .notes .dot{ width:11px; height:11px; border-radius:50%; margin-top:6px; flex:none; }
+  .diagram .notes h4{ margin:0 0 3px; font-size:16px; font-family:var(--f-disp); font-weight:700; }
+  .diagram .notes p{ margin:0; color:var(--muted); font-size:14px; }
+
+  /* ---------- triage ---------- */
+  .triage{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  @media(max-width:820px){ .triage{ grid-template-columns:1fr 1fr; } }
+  @media(max-width:460px){ .triage{ grid-template-columns:1fr; } }
+  .tcard{ border:1px solid var(--line); border-top:3px solid var(--c); border-radius:13px; padding:20px;
+    background:var(--panel); transition:transform .25s, box-shadow .25s; }
+  .tcard:hover{ transform:translateY(-4px); box-shadow:0 16px 40px rgba(0,0,0,.4); }
+  .tcard .tag{ font-family:var(--f-mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--c); }
+  .tcard h3{ font-size:21px; margin:8px 0 8px; }
+  .tcard p{ color:var(--muted); font-size:13.5px; margin:0; }
+  .principle{ margin-top:26px; border:1px dashed var(--line2); border-radius:13px; padding:20px 22px;
+    display:flex; gap:16px; align-items:flex-start; background:rgba(255,138,61,.04); }
+  .principle .b{ font-family:var(--f-disp); font-weight:800; color:var(--accent); font-size:15px; }
+  .principle p{ margin:4px 0 0; color:var(--muted); font-size:14.5px; }
+
+  /* ---------- locate ---------- */
+  .locate{ display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  @media(max-width:820px){ .locate{ grid-template-columns:1fr; } }
+  .lcard{ border:1px solid var(--line); border-radius:15px; padding:26px; background:var(--panel); position:relative; overflow:hidden; }
+  .lcard .rings{ position:absolute; right:-40px; top:-40px; width:180px; height:180px; opacity:.5; }
+  .lcard h3{ font-size:20px; display:flex; align-items:center; gap:10px; }
+  .lcard h3 .badge{ font-family:var(--f-mono); font-size:10.5px; padding:3px 8px; border-radius:6px;
+    background:rgba(53,224,200,.12); color:var(--accent2); letter-spacing:.05em; }
+  .lcard p{ color:var(--muted); font-size:14.5px; }
+  .lcard ul{ margin:14px 0 0; padding:0; list-style:none; display:grid; gap:9px; }
+  .lcard li{ font-size:14px; color:var(--ink); display:flex; gap:10px; align-items:flex-start; }
+  .lcard li::before{ content:"→"; color:var(--accent); flex:none; }
+
+  /* ---------- console mock ---------- */
+  .console{ border:1px solid var(--line2); border-radius:16px; overflow:hidden; background:#05080c;
+    box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  .console .top{ display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line);
+    font-family:var(--f-mono); font-size:12px; color:var(--dim); }
+  .console .top i{ width:11px; height:11px; border-radius:50%; display:inline-block; }
+  .console .top .t{ margin-left:12px; color:var(--muted); }
+  .console .body{ display:grid; grid-template-columns:1.4fr 1fr; gap:1px; background:var(--line); }
+  @media(max-width:640px){ .console .body{ grid-template-columns:1fr; } }
+  .console .pane{ background:#070b10; padding:18px; }
+  .console .pane h5{ margin:0 0 14px; font-family:var(--f-mono); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--dim); }
+  .dev{ border:1px solid var(--line); border-left:4px solid var(--c,#6b7a8f); border-radius:9px; padding:11px 13px;
+    margin-bottom:9px; background:#0b1017; }
+  .dev .id{ font-family:var(--f-mono); font-size:11px; color:var(--dim); }
+  .dev .nm{ font-family:var(--f-disp); font-weight:700; margin:3px 0; font-size:15px; }
+  .dev .sub{ font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; }
+  .bars{ display:inline-flex; gap:2px; align-items:flex-end; height:12px; }
+  .bars i{ width:3px; background:#31465c; border-radius:1px; }
+  .bars i.on{ background:var(--accent2); }
+  .radar-mini{ width:100%; aspect-ratio:1/1; max-width:260px; margin:0 auto; }
+
+  /* ---------- specs ---------- */
+  .specs{ display:grid; grid-template-columns:1.1fr .9fr; gap:34px; align-items:start; }
+  @media(max-width:820px){ .specs{ grid-template-columns:1fr; } }
+  .spec-sheet{ border:1px solid var(--line); border-radius:15px; background:var(--panel); overflow:hidden; }
+  .spec-sheet .sh{ padding:18px 22px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:baseline; }
+  .spec-sheet .sh b{ font-family:var(--f-disp); font-weight:800; font-size:18px; }
+  .spec-sheet .sh span{ font-family:var(--f-mono); font-size:12px; color:var(--accent); }
+  .spec-row{ display:flex; justify-content:space-between; gap:16px; padding:13px 22px; border-bottom:1px solid var(--line);
+    font-size:14px; }
+  .spec-row:last-child{ border-bottom:0; }
+  .spec-row .k{ color:var(--muted); } .spec-row .v{ font-family:var(--f-mono); font-size:13px; text-align:right; }
+  .honest{ display:grid; gap:12px; }
+  .honest .h{ border:1px solid var(--line); border-radius:12px; padding:15px 17px; background:rgba(255,84,112,.04); }
+  .honest .h b{ font-family:var(--f-disp); color:var(--yellow); font-size:14px; }
+  .honest .h p{ margin:5px 0 0; color:var(--muted); font-size:13.5px; }
+
+  /* ---------- stack ---------- */
+  .stack{ display:flex; flex-wrap:wrap; gap:12px; }
+  .chip{ display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:11px;
+    padding:12px 16px; background:var(--panel); font-size:14px; transition:.22s; }
+  .chip:hover{ border-color:var(--accent2); transform:translateY(-2px); }
+  .chip .d{ font-family:var(--f-mono); font-size:11px; color:var(--dim); }
+  .chip b{ font-family:var(--f-disp); font-weight:700; }
+
+  /* ---------- disciplines ---------- */
+  .disc{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  @media(max-width:720px){ .disc{ grid-template-columns:1fr; } }
+  .dcard{ border:1px solid var(--line); border-radius:15px; padding:26px; background:
+    linear-gradient(180deg, rgba(255,255,255,.02), transparent); }
+  .dcard .num{ font-family:var(--f-disp); font-weight:900; font-size:40px; color:var(--accent);
+    line-height:1; -webkit-text-stroke:1px var(--accent-deep); }
+  .dcard h3{ font-size:19px; margin:14px 0 8px; }
+  .dcard p{ color:var(--muted); font-size:14px; margin:0; }
+
+  /* ---------- CTA / footer ---------- */
+  .final{ border:1px solid var(--line2); border-radius:22px; padding:56px 40px; text-align:center;
+    background:radial-gradient(120% 160% at 50% -10%, rgba(255,138,61,.14), transparent 55%), var(--panel); }
+  .final h2{ font-size:clamp(30px,5vw,52px); max-width:18ch; margin:0 auto; }
+  .final p{ color:var(--muted); max-width:52ch; margin:18px auto 30px; }
+  .final .actions{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  footer{ padding-block:44px 60px; color:var(--dim); font-size:13px; }
+  footer .wrap{ display:flex; flex-wrap:wrap; gap:16px; justify-content:space-between; align-items:center; }
+  footer .disc-note{ max-width:60ch; }
+  .copybox{ display:inline-flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:9px;
+    padding:8px 12px; font-family:var(--f-mono); font-size:12.5px; }
+  .copybox button{ font-family:var(--f-mono); font-size:12px; color:var(--accent2); background:none; border:0;
+    border-left:1px solid var(--line); padding-left:10px; cursor:pointer; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+    .anim .reveal{ opacity:1 !important; transform:none !important; }
+    .flow .line{ transform:scaleX(1) !important; }
+  }
+  :focus-visible{ outline:2px solid var(--accent2); outline-offset:3px; border-radius:4px; }
+</style>
+
+<canvas id="contour" aria-hidden="true"></canvas>
+<div class="veil" aria-hidden="true"></div>
+
+<main>
+  <header class="nav">
+    <div class="wrap">
+      <a class="logo" href="#top"><span class="mk"></span>STELLA<b>·</b>RESCUE</a>
+      <nav>
+        <a href="#how">Как работает</a>
+        <a href="#net">Сеть</a>
+        <a href="#triage">Триаж</a>
+        <a href="#locate">Поиск</a>
+        <a href="#hardware">Железо</a>
+      </nav>
+      <a class="cta" href="#final">Открыть проект</a>
+    </div>
+  </header>
+
+  <section class="hero" id="top">
+    <canvas id="signal" aria-hidden="true"></canvas>
+    <div class="wrap">
+      <span class="eyebrow"><span class="live"></span>Автономный ИИ-хаб для зон бедствия</span>
+      <h1>Связь и спасение там, где <span class="g">пропала сеть</span></h1>
+      <p class="lead">Землетрясение обрывает интернет и сотовую связь в первые минуты. Stella Pocket Rescue
+        умещается в кармане, питается от повербанка и превращает одну плату в островок связи: раздаёт Wi-Fi,
+        общается с пострадавшими офлайн и сортирует вызовы для спасателей.</p>
+      <div class="actions">
+        <a class="btn primary" href="#how">Посмотреть, как это работает</a>
+        <a class="btn ghost" href="#hardware">Технологии и железо</a>
+      </div>
+
+      <div class="ticker" role="status" aria-label="Телеметрия узла">
+        <div class="bar mono">
+          <span>УЗЕЛ STELLA-01</span> · <b>SSID SOS-STELLA-RESCUE</b> ·
+          <span>питание: <b>powerbank 5V/3A</b></span> · <span class="g">офлайн-режим активен</span>
+        </div>
+        <div class="feed mono" id="feed" aria-live="off"></div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Принцип работы</div>
+        <h2>От «нет связи» до карты вызовов — за четыре шага</h2>
+        <p>Всё происходит внутри одного устройства. Ни один запрос не уходит в интернет — его просто нет.</p>
+      </div>
+      <div class="flow reveal" id="flow">
+        <div class="line"></div>
+        <div class="step">
+          <div class="n">01</div>
+          <svg class="ic" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M24 34a4 4 0 0 1 0 0"/><circle cx="24" cy="34" r="1.6" fill="currentColor" stroke="none"/>
+            <path d="M17 27a10 10 0 0 1 14 0"/><path d="M11 21a19 19 0 0 1 26 0"/></svg>
+          <h3>Автономная связь</h3>
+          <p>Плата поднимает открытую Wi-Fi сеть. Люди без связи подключаются к ней с обычных телефонов.</p>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <svg class="ic" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="12" width="30" height="20" rx="3"/><path d="M9 32l7 6v-6"/><path d="M18 22h12M18 26h8"/></svg>
+          <h3>Перехват (captive&nbsp;portal)</h3>
+          <p>Как Wi-Fi в метро: при подключении у человека автоматически открывается страница с чатом.</p>
+        </div>
+        <div class="step">
+          <div class="n">03</div>
+          <svg class="ic" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="12" y="10" width="24" height="28" rx="4"/><circle cx="24" cy="22" r="4"/><path d="M18 32c1.5-3 10.5-3 12 0"/></svg>
+          <h3>Офлайн-диспетчер</h3>
+          <p>Локальная нейросеть на процессоре платы спокойно ведёт диалог, выясняет место и характер травм.</p>
+        </div>
+        <div class="step">
+          <div class="n">04</div>
+          <svg class="ic" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 14l10-4 8 4 10-4v24l-10 4-8-4-10 4z"/><path d="M20 10v24M28 14v24"/></svg>
+          <h3>Триаж и карта</h3>
+          <p>Система распределяет вызовы по критичности и строит спасателям карту: кому помощь нужна первым.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="net">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Архитектура сети</div>
+        <h2>Один узел между пострадавшими и спасателями</h2>
+        <p>Изолированная локальная сеть без выхода наружу. Пострадавшие видят чат, спасатель — консоль,
+          и всё это работает без интернета с обеих сторон.</p>
+      </div>
+      <div class="diagram">
+        <div class="netbox reveal">
+          <svg id="net-svg" viewBox="0 0 520 360" role="img" aria-label="Схема сети: телефоны, узел и консоль спасателя"></svg>
+        </div>
+        <div class="notes reveal d1">
+          <div class="item"><span class="dot" style="background:var(--accent2)"></span>
+            <div><h4>hostapd · открытая точка 2.4 ГГц</h4><p>2.4 ГГц лучше проходит сквозь стены и завалы, чем 5 ГГц, и виден старым телефонам.</p></div></div>
+          <div class="item"><span class="dot" style="background:var(--accent)"></span>
+            <div><h4>dnsmasq · DNS «всё → узел»</h4><p>Любой домен резолвится в адрес узла — и телефон сам открывает портал (RFC 8910).</p></div></div>
+          <div class="item"><span class="dot" style="background:#9db2ff"></span>
+            <div><h4>nginx + FastAPI</h4><p>Любой запрос уходит в бэкенд, который отдаёт чат или консоль спасателя под PIN.</p></div></div>
+          <div class="item"><span class="dot" style="background:var(--green)"></span>
+            <div><h4>SQLite (WAL)</h4><p>Все вызовы переживают внезапное отключение питания.</p></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section id="triage">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Сортировка пострадавших</div>
+        <h2>Приоритет считает не нейросеть, а правила</h2>
+        <p>Маленькая модель может ошибиться или зависнуть — а сортировка людей должна быть объяснимой
+          и воспроизводимой. Правила по мотивам протокола START; у каждого вызова видно, из-за чего он поднят.</p>
+      </div>
+      <div class="triage">
+        <div class="tcard reveal" style="--c:var(--red)"><div class="tag">Красный</div><h3>Критично</h3><p>Угроза жизни: не дышит, без сознания, сильное кровотечение, под завалом. Передаётся спасателям первым.</p></div>
+        <div class="tcard reveal d1" style="--c:var(--yellow)"><div class="tag">Жёлтый</div><h3>Срочно</h3><p>Состояние стабильное, но нужна помощь: перелом, не может передвигаться, травма головы.</p></div>
+        <div class="tcard reveal d2" style="--c:var(--green)"><div class="tag">Зелёный</div><h3>Лёгкий</h3><p>Лёгкие травмы или человек в безопасности — может дождаться и следовать объявлениям.</p></div>
+        <div class="tcard reveal d3" style="--c:var(--unknown)"><div class="tag">Серый</div><h3>Нет данных</h3><p>Данных пока недостаточно — диспетчер задаёт по одному уточняющему вопросу.</p></div>
+      </div>
+      <div class="principle reveal">
+        <div class="b">⚠ Паника не повышает приоритет</div>
+        <p>Крик капсом «ПОМОГИТЕ!!!» не должен обогнать тихое «у отца сильное кровотечение».
+          Признаки паники система показывает спасателю отдельной меткой — но на очередь они не влияют.
+          Первая помощь при этом выдаётся мгновенно, фиксированным текстом, не дожидаясь модели.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="locate">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Найти человека</div>
+        <h2>Максимум точности, даже без GPS</h2>
+        <p>Задача — довести спасателя до пострадавшего. Используется всё, что честно доступно офлайн,
+          и человек прямо видит на странице, что устройство передаёт спасателям его данные.</p>
+      </div>
+      <div class="locate">
+        <div class="lcard reveal">
+          <svg class="rings" viewBox="0 0 180 180" aria-hidden="true" fill="none" stroke="var(--accent2)" stroke-opacity=".5">
+            <circle cx="90" cy="90" r="30"/><circle cx="90" cy="90" r="58"/><circle cx="90" cy="90" r="86"/></svg>
+          <h3>Близость по Wi-Fi <span class="badge">работает всегда</span></h3>
+          <p>Узел знает силу сигнала (RSSI) каждого телефона и по модели затухания переводит её в расстояние
+            и метку «рядом / близко / далеко». GPS для этого не нужен — достаточно быть в сети.</p>
+          <ul>
+            <li>Сигнал в dBm → грубое расстояние в метрах</li>
+            <li>Кольца на радаре подписаны в метрах от узла</li>
+            <li>Ближние вызовы — первыми в списке</li>
+          </ul>
+        </div>
+        <div class="lcard reveal d1">
+          <svg class="rings" viewBox="0 0 180 180" aria-hidden="true" fill="none" stroke="var(--accent)" stroke-opacity=".45">
+            <circle cx="90" cy="90" r="30"/><circle cx="90" cy="90" r="58"/><circle cx="90" cy="90" r="86"/></svg>
+          <h3>GPS и данные телефона <span class="badge">с согласия</span></h3>
+          <p>Если человек разрешил геолокацию — страница держит координаты и их движение. Телефон честно
+            сообщает модель, заряд и статус зарядки, чтобы спасатель знал, чей это аппарат и не сядет ли он раньше помощи.</p>
+          <ul>
+            <li>Координаты и точность (±м), обновляются в фоне</li>
+            <li>Заряд батареи и «заряжается / нет»</li>
+            <li>Модель устройства из User-Agent — «чей телефон»</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section id="console">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Консоль спасателя</div>
+        <h2>Живая карта вызовов на устройстве</h2>
+        <p>Тёмная консоль реального времени под PIN. Клик по узлу — сканирование — сетка всех подключённых
+          телефонов — досье на каждый с сигналом, координатами и перепиской.</p>
+      </div>
+      <div class="console reveal">
+        <div class="top">
+          <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+          <span class="t">stella://rescue — узел field · онлайн 3 · аптайм 00:42</span>
+        </div>
+        <div class="body">
+          <div class="pane">
+            <h5>Подключённые устройства</h5>
+            <div class="dev" style="--c:var(--red)"><div class="id">#1 · КРИТИЧНО</div>
+              <div class="nm">Samsung SM-G991B</div>
+              <div class="sub">рядом · −52 dBm <span class="bars"><i class="on" style="height:5px"></i><i class="on" style="height:8px"></i><i class="on" style="height:11px"></i><i class="on" style="height:14px"></i></span> · 🔋 22%</div></div>
+            <div class="dev" style="--c:var(--yellow)"><div class="id">#5 · СРОЧНО</div>
+              <div class="nm">iPhone</div>
+              <div class="sub">близко · −68 dBm <span class="bars"><i class="on" style="height:5px"></i><i class="on" style="height:8px"></i><i class="on" style="height:11px"></i><i style="height:14px"></i></span> · 🔋 68%</div></div>
+            <div class="dev" style="--c:var(--green)"><div class="id">#9 · ЛЁГКИЙ</div>
+              <div class="nm">Pixel 7</div>
+              <div class="sub">далеко · −80 dBm <span class="bars"><i class="on" style="height:5px"></i><i class="on" style="height:8px"></i><i style="height:11px"></i><i style="height:14px"></i></span> · 🔋 37%</div></div>
+          </div>
+          <div class="pane">
+            <h5>Радар · центр — узел</h5>
+            <svg class="radar-mini" id="radar-mini" viewBox="0 0 200 200" aria-label="Радар подключений"></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="hardware">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Аппаратная часть</div>
+        <h2>Orange Pi 4 LTS в кармане</h2>
+        <p>Одноплатный компьютер на шестиядерном RK3399 — недорогая замена Raspberry Pi.
+          Честно о том, что учесть при полевом развёртывании.</p>
+      </div>
+      <div class="specs">
+        <div class="spec-sheet reveal">
+          <div class="sh"><b>Orange Pi 4 LTS</b><span>RK3399 · 4 ГБ</span></div>
+          <div class="spec-row"><span class="k">Процессор</span><span class="v">2× Cortex-A72 + 4× Cortex-A53</span></div>
+          <div class="spec-row"><span class="k">Графика</span><span class="v">Mali-T860 MP4</span></div>
+          <div class="spec-row"><span class="k">Память</span><span class="v">4 ГБ LPDDR4 · 16 ГБ eMMC</span></div>
+          <div class="spec-row"><span class="k">Связь</span><span class="v">WiFi 5 · BT 5.0 · Gigabit LAN</span></div>
+          <div class="spec-row"><span class="k">Порты</span><span class="v">USB 3.0 · USB-C · HDMI 2.0</span></div>
+          <div class="spec-row"><span class="k">Питание</span><span class="v">5V / 4A (DC или Type-C)</span></div>
+          <div class="spec-row"><span class="k">Габариты</span><span class="v">91 × 56 мм · 49 г</span></div>
+          <div class="spec-row"><span class="k">ОС</span><span class="v">Armbian / Ubuntu / Debian</span></div>
+        </div>
+        <div class="honest reveal d1">
+          <div class="h"><b>Скорость ИИ</b><p>Всё считается на CPU: ответ из 1–3 предложений занимает десятки секунд.
+            Поэтому ответы короткие, а триаж и первая помощь работают без модели.</p></div>
+          <div class="h"><b>Питание — главный риск</b><p>Нужно 5 В / 4 А. Обычный повербанк 2 А даст просадки.
+            Берите тот, что отдаёт 5 В 3 А по USB-C, или DC-кабель.</p></div>
+          <div class="h"><b>Охлаждение</b><p>RK3399 под нагрузкой троттлит — нужен радиатор, лучше с вентилятором.</p></div>
+          <div class="h"><b>Совет по бюджету</b><p>За те же деньги Orange Pi 5 (RK3588S) ответит в разы быстрее —
+            код проекта переносится без изменений.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <section id="stack">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Технологический стек</div>
+        <h2>Сеть, Full-Stack и машинное обучение в одном прототипе</h2>
+      </div>
+      <div class="stack reveal">
+        <div class="chip"><span class="d">AP</span><b>hostapd</b></div>
+        <div class="chip"><span class="d">DHCP/DNS</span><b>dnsmasq</b></div>
+        <div class="chip"><span class="d">proxy</span><b>nginx</b></div>
+        <div class="chip"><span class="d">backend</span><b>FastAPI</b></div>
+        <div class="chip"><span class="d">runtime</span><b>Python · uvicorn</b></div>
+        <div class="chip"><span class="d">inference</span><b>llama.cpp</b></div>
+        <div class="chip"><span class="d">model</span><b>Qwen2.5 (Q4)</b></div>
+        <div class="chip"><span class="d">storage</span><b>SQLite · WAL</b></div>
+        <div class="chip"><span class="d">net</span><b>iptables</b></div>
+        <div class="chip"><span class="d">service</span><b>systemd</b></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="fit">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Почему это сильный проект</div>
+        <h2>Готовый прототип оборудования, а не просто код</h2>
+      </div>
+      <div class="disc">
+        <div class="dcard reveal"><div class="num">01</div><h3>Сетевое администрирование</h3>
+          <p>Точка доступа, DHCP, «лживый» DNS, captive portal, файрвол и изоляция сети — реальная инфраструктура.</p></div>
+        <div class="dcard reveal d1"><div class="num">02</div><h3>Full-Stack разработка</h3>
+          <p>FastAPI-бэкенд, два интерфейса без внешних библиотек, живой опрос, консоль оператора с радаром.</p></div>
+        <div class="dcard reveal d2"><div class="num">03</div><h3>Машинное обучение</h3>
+          <p>Квантованная языковая модель на CPU через llama.cpp — диалог с пострадавшим полностью офлайн.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="final">
+    <div class="wrap">
+      <div class="final reveal">
+        <h2>Помощь приходит первой к тем, кому она нужнее</h2>
+        <p>Stella Pocket Rescue решает острую локальную проблему первых часов после катастрофы —
+          когда счёт идёт на минуты, а связи ещё нет.</p>
+        <div class="actions">
+          <a class="btn primary" href="#how">Изучить принцип работы</a>
+          <a class="btn ghost" href="#top">Наверх</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="disc-note">
+        <strong style="color:var(--muted)">Stella Pocket Rescue</strong> — учебный прототип.
+        Не сертифицирован и не заменяет штатные средства связи спасательных служб. Правила триажа —
+        эвристика, решение всегда за спасателем.
+      </div>
+      <div class="copybox">a1x10/project3
+        <button id="copyRepo" type="button">копировать</button>
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(!reduce) root.classList.add('anim');
+
+  /* ---- reveal on scroll (defaults visible without JS / reduced motion) ---- */
+  if(!reduce && 'IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in');
+        if(e.target.id==='flow') e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold:.16, rootMargin:'0px 0px -8% 0px' });
+    document.querySelectorAll('.reveal, #flow').forEach(function(el){ io.observe(el); });
+  } else {
+    document.querySelectorAll('.reveal, #flow').forEach(function(el){ el.classList.add('in'); });
+  }
+
+  /* ---- smooth anchor scroll ---- */
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){
+    a.addEventListener('click', function(e){
+      var id = a.getAttribute('href'); if(id.length<2) return;
+      var t = document.querySelector(id); if(!t) return;
+      e.preventDefault(); t.scrollIntoView({ behavior: reduce?'auto':'smooth', block:'start' });
+    });
+  });
+
+  /* ---- telemetry feed ---- */
+  var lines = [
+    ['станция подключена · MAC 0c:1d:af:· · RSSI −54 dBm','g'],
+    ['вызов #1 · признаки: под завалом, кровотечение · приоритет КРИТИЧНО','r'],
+    ['первая помощь отправлена мгновенно · без ожидания модели',''],
+    ['координаты получены · 43.2389, 76.8897 · ±14 м','g'],
+    ['llama.cpp · ответ диспетчера сгенерирован за 22 с',''],
+    ['вызов #5 · перелом · приоритет СРОЧНО · людей: 3','']
+  ];
+  var feed = document.getElementById('feed');
+  if(feed){
+    var i=0, cur=null;
+    function tick(){
+      if(cur){ cur.classList.remove('on'); var old=cur; setTimeout(function(){ old.remove(); },500); }
+      var s=document.createElement('span'); var L=lines[i%lines.length];
+      s.textContent='» '+L[0]; if(L[1]) s.classList.add(L[1]);
+      feed.appendChild(s); void s.offsetWidth; s.classList.add('on'); cur=s; i++;
+    }
+    tick(); if(!reduce) setInterval(tick, 2600);
+  }
+
+  /* ---- hero signal canvas: expanding rings from hub + waking dots ---- */
+  var sig=document.getElementById('signal'), sx=sig&&sig.getContext('2d');
+  var contour=document.getElementById('contour'), cx2=contour&&contour.getContext('2d');
+  var dpr=Math.min(2, window.devicePixelRatio||1);
+  var dots=[];
+  function seedDots(w,h){ dots=[]; var n=Math.round(Math.min(26, w/44));
+    for(var k=0;k<n;k++) dots.push({x:Math.random()*w, y:Math.random()*h, r:1.2+Math.random()*1.6, p:Math.random()}); }
+  function size(){
+    [sig,contour].forEach(function(c){ if(!c) return; var r=c.getBoundingClientRect();
+      c.width=Math.max(1,r.width*dpr); c.height=Math.max(1,r.height*dpr); });
+    if(sig) seedDots(sig.width, sig.height);
+  }
+  var t0=performance.now();
+  function frame(now){
+    var t=(now-t0)/1000;
+    if(sx){
+      var w=sig.width,h=sig.height; sx.clearRect(0,0,w,h);
+      var hx=w*0.5, hy=h*0.52;
+      // rings
+      for(var k=0;k<4;k++){
+        var prog=((t*0.28)+k/4)%1; var rad=Math.max(0.5,prog*Math.max(w,h)*0.62);
+        var a=(1-prog)*0.28;
+        sx.beginPath(); sx.arc(hx,hy,rad,0,Math.PI*2);
+        sx.strokeStyle='rgba(255,138,61,'+a+')'; sx.lineWidth=1.4*dpr; sx.stroke();
+      }
+      // dots that light when a ring is near
+      dots.forEach(function(d){
+        var dist=Math.hypot(d.x-hx,d.y-hy);
+        var ringPhase=((t*0.28))%1 * Math.max(w,h)*0.62;
+        var glow=0; for(var k=0;k<4;k++){ var rad=(((t*0.28)+k/4)%1)*Math.max(w,h)*0.62;
+          var dd=Math.abs(dist-rad); if(dd<26*dpr) glow=Math.max(glow, 1-dd/(26*dpr)); }
+        sx.beginPath(); sx.arc(d.x,d.y,Math.max(0.5,d.r*dpr*(1+glow*1.4)),0,Math.PI*2);
+        sx.fillStyle='rgba(53,224,200,'+(0.18+glow*0.7)+')'; sx.fill();
+      });
+      // hub
+      sx.beginPath(); sx.arc(hx,hy,4.5*dpr,0,Math.PI*2); sx.fillStyle='#ff8a3d'; sx.fill();
+    }
+    if(!reduce) requestAnimationFrame(frame);
+  }
+  /* ---- ambient drifting contour lines ---- */
+  function drawContour(){
+    if(!cx2) return; var w=contour.width,h=contour.height; cx2.clearRect(0,0,w,h);
+    cx2.lineWidth=1*dpr; var t=performance.now()/1000;
+    for(var l=0;l<7;l++){
+      cx2.beginPath();
+      var base=h*(0.12+l*0.13);
+      for(var x=0;x<=w;x+=14*dpr){
+        var y=base + Math.sin(x*0.006/dpr + t*0.12 + l*0.9)*22*dpr + Math.sin(x*0.013/dpr - t*0.08)*10*dpr;
+        if(x===0) cx2.moveTo(x,y); else cx2.lineTo(x,y);
+      }
+      cx2.strokeStyle='rgba(53,224,200,'+(0.05+ (l%2?0.02:0))+')'; cx2.stroke();
+    }
+    if(!reduce) requestAnimationFrame(drawContour);
+  }
+  window.addEventListener('resize', size, {passive:true});
+  size();
+  if(reduce){ requestAnimationFrame(frame); requestAnimationFrame(drawContour); }
+  else { requestAnimationFrame(frame); requestAnimationFrame(drawContour); }
+
+  /* ---- network diagram (SVG) with flowing signal pulses ---- */
+  (function(){
+    var svg=document.getElementById('net-svg'); if(!svg) return;
+    var NS='http://www.w3.org/2000/svg';
+    function E(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+    var hub={x:260,y:180}, resc={x:452,y:180};
+    var phones=[{x:60,y:70},{x:48,y:180},{x:60,y:290},{x:150,y:120},{x:150,y:250}];
+    // links phone->hub
+    phones.forEach(function(p){
+      svg.appendChild(E('path',{d:'M'+p.x+' '+p.y+' L'+hub.x+' '+hub.y,stroke:'#22303f','stroke-width':1.4,fill:'none'}));
+      var flow=E('path',{d:'M'+p.x+' '+p.y+' L'+hub.x+' '+hub.y,stroke:'#35e0c8','stroke-width':2,fill:'none',
+        'stroke-dasharray':'2 60','stroke-linecap':'round',opacity:.9});
+      svg.appendChild(flow);
+      var an=E('animate',{attributeName:'stroke-dashoffset',from:'62',to:'0',dur:(1.6+Math.random()*1.2)+'s',repeatCount:'indefinite'});
+      flow.appendChild(an);
+    });
+    // link hub->rescuer
+    svg.appendChild(E('path',{d:'M'+hub.x+' '+hub.y+' L'+resc.x+' '+resc.y,stroke:'#3a2a1c','stroke-width':1.6,fill:'none'}));
+    var f2=E('path',{d:'M'+hub.x+' '+hub.y+' L'+resc.x+' '+resc.y,stroke:'#ff8a3d','stroke-width':2.2,fill:'none','stroke-dasharray':'2 40','stroke-linecap':'round'});
+    svg.appendChild(f2); f2.appendChild(E('animate',{attributeName:'stroke-dashoffset',from:'42',to:'0',dur:'1.4s',repeatCount:'indefinite'}));
+    // phones
+    var cols=['#ff5470','#f5b83a','#35d38a','#6b7a8f','#35d38a'];
+    phones.forEach(function(p,idx){
+      svg.appendChild(E('rect',{x:p.x-11,y:p.y-16,width:22,height:32,rx:4,fill:'#0b1017',stroke:cols[idx],'stroke-width':1.6}));
+      svg.appendChild(E('circle',{cx:p.x,cy:p.y+9,r:1.5,fill:cols[idx]}));
+    });
+    // hub
+    var hg=E('g',{});
+    hg.appendChild(E('circle',{cx:hub.x,cy:hub.y,r:34,fill:'none',stroke:'#ff8a3d','stroke-width':1,opacity:.3}));
+    var pr=E('circle',{cx:hub.x,cy:hub.y,r:26,fill:'none',stroke:'#ff8a3d','stroke-width':1,opacity:.5});
+    pr.appendChild(E('animate',{attributeName:'r',values:'22;40;22',dur:'3s',repeatCount:'indefinite'}));
+    pr.appendChild(E('animate',{attributeName:'opacity',values:'.6;0;.6',dur:'3s',repeatCount:'indefinite'}));
+    hg.appendChild(pr);
+    hg.appendChild(E('rect',{x:hub.x-20,y:hub.y-16,width:40,height:32,rx:6,fill:'#111826',stroke:'#ff8a3d','stroke-width':1.8}));
+    hg.appendChild(E('rect',{x:hub.x-12,y:hub.y-8,width:24,height:3,rx:1.5,fill:'#ff8a3d'}));
+    hg.appendChild(E('rect',{x:hub.x-12,y:hub.y-1,width:24,height:3,rx:1.5,fill:'#35e0c8'}));
+    hg.appendChild(E('circle',{cx:hub.x-8,cy:hub.y+9,r:2,fill:'#35d38a'}));
+    svg.appendChild(hg);
+    var ht=E('text',{x:hub.x,y:hub.y+52,fill:'#93a1b5','font-size':11,'text-anchor':'middle','font-family':'IBM Plex Mono, monospace'}); ht.textContent='УЗЕЛ · Orange Pi'; svg.appendChild(ht);
+    // rescuer
+    svg.appendChild(E('rect',{x:resc.x-24,y:resc.y-20,width:48,height:34,rx:5,fill:'#0b1017',stroke:'#ff8a3d','stroke-width':1.8}));
+    svg.appendChild(E('rect',{x:resc.x-14,y:resc.y+16,width:28,height:4,rx:2,fill:'#22303f'}));
+    for(var r=0;r<3;r++) svg.appendChild(E('rect',{x:resc.x-17,y:resc.y-13+r*8,width:34,height:3,rx:1.5,fill:r===0?'#ff5470':r===1?'#f5b83a':'#35d38a'}));
+    var rt=E('text',{x:resc.x,y:resc.y+40,fill:'#93a1b5','font-size':11,'text-anchor':'middle','font-family':'IBM Plex Mono, monospace'}); rt.textContent='СПАСАТЕЛЬ'; svg.appendChild(rt);
+  })();
+
+  /* ---- mini radar in console ---- */
+  (function(){
+    var svg=document.getElementById('radar-mini'); if(!svg) return;
+    var NS='http://www.w3.org/2000/svg';
+    function E(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); return e; }
+    [30,58,86].forEach(function(r){ svg.appendChild(E('circle',{cx:100,cy:100,r:r,fill:'none',stroke:'#16202c','stroke-width':1})); });
+    svg.appendChild(E('line',{x1:100,y1:14,x2:100,y2:186,stroke:'#111a24'}));
+    svg.appendChild(E('line',{x1:14,y1:100,x2:186,y2:100,stroke:'#111a24'}));
+    // sweep
+    var sweep=E('path',{d:'M100 100 L100 14 A86 86 0 0 1 168 60 Z',fill:'#35e0c8',opacity:.12});
+    var g=E('g',{}); g.appendChild(sweep);
+    g.appendChild(E('animateTransform',{attributeName:'transform',type:'rotate',from:'0 100 100',to:'360 100 100',dur:'4s',repeatCount:'indefinite'}));
+    if(!reduce) svg.appendChild(g);
+    svg.appendChild(E('circle',{cx:100,cy:100,r:4,fill:'#ff8a3d'}));
+    var pts=[[100,40,'#ff5470'],[150,128,'#f5b83a'],[58,150,'#35d38a']];
+    pts.forEach(function(p){ svg.appendChild(E('circle',{cx:p[0],cy:p[1],r:5,fill:p[2],stroke:'#05080c','stroke-width':1.5})); });
+  })();
+
+  /* ---- copy repo ---- */
+  var cr=document.getElementById('copyRepo');
+  if(cr) cr.addEventListener('click', function(){
+    var ok=function(){ cr.textContent='скопировано ✓'; setTimeout(function(){ cr.textContent='копировать'; },1600); };
+    try{ navigator.clipboard.writeText('a1x10/project3').then(ok, function(){
+      var r=document.createRange(); r.selectNode(cr.previousSibling||cr.parentNode);
+      var s=getSelection(); s.removeAllRanges(); s.addRange(r); ok();
+    }); }catch(e){ ok(); }
+  });
+})();
+</script>
+
+</body>
+</html>
