@@ -20,7 +20,14 @@ CREATE TABLE IF NOT EXISTS incidents (
     location_text TEXT,
     panic         INTEGER NOT NULL DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'new',
-    note          TEXT
+    note          TEXT,
+    client_ip     TEXT,
+    mac           TEXT,
+    device        TEXT,
+    device_info   TEXT NOT NULL DEFAULT '{}',
+    battery       REAL,
+    charging      INTEGER,
+    last_seen     REAL
 );
 CREATE TABLE IF NOT EXISTS messages (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +47,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 INCIDENT_FIELDS = (
     "priority", "score", "tags", "people", "lat", "lon", "accuracy",
     "location_text", "panic", "status", "note",
+    "client_ip", "mac", "device", "device_info", "battery", "charging", "last_seen",
 )
+JSON_FIELDS = {"tags", "device_info"}
 
 
 class Database:
@@ -98,8 +107,8 @@ class Database:
         unknown = set(fields) - set(INCIDENT_FIELDS)
         if unknown:
             raise ValueError(f"unknown fields: {unknown}")
-        if "tags" in fields:
-            fields["tags"] = json.dumps(fields["tags"], ensure_ascii=False)
+        for jf in JSON_FIELDS & set(fields):
+            fields[jf] = json.dumps(fields[jf], ensure_ascii=False)
         now = time.time()
         self._exec(
             "INSERT OR IGNORE INTO incidents(session_id, created, updated) VALUES (?, ?, ?)",
@@ -132,7 +141,15 @@ class Database:
         )
 
 
+    def touch(self, session_id: str, **fields) -> None:
+        """Отметить, что сессия жива (опрос сообщений), и обновить лёгкие поля."""
+        fields["last_seen"] = time.time()
+        self.upsert_incident(session_id, **fields)
+
+
 def _decode(row: dict) -> dict:
     row["tags"] = json.loads(row["tags"])
+    row["device_info"] = json.loads(row["device_info"] or "{}")
     row["panic"] = bool(row["panic"])
+    row["charging"] = None if row["charging"] is None else bool(row["charging"])
     return row

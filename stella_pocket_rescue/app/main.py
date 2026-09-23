@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, llm
+from . import config, llm, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 
@@ -92,19 +92,82 @@ def _check_session(session_id: str) -> str:
     return session_id
 
 
+def _client_ip(request: Request) -> str | None:
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else None)
+
+
+class DeviceInfo(BaseModel):
+    """Данные, которые телефон сам сообщает через браузер. Всё необязательное —
+    чем больше пришлём, тем точнее спасатель поймёт, чей это телефон и не сядет ли он."""
+    ua: str | None = Field(default=None, max_length=400)
+    platform: str | None = Field(default=None, max_length=80)
+    lang: str | None = Field(default=None, max_length=40)
+    tz: str | None = Field(default=None, max_length=60)
+    screen: str | None = Field(default=None, max_length=20)
+    dpr: float | None = None
+    cores: int | None = Field(default=None, ge=0, le=256)
+    memory_gb: float | None = Field(default=None, ge=0, le=1024)
+    touch: bool | None = None
+    net_type: str | None = Field(default=None, max_length=20)
+    downlink: float | None = Field(default=None, ge=0)
+    battery: float | None = Field(default=None, ge=0, le=1)
+    charging: bool | None = None
+
+
+class SessionIn(BaseModel):
+    device: DeviceInfo | None = None
+
+
+# Модель телефона по User-Agent — для колонки «чей телефон» у спасателя
+_DEVICE_PATTERNS = [
+    (re.compile(r"iPhone"), "iPhone"),
+    (re.compile(r"iPad"), "iPad"),
+    (re.compile(r"(SM-[A-Z0-9]+)"), "Samsung {0}"),
+    (re.compile(r"(Pixel \d+[a-zA-Z]*)"), "{0}"),
+    (re.compile(r"(Redmi[^;)]*|POCO[^;)]*|Mi \d[^;)]*)"), "Xiaomi {0}"),
+    (re.compile(r"(HUAWEI[^;)]*|Honor[^;)]*)"), "{0}"),
+    (re.compile(r"(RMX\d+|realme[^;)]*)"), "realme {0}"),
+    (re.compile(r"Windows NT"), "ПК Windows"),
+    (re.compile(r"Macintosh"), "Mac"),
+    (re.compile(r"Android"), "Android-телефон"),
+]
+
+
+def _device_name(ua: str | None) -> str | None:
+    if not ua:
+        return None
+    for rx, tmpl in _DEVICE_PATTERNS:
+        m = rx.search(ua)
+        if m:
+            return tmpl.format(*m.groups()).strip()[:60]
+    return "телефон"
+
+
 @app.post("/api/session")
-def new_session():
-    return {"session_id": uuid.uuid4().hex}
+def new_session(body: SessionIn | None = None, request: Request = None):
+    sid = uuid.uuid4().hex
+    info = (body.device.model_dump() if body and body.device else {})
+    db.upsert_incident(
+        sid,
+        client_ip=_client_ip(request),
+        device=_device_name(info.get("ua")),
+        device_info=info,
+        battery=info.get("battery"),
+        charging=None if info.get("charging") is None else int(info["charging"]),
+        last_seen=time.time(),
+    )
+    return {"session_id": sid}
 
 
 @app.post("/api/chat")
-def chat(body: ChatIn, background: BackgroundTasks):
+def chat(body: ChatIn, background: BackgroundTasks, request: Request):
     sid = _check_session(body.session_id)
     last = db.last_message(sid, "user")
     if last and time.time() - last["ts"] < config.MIN_SECONDS_BETWEEN_MESSAGES:
         raise HTTPException(429, "Слишком часто. Подождите пару секунд.")
 
     db.add_message(sid, "user", body.text.strip())
+    db.touch(sid, client_ip=_client_ip(request))
     result = update_incident(sid, body.lat, body.lon, body.accuracy)
 
     # Первая помощь выдаётся мгновенно и детерминированно, без ожидания нейросети
@@ -154,14 +217,42 @@ async def dispatcher_reply(sid: str):
         _pending.discard(sid)
 
 
+class Heartbeat(BaseModel):
+    battery: float | None = Field(default=None, ge=0, le=1)
+    charging: bool | None = None
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0)
+
+
 @app.get("/api/messages")
 def messages(session_id: str, after: int = 0, after_broadcast: int = 0):
     sid = _check_session(session_id)
+    if db.get_incident(sid):            # не создаём карточку из случайного опроса
+        db.touch(sid)                   # телефон опрашивает раз в пару секунд -> он онлайн
     return {
         "messages": db.messages(sid, after),
         "typing": sid in _pending,
         "broadcasts": db.broadcasts(after_broadcast),
     }
+
+
+@app.post("/api/heartbeat")
+def heartbeat(body: Heartbeat, request: Request, session_id: str):
+    """Телефон фоном шлёт свежий заряд и (если разрешил) координаты — чтобы
+    спасатель видел, садится ли телефон, и мог доследить движение человека."""
+    sid = _check_session(session_id)
+    if not db.get_incident(sid):        # только для реально созданных сессий
+        raise HTTPException(404, "unknown session")
+    fields = {"client_ip": _client_ip(request)}
+    if body.battery is not None:
+        fields["battery"] = body.battery
+    if body.charging is not None:
+        fields["charging"] = int(body.charging)
+    if body.lat is not None and body.lon is not None:
+        fields.update(lat=body.lat, lon=body.lon, accuracy=body.accuracy)
+    db.touch(sid, **fields)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- спасатели
@@ -188,12 +279,29 @@ class TextIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
-@app.get("/api/rescuer/incidents", dependencies=[Depends(rescuer)])
-def list_incidents():
+def _enrich(items: list[dict], by_ip: dict[str, dict]) -> None:
+    """Дополняем каждую карточку живыми данными с точки доступа."""
     now = time.time()
-    items = db.incidents()
     for it in items:
         it["waiting_min"] = round((now - it["created"]) / 60, 1)
+        it["online"] = bool(it.get("last_seen") and now - it["last_seen"] <= config.ONLINE_WINDOW)
+        st = by_ip.get(it.get("client_ip") or "")
+        if st:
+            it["mac"] = st["mac"]
+            it["signal"] = st["signal"]
+            it["proximity"] = st["proximity"]
+            it["distance_m"] = st["distance_m"]
+            it["link_kb"] = st["kb"]
+        else:
+            it.setdefault("signal", None)
+            it.setdefault("proximity", None)
+            it.setdefault("distance_m", None)
+
+
+@app.get("/api/rescuer/incidents", dependencies=[Depends(rescuer)])
+def list_incidents():
+    items = db.incidents()
+    _enrich(items, stations.by_ip(stations.connected()))
     items.sort(key=lambda it: (
         it["status"] == "resolved",
         PRIORITY_RANK[it["priority"]],
@@ -203,12 +311,34 @@ def list_incidents():
     counts = {p: sum(1 for i in items if i["priority"] == p and i["status"] != "resolved")
               for p in PRIORITY_RANK}
     return {"incidents": items, "counts": counts,
-            "hub": {"lat": config.HUB_LAT, "lon": config.HUB_LON}}
+            "hub": {"lat": config.HUB_LAT, "lon": config.HUB_LON, "mode": config.HUB_MODE},
+            "server": stations.uptime()}
+
+
+@app.get("/api/rescuer/connections", dependencies=[Depends(rescuer)])
+def connections():
+    """Живые подключения к Wi-Fi хаба + привязка к карточкам вызовов.
+    Это визуализация «вижу каждое подключение»: устройство, сигнал, близость."""
+    conns = stations.connected()
+    incidents = {i.get("client_ip"): i for i in db.incidents() if i.get("client_ip")}
+    now = time.time()
+    for c in conns:
+        inc = incidents.get(c["ip"])
+        if inc:
+            c["incident_id"] = inc["id"]
+            c["priority"] = inc["priority"]
+            c["device"] = inc.get("device")
+            c["battery"] = inc.get("battery")
+            c["people"] = inc.get("people")
+            c["online"] = bool(inc.get("last_seen") and now - inc["last_seen"] <= config.ONLINE_WINDOW)
+    return {"connections": conns, "server": stations.uptime(),
+            "hub": {"iface": config.WLAN_IFACE, "ip": config.PORTAL_HOST, "ssid": config.SSID}}
 
 
 @app.get("/api/rescuer/incidents/{incident_id}/messages", dependencies=[Depends(rescuer)])
 def incident_messages(incident_id: int):
     incident = db.get_incident_by_id(incident_id) or _not_found()
+    _enrich([incident], stations.by_ip(stations.connected()))
     return {"incident": incident, "messages": db.messages(incident["session_id"])}
 
 

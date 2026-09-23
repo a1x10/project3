@@ -9,6 +9,8 @@ EnvironmentFile=/etc/stella/stella.env
 ExecStart=/opt/stella/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=2
+# Нужно, чтобы читать сигнал станций (iw dev wlan0 station dump) без запуска от root
+AmbientCapabilities=CAP_NET_ADMIN
 # Портал важнее модели: при нехватке ресурсов ядро приоритизирует его
 Nice=-5
 
