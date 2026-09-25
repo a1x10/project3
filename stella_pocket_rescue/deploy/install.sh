@@ -19,10 +19,13 @@ esac
 # Защита: если вы зашли по SSH через Wi-Fi платы, после перенастройки wlan0 связь пропадёт
 if [ -n "${SSH_CONNECTION:-}" ]; then
   MYIP=$(echo "$SSH_CONNECTION" | awk '{print $3}')
-  if ip -o -4 addr show dev wlan0 2>/dev/null | grep -qw "$MYIP"; then
+  if ip -o -4 addr show dev wlan0 2>/dev/null | grep -qw "$MYIP" && [ "${STELLA_OVER_WIFI:-0}" != 1 ]; then
     echo "!!! Вы подключены к плате через Wi-Fi ($MYIP на wlan0)."
-    echo "!!! Установщик превращает Wi-Fi в точку доступа, и SSH оборвётся."
-    echo "!!! Подключите плату к роутеру КАБЕЛЕМ, зайдите по её проводному IP и запустите снова."
+    echo "!!! В конце установки Wi-Fi станет точкой доступа и SSH оборвётся."
+    echo "!!! Запустите установку в фоне, чтобы она доработала без вас:"
+    echo "!!!   sudo STELLA_OVER_WIFI=1 nohup ./deploy/install.sh > install.log 2>&1 &"
+    echo "!!!   tail -f install.log"
+    echo "!!! Когда SSH оборвётся, подождите 3 минуты и ищите сеть SOS-STELLA-RESCUE."
     exit 1
   fi
 fi
@@ -130,3 +133,8 @@ cat <<MSG
   Спасатели:    http://10.42.0.1/rescuer  (PIN в /etc/stella/stella.env)
 Проверка скорости модели:  $DST/llama.cpp/build/bin/llama-bench -m $DST/models/model.gguf -t 2
 MSG
+
+if [ "${STELLA_OVER_WIFI:-0}" = 1 ]; then
+  echo "==> Установка по Wi-Fi: перезагружаюсь через 10 секунд"
+  sleep 10; reboot
+fi
