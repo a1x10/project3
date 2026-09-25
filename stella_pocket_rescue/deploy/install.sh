@@ -121,7 +121,7 @@ echo "==> Службы"
 install -m 644 "$SRC"/deploy/systemd/*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl unmask hostapd
-systemctl enable stella-net hostapd dnsmasq nginx stella-app
+systemctl enable stella-net hostapd dnsmasq nginx stella-app stella-hw
 [ -x "$DST/llama.cpp/build/bin/llama-server" ] && systemctl enable stella-llm || echo "    stella-llm не включена (нет llama-server)"
 
 cat <<MSG

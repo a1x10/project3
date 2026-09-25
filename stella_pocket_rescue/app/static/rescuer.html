@@ -8,7 +8,13 @@
   :root{ --bg:#05080b; --panel:#0b1016; --panel2:#0e141c; --line:#17212e; --ink:#d7e3ee; --dim:#7b8ba0;
     --cy:#22d3ee; --gr:#34d399; --red:#f43f5e; --yel:#f5b83a; --grn:#34d399; --unk:#64748b; --vio:#a78bfa; }
   *{ box-sizing:border-box; }
-  [hidden]{ display:none !important; }   /* перебивает display:grid у этапов */
+  [hidden]{ display:none !important; }
+  .modebox{ display:flex; align-items:center; gap:8px; }
+  .modebox b{ font-size:12px; letter-spacing:1px; color:var(--gr); }
+  .modebox.em b{ color:var(--red); animation:blink 1s steps(1) infinite; }
+  #btnQuake{ color:var(--red); border-color:rgba(244,63,94,.5); background:rgba(244,63,94,.08); padding:6px 10px; font-size:12px; }
+  #btnStandby{ padding:6px 10px; font-size:12px; }
+  body.em header{ box-shadow:inset 0 -2px 0 var(--red); }   /* перебивает display:grid у этапов */
   body{ margin:0; background:
       radial-gradient(1200px 600px at 80% -10%, rgba(34,211,238,.06), transparent),
       radial-gradient(900px 500px at -10% 110%, rgba(167,139,250,.06), transparent), var(--bg);
@@ -134,6 +140,11 @@
     <span class="stat">онлайн <b id="hOnline">0</b></span>
     <span class="stat">аптайм <b id="hUp">—</b></span>
     <span class="stat">нагрузка <b id="hLoad">—</b></span>
+    <span class="modebox" id="modeBox">
+      <b id="modeLbl">РЕЖИМ: ОЖИДАНИЕ</b>
+      <button id="btnQuake" type="button">⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ</button>
+      <button id="btnStandby" type="button" hidden>ВЕРНУТЬ ОЖИДАНИЕ</button>
+    </span>
     <div class="counts">
       <span class="chip c-red" id="c-red">0</span>
       <span class="chip c-yellow" id="c-yellow">0</span>
@@ -223,6 +234,22 @@
   if(pin) login();
 
   function refresh(){ api('GET','/api/rescuer/incidents').then(apply).catch(function(){}); if(revealed && selected && document.activeElement.id!=='replyText') showDetail(selected,true); }
+
+  function applyMode(m){
+    var em = m.mode === 'emergency', box = document.getElementById('modeBox');
+    box.classList.toggle('em', em); document.body.classList.toggle('em', em);
+    document.getElementById('modeLbl').textContent = em ? ('РЕЖИМ ЧС' + (m.source==='drill'?' · УЧЕНИЯ':m.source==='sensor'?' · ДАТЧИК':'')) : 'РЕЖИМ: ОЖИДАНИЕ';
+    document.getElementById('btnQuake').hidden = em; document.getElementById('btnStandby').hidden = !em;
+  }
+  function pollMode(){ fetch('/api/status').then(function(r){return r.json();}).then(applyMode).catch(function(){}); }
+  setInterval(pollMode, 3000); pollMode();
+  document.getElementById('btnQuake').onclick = function(){
+    var b = this; if(b.dataset.arm !== '1'){ b.dataset.arm = '1'; b.textContent = 'НАЖМИТЕ ЕЩЁ РАЗ ДЛЯ ПОДТВЕРЖДЕНИЯ';
+      setTimeout(function(){ b.dataset.arm=''; b.textContent='⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ'; }, 4000); return; }
+    b.dataset.arm = ''; b.textContent = '⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ';
+    api('POST','/api/rescuer/mode',{mode:'emergency',source:'drill'}).then(applyMode);
+  };
+  document.getElementById('btnStandby').onclick = function(){ api('POST','/api/rescuer/mode',{mode:'standby'}).then(applyMode); };
 
   function apply(d){
     data=d;
