@@ -16,18 +16,17 @@ case "$MODEL" in
   *) echo "MODEL должен быть 0.5b или 1.5b"; exit 1 ;;
 esac
 
-# Защита: если вы зашли по SSH через Wi-Fi платы, после перенастройки wlan0 связь пропадёт
-if [ -n "${SSH_CONNECTION:-}" ]; then
-  MYIP=$(echo "$SSH_CONNECTION" | awk '{print $3}')
-  if ip -o -4 addr show dev wlan0 2>/dev/null | grep -qw "$MYIP" && [ "${STELLA_OVER_WIFI:-0}" != 1 ]; then
-    echo "!!! Вы подключены к плате через Wi-Fi ($MYIP на wlan0)."
-    echo "!!! В конце установки Wi-Fi станет точкой доступа и SSH оборвётся."
-    echo "!!! Запустите установку в фоне, чтобы она доработала без вас:"
-    echo "!!!   sudo STELLA_OVER_WIFI=1 nohup ./deploy/install.sh > install.log 2>&1 &"
-    echo "!!!   tail -f install.log"
-    echo "!!! Когда SSH оборвётся, подождите 3 минуты и ищите сеть SOS-STELLA-RESCUE."
-    exit 1
-  fi
+# Защита: если у платы нет проводной сети, то после перенастройки wlan0 она пропадёт
+# из вашей сети (и SSH через Wi-Fi оборвётся). Тогда ставим только в фоне, осознанно.
+ETH_IP=$(ip -o -4 addr show 2>/dev/null | awk '$2 ~ /^(eth|end|enp)/ {print $4; exit}')
+if [ -z "$ETH_IP" ] && [ "${STELLA_OVER_WIFI:-0}" != 1 ]; then
+  echo "!!! У платы нет подключения по кабелю — она в сети только через Wi-Fi."
+  echo "!!! В конце установки Wi-Fi станет точкой доступа, и связь с платой по SSH пропадёт."
+  echo "!!! Запустите установку в фоне, чтобы она доработала без вас:"
+  echo "!!!   sudo STELLA_OVER_WIFI=1 nohup ./deploy/install.sh > install.log 2>&1 &"
+  echo "!!!   tail -f install.log"
+  echo "!!! Когда SSH оборвётся, подождите 3 минуты и ищите сеть SOS-STELLA-RESCUE."
+  exit 1
 fi
 
 echo "==> Пакеты"
