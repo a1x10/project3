@@ -146,3 +146,10 @@ def test_llm_reply_used_when_available(client, monkeypatch):
     c.post("/api/chat", json={"session_id": sid, "text": "где помощь?"})
     msgs = c.get("/api/messages", params={"session_id": sid}).json()["messages"]
     assert msgs[-1]["text"].startswith("Спасатели уже знают")
+
+
+def test_console_reachable_by_board_ip(client):
+    # спасатель открывает консоль по кабелю: http://192.168.1.50/rescuer
+    c, _ = client
+    r = c.get("/rescuer", headers={"Host": "192.168.1.50"}, follow_redirects=False)
+    assert r.status_code == 200
