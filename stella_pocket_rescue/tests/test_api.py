@@ -153,3 +153,19 @@ def test_console_reachable_by_board_ip(client):
     c, _ = client
     r = c.get("/rescuer", headers={"Host": "192.168.1.50"}, follow_redirects=False)
     assert r.status_code == 200
+
+
+def test_emergency_mode_switch(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("STELLA_MODE_FILE", str(tmp_path / "mode.json"))
+    c, _ = client
+    assert c.get("/api/status").json()["mode"] == "standby"
+    pin = {"X-Rescuer-Pin": "123456"}
+    assert c.post("/api/rescuer/mode", json={"mode": "emergency", "source": "drill"}).status_code == 401
+    r = c.post("/api/rescuer/mode", json={"mode": "emergency", "source": "drill"}, headers=pin)
+    assert r.json()["mode"] == "emergency"
+    assert c.get("/api/status").json()["source"] == "drill"
+    sid = c.post("/api/session").json()["session_id"]
+    b = c.get("/api/messages", params={"session_id": sid}).json()["broadcasts"]
+    assert "УЧЕБНАЯ ТРЕВОГА" in b[-1]["text"]
+    c.post("/api/rescuer/mode", json={"mode": "standby"}, headers=pin)
+    assert c.get("/api/status").json()["mode"] == "standby"
