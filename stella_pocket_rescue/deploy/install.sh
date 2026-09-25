@@ -39,15 +39,35 @@ if [ ! -f /etc/stella/stella.env ]; then
 fi
 
 echo "==> Python-окружение"
-python3 -m venv "$DST/venv"
-"$DST/venv/bin/pip" install --upgrade pip
-"$DST/venv/bin/pip" install -r "$DST/requirements.txt"
+# Проекту нужен Python 3.10+. На старых образах (Ubuntu 20.04 от Orange Pi — Python 3.8)
+# ставим отдельный Python 3.11 через uv, системный Python не трогаем.
+if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)'; then
+  rm -rf "$DST/venv"; python3 -m venv "$DST/venv"
+  "$DST/venv/bin/pip" install --upgrade pip
+  "$DST/venv/bin/pip" install -r "$DST/requirements.txt"
+else
+  echo "    системный Python $(python3 -V 2>&1 | cut -d' ' -f2) слишком старый — ставлю Python 3.11 через uv"
+  export UV_INSTALL_DIR=/opt/stella/uv UV_PYTHON_INSTALL_DIR=/opt/stella/python
+  [ -x /opt/stella/uv/uv ] || curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh
+  rm -rf "$DST/venv"
+  /opt/stella/uv/uv venv --python 3.11 "$DST/venv"
+  /opt/stella/uv/uv pip install --python "$DST/venv/bin/python" -r "$DST/requirements.txt"
+fi
+"$DST/venv/bin/python" -c "import fastapi, uvicorn, httpx; print('    Python OK:', __import__('sys').version.split()[0])"
 
 echo "==> llama.cpp (сборка ~15–25 минут на RK3399)"
+LLM_OK=1
 if [ ! -x "$DST/llama.cpp/build/bin/llama-server" ]; then
+  # На Ubuntu 20.04 штатный g++ 9 слишком старый — берём g++-10, если есть
+  CCX=""; if g++ -dumpversion | awk -F. '{exit !($1<10)}'; then apt-get install -y g++-10 gcc-10 && CCX="-DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10"; fi
   [ -d "$DST/llama.cpp" ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp "$DST/llama.cpp"
-  cmake -S "$DST/llama.cpp" -B "$DST/llama.cpp/build" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
-  cmake --build "$DST/llama.cpp/build" --target llama-server llama-bench -j "${JOBS:-3}"
+  # Сборка нейросети не должна ронять всю установку: без неё работает резервный диспетчер
+  if ! { cmake -S "$DST/llama.cpp" -B "$DST/llama.cpp/build" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF $CCX \
+        && cmake --build "$DST/llama.cpp/build" --target llama-server llama-bench -j "${JOBS:-3}"; }; then
+    LLM_OK=0
+    echo "!!! llama.cpp не собралась. Сайт и сортировка будут работать, отвечать будет резервный диспетчер."
+    echo "!!! Пришлите последние строки ошибки сборки — поправим отдельно."
+  fi
 fi
 
 echo "==> Модель ($MODEL)"
@@ -80,7 +100,8 @@ echo "==> Службы"
 install -m 644 "$SRC"/deploy/systemd/*.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl unmask hostapd
-systemctl enable stella-net hostapd dnsmasq nginx stella-llm stella-app
+systemctl enable stella-net hostapd dnsmasq nginx stella-app
+[ -x "$DST/llama.cpp/build/bin/llama-server" ] && systemctl enable stella-llm || echo "    stella-llm не включена (нет llama-server)"
 
 cat <<MSG
 
