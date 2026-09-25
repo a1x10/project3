@@ -16,6 +16,17 @@ case "$MODEL" in
   *) echo "MODEL должен быть 0.5b или 1.5b"; exit 1 ;;
 esac
 
+# Защита: если вы зашли по SSH через Wi-Fi платы, после перенастройки wlan0 связь пропадёт
+if [ -n "${SSH_CONNECTION:-}" ]; then
+  MYIP=$(echo "$SSH_CONNECTION" | awk '{print $3}')
+  if ip -o -4 addr show dev wlan0 2>/dev/null | grep -qw "$MYIP"; then
+    echo "!!! Вы подключены к плате через Wi-Fi ($MYIP на wlan0)."
+    echo "!!! Установщик превращает Wi-Fi в точку доступа, и SSH оборвётся."
+    echo "!!! Подключите плату к роутеру КАБЕЛЕМ, зайдите по её проводному IP и запустите снова."
+    exit 1
+  fi
+fi
+
 echo "==> Пакеты"
 apt-get update
 # Не даём пакетам запускать службы во время установки (dnsmasq может упасть,
