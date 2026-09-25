@@ -43,7 +43,10 @@ async def captive_portal(request: Request, call_next):
     captive.apple.com, msftconnecttest.com …). DNS отвечает нашим IP на любой домен,
     а здесь мы отвечаем редиректом — ОС понимает, что это портал, и открывает чат."""
     host = (request.headers.get("host") or "").split(":")[0].lower()
-    if host and host not in PORTAL_HOSTS:
+    # IP-адрес (например, http://192.168.1.50/rescuer по кабелю) — отдаём как есть;
+    # редиректим только чужие доменные имена: так телефоны узнают портал.
+    is_ip = bool(re.fullmatch(r"[0-9.]+", host)) or host.startswith("[")
+    if host and host not in PORTAL_HOSTS and not is_ip:
         return RedirectResponse(config.PORTAL_URL, status_code=302)
     response = await call_next(request)
     if request.url.path.startswith("/api/"):

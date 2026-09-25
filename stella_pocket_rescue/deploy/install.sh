@@ -18,6 +18,10 @@ esac
 
 echo "==> Пакеты"
 apt-get update
+# Не даём пакетам запускать службы во время установки (dnsmasq может упасть,
+# если порт 53 занят, и тогда весь скрипт остановится)
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
+trap 'rm -f /usr/sbin/policy-rc.d' EXIT
 apt-get install -y hostapd dnsmasq nginx iptables iw python3-venv python3-pip \
     git cmake build-essential curl util-linux
 
@@ -43,7 +47,7 @@ echo "==> llama.cpp (сборка ~15–25 минут на RK3399)"
 if [ ! -x "$DST/llama.cpp/build/bin/llama-server" ]; then
   [ -d "$DST/llama.cpp" ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp "$DST/llama.cpp"
   cmake -S "$DST/llama.cpp" -B "$DST/llama.cpp/build" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
-  cmake --build "$DST/llama.cpp/build" --target llama-server llama-bench -j 4
+  cmake --build "$DST/llama.cpp/build" --target llama-server llama-bench -j "${JOBS:-3}"
 fi
 
 echo "==> Модель ($MODEL)"
@@ -62,6 +66,11 @@ fi
 install -m 644 "$SRC/deploy/hostapd.conf" /etc/hostapd/hostapd.conf
 [ -f /etc/default/hostapd ] && sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 install -m 644 "$SRC/deploy/dnsmasq-stella.conf" /etc/dnsmasq.d/stella.conf
+# Не регистрировать dnsmasq как DNS самой платы, иначе apt и git перестанут работать
+if [ -f /etc/default/dnsmasq ]; then
+  grep -q '^DNSMASQ_EXCEPT=' /etc/default/dnsmasq && sed -i 's/^DNSMASQ_EXCEPT=.*/DNSMASQ_EXCEPT="lo"/' /etc/default/dnsmasq \
+    || echo 'DNSMASQ_EXCEPT="lo"' >> /etc/default/dnsmasq
+fi
 install -m 644 "$SRC/deploy/nginx-stella.conf" /etc/nginx/sites-available/stella
 ln -sf /etc/nginx/sites-available/stella /etc/nginx/sites-enabled/stella
 rm -f /etc/nginx/sites-enabled/default
