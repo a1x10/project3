@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>Stella Pocket</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#000; --bg2:#0a0a0c; --tile:#101013; --tile2:#161619; --line:#1f1f24;
+    --ink:#f5f5f7; --muted:#86868b; --dim:#56565c;
+    --warm:#ff7a1a; --amber:#ffb340; --cyan:#5ee7df;
+    --red:#ff453a; --yellow:#ffd60a; --green:#30d158; --grey:#8e8e93;
+    --f:"Onest",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html{ background:var(--bg); }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--f); font-size:17px; line-height:1.47;
+    -webkit-font-smoothing:antialiased; overflow-x:clip; font-variant-numeric:tabular-nums; }
+  a{ color:inherit; text-decoration:none; }
+  h1,h2,h3{ margin:0; font-weight:700; letter-spacing:-.035em; line-height:1.05; text-wrap:balance; }
+  p{ margin:0; }
+  .gut{ padding-inline:max(20px, calc((100vw - 1040px)/2)); }
+
+  /* ---------- sub-nav ---------- */
+  .subnav{ position:sticky; top:env(safe-area-inset-top,0px); z-index:50; height:52px; display:flex; align-items:center;
+    gap:16px; background:rgba(0,0,0,.72); backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:1px solid rgba(255,255,255,.08); }
+  .subnav .name{ font-weight:600; font-size:19px; letter-spacing:-.02em; }
+  .subnav .links{ margin-left:auto; display:flex; gap:22px; font-size:12.5px; color:#d2d2d7; }
+  .subnav .links a:hover{ color:#fff; }
+  .pill{ display:inline-flex; align-items:center; justify-content:center; border-radius:980px; font-weight:500;
+    transition:background .25s, transform .2s; cursor:pointer; border:0; font-family:var(--f); }
+  .pill.small{ font-size:12px; padding:5px 12px; background:var(--warm); color:#fff; }
+  .pill.small:hover{ background:#ff8c38; }
+  @media(max-width:700px){ .subnav .links{ display:none; } .subnav .pill.small{ margin-left:auto; } }
+
+  /* ---------- 3D stage ---------- */
+  .stage{ position:relative; height:520vh; }
+  .sticky{ position:sticky; top:0; height:100vh; height:100svh; overflow:hidden; }
+  #gl{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .fallback{ position:absolute; inset:0; display:none; }
+  .no3d .fallback{ display:block; background:
+    radial-gradient(260px 160px at 50% 62%, #3a3d44, transparent 70%),
+    radial-gradient(420px 120px at 50% 70%, rgba(255,122,26,.35), transparent 70%); }
+
+  .panel{ position:absolute; z-index:2; pointer-events:none; will-change:opacity,transform; }
+  .panel .cta, .panel a{ pointer-events:auto; }
+  .p0{ top:clamp(80px,13vh,140px); left:0; right:0; text-align:center; }
+  .p0 .eyebrow{ color:var(--amber); font-weight:600; font-size:clamp(17px,2vw,21px); margin-bottom:6px; }
+  .p0 h1{ font-size:clamp(60px,11vw,128px); font-weight:800; letter-spacing:-.05em;
+    background:linear-gradient(180deg,#fff 20%,#ffcf9a 62%,#ff8a3d 100%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .p0 .sub{ font-size:clamp(22px,3vw,32px); font-weight:600; letter-spacing:-.02em; margin-top:10px; }
+  .p0 .cta{ display:flex; gap:14px; justify-content:center; margin-top:26px; flex-wrap:wrap; }
+  .pill.big{ font-size:17px; padding:12px 24px; background:var(--warm); color:#fff; }
+  .pill.big:hover{ background:#ff8c38; }
+  .pill.link{ font-size:17px; padding:12px 8px; background:none; color:var(--cyan); }
+  .pill.link:hover{ text-decoration:underline; }
+
+  .side{ top:50%; max-width:390px; }
+  .side.l{ left:max(24px, calc((100vw - 1040px)/2)); }
+  .side.r{ right:max(24px, calc((100vw - 1040px)/2)); }
+  .side .eyebrow{ font-size:17px; font-weight:600; margin-bottom:10px;
+    background:linear-gradient(90deg,var(--warm),var(--amber)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .side.c .eyebrow{ background:linear-gradient(90deg,var(--cyan),#9be9ff); -webkit-background-clip:text; background-clip:text; }
+  .side{ text-shadow:0 2px 24px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.6); }
+  .side h2{ font-size:clamp(34px,4.6vw,52px); }
+  .side p{ color:var(--muted); font-size:19px; margin-top:14px; }
+  .side p b{ color:var(--ink); font-weight:600; }
+  @media(max-width:760px){
+    .side{ top:auto; bottom:84px; left:20px !important; right:20px !important; max-width:none; text-align:center; }
+    .side h2{ font-size:32px; } .side p{ font-size:16px; }
+  }
+  .progress{ position:absolute; z-index:3; bottom:28px; left:50%; transform:translateX(-50%); display:flex; gap:6px; }
+  .progress i{ width:22px; height:3px; border-radius:2px; background:rgba(255,255,255,.18); overflow:hidden; position:relative; }
+  .progress i b{ position:absolute; inset:0; background:#fff; transform-origin:left; transform:scaleX(0); }
+  .scrollhint{ position:absolute; z-index:3; bottom:52px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--dim);
+    letter-spacing:.08em; text-transform:uppercase; transition:opacity .4s; }
+
+  /* ---------- sections ---------- */
+  section.s{ padding-block:clamp(90px,14vw,160px); }
+  .headline{ font-size:clamp(40px,6.4vw,80px); max-width:14ch; }
+  .headline.center{ margin-inline:auto; text-align:center; }
+  .lede{ color:var(--muted); font-size:clamp(19px,2.2vw,24px); max-width:36ch; margin-top:20px; letter-spacing:-.01em; }
+  .lede.center{ margin-inline:auto; text-align:center; }
+  .grad-w{ background:linear-gradient(180deg,#fff,#9a9aa0); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .grad-warm{ background:linear-gradient(90deg,var(--warm),var(--amber)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+  .js .rise{ transform:translateY(34px) scale(.985); transition:transform 1.1s cubic-bezier(.16,1,.3,1); }
+  .js .rise.in{ transform:none; }
+
+  /* bento */
+  .bento{ display:grid; grid-template-columns:repeat(6,1fr); gap:16px; margin-top:64px; }
+  .tile{ background:var(--tile); border-radius:28px; padding:32px; position:relative; overflow:hidden; min-height:260px;
+    display:flex; flex-direction:column; justify-content:space-between; }
+  .t-a{ grid-column:span 4; } .t-b{ grid-column:span 2; } .t-c{ grid-column:span 2; } .t-d{ grid-column:span 2; }
+  .t-e{ grid-column:span 2; } .t-f{ grid-column:span 3; } .t-g{ grid-column:span 3; }
+  @media(max-width:900px){ .bento{ grid-template-columns:repeat(2,1fr); } .tile{ grid-column:span 2 !important; }
+    .t-b,.t-c,.t-d,.t-e{ grid-column:span 1 !important; } }
+  @media(max-width:520px){ .t-b,.t-c,.t-d,.t-e{ grid-column:span 2 !important; } }
+  .tile .k{ font-size:14px; color:var(--muted); font-weight:500; }
+  .tile .big{ font-size:clamp(56px,7vw,88px); font-weight:800; letter-spacing:-.05em; line-height:1; }
+  .tile .unit{ font-size:.42em; font-weight:700; letter-spacing:-.02em; margin-left:4px; }
+  .tile .d{ color:var(--muted); font-size:15px; max-width:30ch; }
+  .tile .d b{ color:var(--ink); font-weight:600; }
+  .t-a{ background:radial-gradient(120% 100% at 85% 110%, rgba(94,231,223,.18), transparent 55%), var(--tile); }
+  .radar{ position:absolute; right:-40px; bottom:-40px; width:320px; height:320px; pointer-events:none; }
+  .radar span{ position:absolute; inset:0; margin:auto; border-radius:50%; border:1.5px solid var(--cyan);
+    width:40px; height:40px; opacity:0; animation:ripple 3.6s cubic-bezier(.2,.6,.3,1) infinite; }
+  .radar span:nth-child(2){ animation-delay:1.2s } .radar span:nth-child(3){ animation-delay:2.4s }
+  .radar em{ position:absolute; inset:0; margin:auto; width:14px; height:14px; border-radius:4px; background:var(--warm);
+    box-shadow:0 0 30px var(--warm); }
+  @keyframes ripple{ 0%{ width:40px; height:40px; opacity:.9 } 100%{ width:320px; height:320px; opacity:0 } }
+  .t-b .big{ background:linear-gradient(180deg,#ffd9b0,var(--warm)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .zero{ font-size:clamp(90px,11vw,140px) !important; }
+  .t-f{ background:linear-gradient(135deg,#1a1208,#101013 60%); }
+  .batt{ display:flex; align-items:center; gap:4px; margin-top:18px; }
+  .batt .shell{ width:150px; height:58px; border:3px solid #3a3a3f; border-radius:14px; padding:5px; }
+  .batt .fill{ height:100%; border-radius:8px; background:linear-gradient(90deg,var(--green),#7dffa3); width:80%;
+    animation:charge 4s ease-in-out infinite alternate; }
+  .batt .cap{ width:6px; height:20px; border-radius:0 4px 4px 0; background:#3a3a3f; }
+  @keyframes charge{ from{ width:34% } to{ width:92% } }
+  .chipviz{ display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:18px; max-width:240px; }
+  .chipviz i{ aspect-ratio:1; border-radius:6px; background:#26262b; }
+  .chipviz i.a72{ background:linear-gradient(135deg,var(--warm),var(--amber)); box-shadow:0 0 18px rgba(255,122,26,.45); }
+
+  /* triage */
+  .triage{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:64px; }
+  @media(max-width:900px){ .triage{ grid-template-columns:repeat(2,1fr); } }
+  @media(max-width:480px){ .triage{ grid-template-columns:1fr; } }
+  .tri{ background:var(--tile); border-radius:24px; padding:26px; }
+  .tri .dot{ width:14px; height:14px; border-radius:50%; background:var(--c); box-shadow:0 0 22px var(--c); }
+  .tri h3{ font-size:24px; margin:22px 0 8px; letter-spacing:-.02em; }
+  .tri p{ color:var(--muted); font-size:15px; }
+  .quote{ margin:56px auto 0; max-width:30ch; text-align:center; font-size:clamp(24px,3vw,34px); font-weight:600;
+    letter-spacing:-.025em; line-height:1.2; }
+  .quote span{ color:var(--muted); }
+
+  /* steps */
+  .steps{ display:grid; grid-template-columns:repeat(3,1fr); gap:48px; margin-top:72px; }
+  @media(max-width:820px){ .steps{ grid-template-columns:1fr; gap:36px; } }
+  .step .n{ font-size:15px; font-weight:600; color:var(--amber); }
+  .step h3{ font-size:28px; margin:12px 0 10px; letter-spacing:-.025em; }
+  .step p{ color:var(--muted); }
+  .phone{ margin-top:22px; width:100%; max-width:230px; aspect-ratio:9/17; border-radius:34px; border:7px solid #1c1c1f;
+    background:#0b0b0d; padding:14px 12px; display:flex; flex-direction:column; gap:8px; box-shadow:0 30px 60px rgba(0,0,0,.6); }
+  .phone .bar{ height:5px; width:40%; margin:0 auto 6px; background:#1c1c1f; border-radius:3px; }
+  .bub{ font-size:11.5px; line-height:1.35; padding:8px 10px; border-radius:14px; max-width:88%; }
+  .bub.op{ background:#1c1c1f; color:#e5e5ea; border-bottom-left-radius:4px; }
+  .bub.me{ background:var(--warm); color:#fff; align-self:flex-end; border-bottom-right-radius:4px; }
+  .bub.aid{ background:#2b2210; color:#ffd89a; border:1px solid #5a4214; max-width:100%; }
+  .wifi-list{ display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+  .wifi-list div{ background:#161618; border-radius:10px; padding:9px 10px; font-size:11.5px; display:flex; justify-content:space-between; }
+  .wifi-list div.on{ outline:1.5px solid var(--warm); }
+  .mini-map{ flex:1; border-radius:14px; background:#08080a; position:relative; overflow:hidden; }
+  .mini-map i{ position:absolute; border:1px solid rgba(94,231,223,.25); border-radius:50%; inset:0; margin:auto; }
+  .mini-map b{ position:absolute; width:10px; height:10px; border-radius:50%; }
+
+  /* specs */
+  .specs{ margin-top:64px; border-top:1px solid var(--line); }
+  .srow{ display:grid; grid-template-columns:220px 1fr; gap:24px; padding:26px 0; border-bottom:1px solid var(--line); }
+  @media(max-width:640px){ .srow{ grid-template-columns:1fr; gap:6px; } }
+  .srow .k{ font-weight:600; font-size:19px; letter-spacing:-.01em; }
+  .srow .v{ color:#d2d2d7; }
+  .srow .v small{ display:block; color:var(--muted); font-size:14px; margin-top:4px; }
+
+  /* final */
+  .final{ text-align:center; }
+  .final h2{ font-size:clamp(48px,8vw,104px); letter-spacing:-.05em; }
+  .final .cta{ display:flex; gap:14px; justify-content:center; margin-top:34px; flex-wrap:wrap; }
+  footer{ border-top:1px solid var(--line); padding-block:28px 48px; color:var(--dim); font-size:12px; line-height:1.6; }
+  footer ol{ margin:0; padding-left:18px; display:grid; gap:6px; }
+  footer .row{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:22px; }
+
+  :focus-visible{ outline:2px solid var(--cyan); outline-offset:3px; border-radius:6px; }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+    .js .rise{ transform:none; }
+  }
+</style>
+
+<nav class="subnav gut">
+  <a class="name" href="#top">Stella Pocket</a>
+  <div class="links">
+    <a href="#features">Обзор</a><a href="#triage">Триаж</a><a href="#how">Как работает</a><a href="#specs">Характеристики</a>
+  </div>
+  <a class="pill small" href="#how">Узнать больше</a>
+</nav>
+
+<div class="stage" id="top">
+  <div class="sticky" id="sticky">
+    <canvas id="gl" aria-label="3D-модель устройства Stella Pocket"></canvas>
+    <div class="fallback" aria-hidden="true"></div>
+
+    <div class="panel p0" data-i="0">
+      <div class="eyebrow">Новое устройство для зон бедствия</div>
+      <h1>Stella Pocket</h1>
+      <p class="sub">Связь, когда её нет.</p>
+      <div class="cta">
+        <a class="pill big" href="#features">Смотреть обзор</a>
+        <a class="pill link" href="#specs">Характеристики ›</a>
+      </div>
+    </div>
+
+    <div class="panel side l c" data-i="1">
+      <div class="eyebrow">Сеть из ничего</div>
+      <h2>Своя Wi‑Fi сеть на всё здание.</h2>
+      <p>Подключаетесь к <b>SOS‑STELLA</b>, и чат со спасателями открывается сам. Без интернета, без SIM-карты, без настроек.</p>
+    </div>
+
+    <div class="panel side r" data-i="2">
+      <div class="eyebrow">ИИ внутри</div>
+      <h2>Диспетчер, который не спит.</h2>
+      <p>Языковая модель работает прямо на шестиядерном процессоре. Спокойно отвечает, выясняет, <b>где вы</b> и <b>что случилось</b>.</p>
+    </div>
+
+    <div class="panel side l" data-i="3">
+      <div class="eyebrow">Питание</div>
+      <h2>Повербанк, и можно работать.</h2>
+      <p>5 вольт через USB‑C. Около <b>восьми часов</b> от повербанка на 20&nbsp;000&nbsp;мА·ч.¹</p>
+    </div>
+
+    <div class="panel side r c" data-i="4">
+      <div class="eyebrow">Размер</div>
+      <h2>91 × 56 мм.</h2>
+      <p>Плата размером с колоду карт и весом <b>49 граммов</b>. Весь пункт связи помещается в карман куртки.</p>
+    </div>
+
+    <div class="scrollhint" id="hint">Прокрутите</div>
+    <div class="progress" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+  </div>
+</div>
+
+<section class="s gut" id="features">
+  <h2 class="headline rise"><span class="grad-w">Всё, что нужно в первый час.</span></h2>
+  <p class="lede rise">Первые часы после землетрясения самые важные. Связи нет, а людей под завалами нужно найти как можно быстрее.</p>
+
+  <div class="bento">
+    <div class="tile t-a rise">
+      <div class="k">Покрытие</div>
+      <div>
+        <div class="big">2,4 <span class="unit">ГГц</span></div>
+        <p class="d" style="margin-top:12px">Частота выбрана специально: <b>сигнал проходит сквозь стены</b> и перекрытия, а сеть видят даже старые телефоны.</p>
+      </div>
+      <div class="radar" aria-hidden="true"><span></span><span></span><span></span><em></em></div>
+    </div>
+    <div class="tile t-b rise">
+      <div class="k">Нужно интернета</div>
+      <div class="big zero">0</div>
+      <p class="d">Каждый запрос обрабатывается внутри устройства.</p>
+    </div>
+    <div class="tile t-c rise">
+      <div class="k">Процессор</div>
+      <div>
+        <div class="big">6 <span class="unit">ядер</span></div>
+        <div class="chipviz" aria-hidden="true"><i class="a72"></i><i class="a72"></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <p class="d">Два <b>Cortex‑A72</b> для нейросети и четыре Cortex‑A53 для сети.</p>
+    </div>
+    <div class="tile t-d rise">
+      <div class="k">Память</div>
+      <div class="big">4 <span class="unit">ГБ</span></div>
+      <p class="d">LPDDR4 и 16 ГБ встроенной eMMC.</p>
+    </div>
+    <div class="tile t-e rise">
+      <div class="k">Модель</div>
+      <div class="big">1,5 <span class="unit">млрд</span></div>
+      <p class="d">параметров у <b>Qwen2.5</b>. Сжатая до 4 бит модель занимает около 1 ГБ.</p>
+    </div>
+    <div class="tile t-f rise">
+      <div class="k">Автономность</div>
+      <div class="batt" aria-hidden="true"><div class="shell"><div class="fill"></div></div><div class="cap"></div></div>
+      <p class="d">Около <b>8 часов</b> от повербанка на 20&nbsp;000&nbsp;мА·ч при работе ИИ и Wi‑Fi.¹</p>
+    </div>
+    <div class="tile t-g rise">
+      <div class="k">Надёжность</div>
+      <div class="big" style="font-size:clamp(40px,5vw,60px)">Без ИИ<br><span class="grad-warm">тоже работает.</span></div>
+      <p class="d">Если модель занята, отвечает резервный диспетчер. Советы по первой помощи приходят мгновенно.</p>
+    </div>
+  </div>
+</section>
+
+<section class="s gut" id="triage" style="background:var(--bg2)">
+  <h2 class="headline center rise"><span class="grad-w">Сначала те, кому хуже всех.</span></h2>
+  <p class="lede center rise">Каждое сообщение проходит через правила сортировки по мотивам протокола START. Спасатель сразу видит, кому помощь нужна первым.</p>
+  <div class="triage">
+    <div class="tri rise" style="--c:var(--red)"><div class="dot"></div><h3>Критично</h3><p>Не дышит, без сознания, сильное кровотечение, под завалом.</p></div>
+    <div class="tri rise" style="--c:var(--yellow)"><div class="dot"></div><h3>Срочно</h3><p>Перелом, не может идти, травма головы.</p></div>
+    <div class="tri rise" style="--c:var(--green)"><div class="dot"></div><h3>Лёгкий</h3><p>Царапины или человек уже в безопасности.</p></div>
+    <div class="tri rise" style="--c:var(--grey)"><div class="dot"></div><h3>Уточняется</h3><p>Диспетчер задаёт по одному вопросу, пока картина не станет ясной.</p></div>
+  </div>
+  <p class="quote rise">Крик капсом не обгонит тихое сообщение о кровотечении. <span>Паника видна спасателю, но очередь не меняет.</span></p>
+</section>
+
+<section class="s gut" id="how">
+  <h2 class="headline rise"><span class="grad-w">Три шага до помощи.</span></h2>
+  <div class="steps">
+    <div class="step rise">
+      <div class="n">Шаг 1</div>
+      <h3>Подключитесь</h3>
+      <p>Выберите сеть SOS‑STELLA в настройках Wi‑Fi. Пароль не нужен.</p>
+      <div class="phone" aria-hidden="true"><div class="bar"></div>
+        <div style="font-size:12px;font-weight:600;padding:2px 4px">Wi‑Fi</div>
+        <div class="wifi-list">
+          <div class="on"><span>SOS‑STELLA‑RESCUE</span><span>●●●</span></div>
+          <div style="opacity:.4"><span>Home_5G</span><span>нет сети</span></div>
+          <div style="opacity:.4"><span>Cafe_Free</span><span>нет сети</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="step rise">
+      <div class="n">Шаг 2</div>
+      <h3>Опишите, что случилось</h3>
+      <p>Чат открывается сам. Диспетчер спросит, где вы и есть ли раненые.</p>
+      <div class="phone" aria-hidden="true"><div class="bar"></div>
+        <div class="bub op">Здравствуйте. Где вы находитесь и есть ли раненые?</div>
+        <div class="bub me">ул. Абая 10, 3 этаж. Брата придавило, сильное кровотечение</div>
+        <div class="bub aid">Первая помощь: сильно прижмите рану чистой тканью и не отпускайте.</div>
+        <div class="bub op">Спасатели получили ваш вызов как критический.</div>
+      </div>
+    </div>
+    <div class="step rise">
+      <div class="n">Шаг 3</div>
+      <h3>Спасатели видят вас</h3>
+      <p>Вызов появляется на карте спасателя с приоритетом, адресом и силой сигнала.</p>
+      <div class="phone" aria-hidden="true"><div class="bar"></div>
+        <div class="mini-map">
+          <i style="width:60px;height:60px"></i><i style="width:120px;height:120px"></i><i style="width:180px;height:180px"></i>
+          <b style="left:48%;top:48%;background:var(--warm);border-radius:3px"></b>
+          <b style="left:30%;top:30%;background:var(--red);box-shadow:0 0 12px var(--red)"></b>
+          <b style="left:68%;top:62%;background:var(--yellow)"></b>
+          <b style="left:38%;top:72%;background:var(--green)"></b>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="s gut" id="specs" style="background:var(--bg2)">
+  <h2 class="headline rise"><span class="grad-w">Технические характеристики</span></h2>
+  <div class="specs">
+    <div class="srow"><div class="k">Процессор</div><div class="v">Rockchip RK3399, 6 ядер<small>2 × Cortex‑A72 и 4 × Cortex‑A53, графика Mali‑T860 MP4</small></div></div>
+    <div class="srow"><div class="k">Память</div><div class="v">4 ГБ LPDDR4<small>16 ГБ eMMC и слот microSD</small></div></div>
+    <div class="srow"><div class="k">Беспроводная связь</div><div class="v">Wi‑Fi 5 и Bluetooth 5.0<small>Открытая точка доступа 2,4 ГГц, captive portal по RFC 8910</small></div></div>
+    <div class="srow"><div class="k">Порты</div><div class="v">USB‑C, USB 3.0, 2 × USB 2.0, Gigabit Ethernet, HDMI 2.0<small>26‑контактный разъём GPIO, I²C, SPI, UART</small></div></div>
+    <div class="srow"><div class="k">Питание</div><div class="v">5 В / 4 А через USB‑C или DC<small>Работает от повербанка с выходом 5 В 3 А</small></div></div>
+    <div class="srow"><div class="k">ИИ</div><div class="v">Qwen2.5 1.5B, 4‑битная квантизация<small>llama.cpp на процессоре, без облака</small></div></div>
+    <div class="srow"><div class="k">Программы</div><div class="v">Linux (Armbian), nginx, FastAPI, SQLite<small>Открытый исходный код</small></div></div>
+    <div class="srow"><div class="k">Размер и вес платы</div><div class="v">91 × 56 мм, 49 г</div></div>
+  </div>
+</section>
+
+<section class="s gut final">
+  <h2 class="rise"><span class="grad-w">Stella Pocket.</span><br><span class="grad-warm">Связь в кармане.</span></h2>
+  <p class="lede center rise">Небольшое устройство, которое помогает спасателям в первые часы после бедствия.</p>
+  <div class="cta rise">
+    <a class="pill big" href="#top">Посмотреть ещё раз</a>
+    <a class="pill link" href="#how">Как это работает ›</a>
+  </div>
+</section>
+
+<footer class="gut">
+  <ol>
+    <li>Время работы оценочное. Оно зависит от нагрузки на нейросеть, числа подключённых телефонов и ёмкости повербанка.</li>
+    <li>Stella Pocket — учебный прототип. Он не сертифицирован и не заменяет штатные средства связи спасательных служб. Решение о помощи всегда принимает спасатель.</li>
+  </ol>
+  <div class="row"><span>Stella Pocket Rescue · 2026</span><span>Сделано на Orange Pi 4 LTS</span></div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.documentElement.classList.add('js');
+
+  /* ---------- section rise-in (transform only, content always visible) ---------- */
+  var rises = document.querySelectorAll('.rise');
+  if(!reduce && 'IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } }); },
+      { threshold:.12 });
+    rises.forEach(function(el){ io.observe(el); });
+  } else rises.forEach(function(el){ el.classList.add('in'); });
+
+  var stage = document.querySelector('.stage');
+  var panels = [].slice.call(document.querySelectorAll('.panel'));
+  var bars = [].slice.call(document.querySelectorAll('.progress b'));
+  var hint = document.getElementById('hint');
+  var KP = [0, .25, .5, .75, 1];
+
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+  function sstep(a,b,x){ x = clamp((x-a)/(b-a),0,1); return x*x*(3-2*x); }
+  function scrollP(){
+    var r = stage.getBoundingClientRect(); var span = r.height - innerHeight;
+    return span > 0 ? clamp(-r.top/span, 0, 1) : 0;
+  }
+  function updatePanels(p){
+    panels.forEach(function(el){
+      var i = +el.dataset.i, d = Math.abs(p - KP[i]);
+      var v = 1 - sstep(.045, .11, d);
+      if(i === 0 && p < .02) v = 1;
+      el.style.opacity = v.toFixed(3);
+      var dir = p < KP[i] ? 1 : -1;
+      var y = (1 - v) * 40 * dir;
+      el.style.transform = (el.classList.contains('side') && innerWidth > 760 ? 'translateY(calc(-50% + ' + y + 'px))' : 'translateY(' + y + 'px)');
+    });
+    bars.forEach(function(b, i){
+      var a = i === 0 ? 0 : KP[i] - .125, z = i === 4 ? 1 : KP[i] + .125;
+      b.style.transform = 'scaleX(' + sstep(a, z, p).toFixed(3) + ')';
+    });
+    hint.style.opacity = p > .03 ? 0 : 1;
+  }
+
+  /* ---------- 3D ---------- */
+  var canvas = document.getElementById('gl');
+  var THREE = window.THREE, renderer;
+  try{
+    if(!THREE) throw new Error('no three');
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+  }catch(e){
+    document.getElementById('sticky').classList.add('no3d');
+    var pp = 0; (function loop(){ var p = scrollP(); pp += (p-pp)*.12; updatePanels(pp); requestAnimationFrame(loop); })();
+    return;
+  }
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setClearColor(0x000000, 0);
+
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x000000, 9, 22);
+  var camera = new THREE.PerspectiveCamera(30, 1, .05, 60);
+
+  /* studio environment for reflections, generated in code */
+  (function(){
+    var pm = new THREE.PMREMGenerator(renderer);
+    var env = new THREE.Scene();
+    var room = new THREE.Mesh(new THREE.BoxGeometry(20,12,20), new THREE.MeshBasicMaterial({ color: 0x0c0c0e, side: THREE.BackSide }));
+    env.add(room);
+    function panel(w,h,pos,rot,col){
+      var m = new THREE.Mesh(new THREE.PlaneGeometry(w,h), new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide }));
+      m.position.set(pos[0],pos[1],pos[2]); m.rotation.set(rot[0],rot[1],rot[2]); env.add(m);
+    }
+    panel(10,2.2,[0,5.8,0],[Math.PI/2,0,0], new THREE.Color(4,4,4.2));
+    panel(3,7,[-9.8,1,0],[0,Math.PI/2,0], new THREE.Color(2.2,2.3,2.6));
+    panel(3,7,[9.8,1,-2],[0,-Math.PI/2,0], new THREE.Color(3,1.35,.45));
+    panel(6,2,[0,1.5,9.8],[0,Math.PI,0], new THREE.Color(1.2,1.3,1.5));
+    scene.environment = pm.fromScene(env, .035).texture;
+    pm.dispose();
+  })();
+
+  /* geometry helpers */
+  function rrShape(w,h,r){
+    var s = new THREE.Shape(), x = -w/2, y = -h/2;
+    s.moveTo(x+r,y); s.lineTo(x+w-r,y); s.quadraticCurveTo(x+w,y,x+w,y+r);
+    s.lineTo(x+w,y+h-r); s.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    s.lineTo(x+r,y+h); s.quadraticCurveTo(x,y+h,x,y+h-r);
+    s.lineTo(x,y+r); s.quadraticCurveTo(x,y,x+r,y); return s;
+  }
+  function slab(w,h,r,depth,bev){
+    var g = new THREE.ExtrudeGeometry(rrShape(w,h,r), { depth: depth, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 8, curveSegments: 28 });
+    g.rotateX(-Math.PI/2); g.computeBoundingBox(); g.translate(0, -g.boundingBox.min.y, 0); g.computeVertexNormals(); return g;
+  }
+  function canvasTex(w,h,draw){ var c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+    var t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 8; return t; }
+
+  var device = new THREE.Group(); scene.add(device);
+
+  var alu = new THREE.MeshPhysicalMaterial({ color: 0x3b3e45, metalness: 1, roughness: .34, clearcoat: .35, clearcoatRoughness: .25 });
+  var glass = new THREE.MeshPhysicalMaterial({ color: 0x07080a, metalness: .3, roughness: .12, clearcoat: 1, clearcoatRoughness: .05 });
+  var black = new THREE.MeshStandardMaterial({ color: 0x050506, metalness: .4, roughness: .6 });
+
+  var base = new THREE.Mesh(slab(1.5,.92,.16,.28,.05), alu); base.castShadow = true; base.receiveShadow = true; device.add(base);
+  var BASE_TOP = .38;
+
+  /* glowing seam */
+  var ringShape = rrShape(1.585,1.005,.2); ringShape.holes.push(rrShape(1.5,.92,.16));
+  var seamGeo = new THREE.ExtrudeGeometry(ringShape, { depth: .014, bevelEnabled: false, curveSegments: 28 });
+  seamGeo.rotateX(-Math.PI/2);
+  var seamMat = new THREE.MeshStandardMaterial({ color: 0x1a0a02, emissive: 0xff6a10, emissiveIntensity: 1.1, roughness: .4 });
+  var seam = new THREE.Mesh(seamGeo, seamMat); seam.position.y = BASE_TOP; device.add(seam);
+
+  /* internals revealed when the lid lifts */
+  var pcbTex = canvasTex(1024, 640, function(g,w,h){
+    g.fillStyle = '#07130e'; g.fillRect(0,0,w,h);
+    var seed = 7; function rnd(){ seed = (seed*16807) % 2147483647; return seed/2147483647; }
+    g.lineCap = 'round';
+    for(var i=0;i<140;i++){
+      g.strokeStyle = 'rgba(94,231,223,' + (.18 + rnd()*.35) + ')'; g.lineWidth = 1.5 + rnd()*2.5;
+      var x = rnd()*w, y = rnd()*h; g.beginPath(); g.moveTo(x,y);
+      for(var k=0;k<3;k++){ if(rnd()>.5) x += (rnd()-.5)*260; else y += (rnd()-.5)*200; g.lineTo(x,y); }
+      g.stroke(); g.fillStyle = 'rgba(255,190,90,.6)'; g.beginPath(); g.arc(x,y,3.5,0,Math.PI*2); g.fill();
+    }
+  });
+  var pcbMat = new THREE.MeshStandardMaterial({ map: pcbTex, emissiveMap: pcbTex, emissive: 0xffffff, emissiveIntensity: 0, roughness: .7, metalness: .2 });
+  var pcb = new THREE.Mesh(new THREE.BoxGeometry(1.34,.02,.8), pcbMat); pcb.position.set(0, BASE_TOP+.012, 0); pcb.receiveShadow = true; device.add(pcb);
+  var chipMat = new THREE.MeshPhysicalMaterial({ color: 0x9aa0a8, metalness: 1, roughness: .22, clearcoat: .6, emissive: 0xff7a1a, emissiveIntensity: 0 });
+  var chip = new THREE.Mesh(new THREE.BoxGeometry(.28,.035,.28), chipMat); chip.position.set(-.18, BASE_TOP+.04, .02); chip.castShadow = true; device.add(chip);
+  var chipLabel = canvasTex(256,256,function(g,w,h){ g.fillStyle='rgba(0,0,0,0)'; g.clearRect(0,0,w,h);
+    g.fillStyle='#1b1d21'; g.font='600 34px sans-serif'; g.textAlign='center'; g.fillText('RK3399',w/2,h/2+6);
+    g.font='500 20px sans-serif'; g.fillText('6-CORE',w/2,h/2+40); });
+  var chipTop = new THREE.Mesh(new THREE.PlaneGeometry(.26,.26), new THREE.MeshBasicMaterial({ map: chipLabel, transparent: true }));
+  chipTop.rotation.x = -Math.PI/2; chipTop.position.set(-.18, BASE_TOP+.0585, .02); device.add(chipTop);
+  var ramMat = new THREE.MeshStandardMaterial({ color: 0x111215, roughness: .5, metalness: .3 });
+  [[.2,-.2],[.2,.2],[.45,0]].forEach(function(p){ var r = new THREE.Mesh(new THREE.BoxGeometry(.16,.025,.13), ramMat); r.position.set(p[0], BASE_TOP+.034, p[1]); r.castShadow = true; device.add(r); });
+
+  /* lid */
+  var lid = new THREE.Group(); device.add(lid);
+  var lidBody = new THREE.Mesh(slab(1.5,.92,.16,.03,.03), glass); lidBody.castShadow = true; lid.add(lidBody);
+  var LID_Y = BASE_TOP + .014; lid.position.y = LID_Y;
+  var logoTex = canvasTex(1024,256,function(g,w,h){
+    g.clearRect(0,0,w,h); g.fillStyle = '#c9ccd2'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '600 118px Onest, Helvetica, Arial, sans-serif';
+    var t = 'STELLA', sp = 22, total = 0; for(var i=0;i<t.length;i++) total += g.measureText(t[i]).width + sp; total -= sp;
+    var x = w/2 - total/2; g.textAlign = 'left';
+    for(var j=0;j<t.length;j++){ g.fillText(t[j], x, h/2); x += g.measureText(t[j]).width + sp; }
+  });
+  var logo = new THREE.Mesh(new THREE.PlaneGeometry(.66,.165), new THREE.MeshBasicMaterial({ map: logoTex, transparent: true, opacity: .55 }));
+  logo.rotation.x = -Math.PI/2; logo.position.set(-.1, .0905, .12); lid.add(logo);
+  var sosMat = new THREE.MeshStandardMaterial({ color: 0x300000, emissive: 0xff3b30, emissiveIntensity: 1.6, roughness: .3 });
+  var sos = new THREE.Mesh(new THREE.CylinderGeometry(.07,.07,.014,48), sosMat); sos.position.set(.52, .096, -.26); lid.add(sos);
+  var sosRing = new THREE.Mesh(new THREE.TorusGeometry(.085,.008,16,64), alu); sosRing.rotation.x = Math.PI/2; sosRing.position.set(.52,.092,-.26); lid.add(sosRing);
+
+  /* ports on the front face */
+  var FRONT = .46 + .05 + .002;
+  function port(w,h,x,y){ var m = new THREE.Mesh(new THREE.BoxGeometry(w,h,.008), black); m.position.set(x,y,FRONT); device.add(m); return m; }
+  port(.11,.035,-.52,.19); port(.13,.055,-.3,.19); port(.17,.13,-.04,.19); port(.14,.045,.22,.19);
+  var ledG = new THREE.Mesh(new THREE.BoxGeometry(.018,.012,.006), new THREE.MeshStandardMaterial({ emissive: 0x30d158, emissiveIntensity: 2 }));
+  ledG.position.set(-.1,.265,FRONT+.004); device.add(ledG);
+  var ledO = new THREE.Mesh(new THREE.BoxGeometry(.018,.012,.006), new THREE.MeshStandardMaterial({ emissive: 0xffb340, emissiveIntensity: 2 }));
+  ledO.position.set(.02,.265,FRONT+.004); device.add(ledO);
+  var pwrLed = new THREE.Mesh(new THREE.CylinderGeometry(.012,.012,.006,24), new THREE.MeshStandardMaterial({ emissive: 0x5ee7df, emissiveIntensity: 2.5 }));
+  pwrLed.rotation.x = Math.PI/2; pwrLed.position.set(.55,.19,FRONT+.002); device.add(pwrLed);
+  /* side vents */
+  [-1,1].forEach(function(s){ for(var i=0;i<5;i++){ var v = new THREE.Mesh(new THREE.BoxGeometry(.008,.018,.56), black);
+    v.position.set(s*(.75+.05+.002), .1 + i*.045, 0); device.add(v); } });
+
+  /* floor: shadow catcher + warm glow */
+  var floor = new THREE.Mesh(new THREE.PlaneGeometry(40,40), new THREE.ShadowMaterial({ opacity: .55 }));
+  floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+  var glowTex = canvasTex(512,512,function(g,w,h){ var gr = g.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);
+    gr.addColorStop(0,'rgba(255,122,26,.55)'); gr.addColorStop(.35,'rgba(255,122,26,.12)'); gr.addColorStop(1,'rgba(255,122,26,0)');
+    g.fillStyle = gr; g.fillRect(0,0,w,h); });
+  var glow = new THREE.Mesh(new THREE.PlaneGeometry(6,6), new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glow.rotation.x = -Math.PI/2; glow.position.y = .002; scene.add(glow);
+
+  /* Wi-Fi ripples */
+  var rings = [];
+  for(var i=0;i<4;i++){
+    var rm = new THREE.MeshBasicMaterial({ color: 0x5ee7df, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    var r = new THREE.Mesh(new THREE.RingGeometry(.985,1,160), rm); r.rotation.x = -Math.PI/2; r.position.y = .01; scene.add(r); rings.push(r);
+  }
+  /* phones around the device */
+  var phones = [], cols = [0xff453a,0xffd60a,0x30d158,0x8e8e93,0x30d158,0xffd60a,0xff453a,0x30d158,0x8e8e93,0x30d158,0xffd60a,0x30d158];
+  var seed2 = 11; function rnd2(){ seed2 = (seed2*16807) % 2147483647; return seed2/2147483647; }
+  var phoneGeo = new THREE.BoxGeometry(.09,.012,.18);
+  for(var j=0;j<cols.length;j++){
+    var ang = j/cols.length*Math.PI*2 + rnd2()*.4, rad = 1.9 + rnd2()*3.1;
+    var pm2 = new THREE.MeshStandardMaterial({ color: 0x111113, emissive: cols[j], emissiveIntensity: 0, transparent: true, opacity: 0, roughness: .4 });
+    var ph = new THREE.Mesh(phoneGeo, pm2); ph.position.set(Math.cos(ang)*rad, .006, Math.sin(ang)*rad); ph.rotation.y = rnd2()*Math.PI;
+    ph.userData.r = rad; scene.add(ph); phones.push(ph);
+  }
+
+  /* lights */
+  var key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(3,6,4); key.castShadow = true;
+  key.shadow.mapSize.set(2048,2048); key.shadow.camera.left = -3; key.shadow.camera.right = 3; key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
+  key.shadow.radius = 6; key.shadow.bias = -.0004; scene.add(key);
+  var rim = new THREE.DirectionalLight(0xff8a3d, 1.3); rim.position.set(-4,2.2,-4); scene.add(rim);
+  var cool = new THREE.DirectionalLight(0x9be9ff, .5); cool.position.set(4,1,-3); scene.add(cool);
+  scene.add(new THREE.HemisphereLight(0x222428, 0x000000, .4));
+
+  /* keyframes for the scroll story */
+  var K = [
+    { cam:[2.9,2.35,4.3],   tgt:[0,.95,0],    rot:-.55, lid:0,   ring:.35, ph:0, chip:0 },
+    { cam:[-1.2,6.4,8.6],   tgt:[-1.3,0,0],   rot:0,    lid:0,   ring:1,   ph:1, chip:0 },
+    { cam:[1.6,3.3,2.9],    tgt:[.75,.35,.1], rot:.38,  lid:.55, ring:.1,  ph:0, chip:1 },
+    { cam:[-.2,0.62,3.3],   tgt:[-.62,.22,0], rot:0,    lid:0,   ring:.15, ph:0, chip:0 },
+    { cam:[-2.4,1.65,3.8],  tgt:[.62,.24,0],  rot:.62,  lid:0,   ring:.35, ph:0, chip:0 }
+  ];
+  function mix(a,b,t){ return a + (b-a)*t; }
+  function sample(p){
+    var seg = Math.min(3, Math.floor(p*4)), f = p*4 - seg, a = K[seg], b = K[seg+1];
+    var t = sstep(.22, .78, f);
+    return { cam:[mix(a.cam[0],b.cam[0],t), mix(a.cam[1],b.cam[1],t), mix(a.cam[2],b.cam[2],t)],
+             tgt:[mix(a.tgt[0],b.tgt[0],t), mix(a.tgt[1],b.tgt[1],t), mix(a.tgt[2],b.tgt[2],t)],
+             rot:mix(a.rot,b.rot,t), lid:mix(a.lid,b.lid,t), ring:mix(a.ring,b.ring,t), ph:mix(a.ph,b.ph,t), chip:mix(a.chip,b.chip,t) };
+  }
+
+  var mx = 0, my = 0, tmx = 0, tmy = 0;
+  addEventListener('pointermove', function(e){ tmx = e.clientX/innerWidth - .5; tmy = e.clientY/innerHeight - .5; }, { passive: true });
+
+  function resize(){
+    var w = canvas.clientWidth, h = canvas.clientHeight; if(!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w/h;
+    camera.fov = w < 700 ? 40 : 30; camera.updateProjectionMatrix();
+  }
+  addEventListener('resize', resize, { passive: true }); resize();
+
+  var pp = scrollP(), clock = new THREE.Clock(), look = new THREE.Vector3();
+  function frame(){
+    var t = clock.getElapsedTime();
+    pp += (scrollP() - pp) * .09;
+    mx += (tmx - mx) * .05; my += (tmy - my) * .05;
+    updatePanels(pp);
+    var s = sample(pp);
+    var mobile = canvas.clientWidth < 760;
+    var zoom = mobile ? 1.35 : 1;
+    camera.position.set(s.cam[0]*zoom + mx*.5, s.cam[1]*zoom - my*.3, s.cam[2]*zoom);
+    look.set(s.tgt[0], s.tgt[1] + (mobile ? .18 : 0), s.tgt[2]); camera.lookAt(look);
+
+    device.rotation.y = s.rot + (reduce ? 0 : Math.sin(t*.35)*.06);
+    lid.position.y = LID_Y + s.lid;
+    lid.rotation.x = -s.lid*.18;
+    pcbMat.emissiveIntensity = s.chip * (.55 + (reduce ? 0 : Math.sin(t*3)*.15));
+    chipMat.emissiveIntensity = s.chip * .35;
+    seamMat.emissiveIntensity = 1.05 + (reduce ? 0 : Math.sin(t*2.2)*.3);
+    sosMat.emissiveIntensity = 1.2 + (reduce ? 0 : (Math.sin(t*4) > .6 ? 1.4 : 0));
+    glow.material.opacity = .7 + s.chip*.3;
+
+    var maxR = 6.2;
+    rings.forEach(function(r, i){
+      var ph = reduce ? i/4 : ((t*.22) + i/4) % 1;
+      var rad = .9 + ph*maxR; r.scale.setScalar(rad);
+      r.material.opacity = (1-ph) * (1-ph) * .9 * s.ring;
+    });
+    phones.forEach(function(p){
+      var near = 0;
+      rings.forEach(function(r){ var d = Math.abs(r.scale.x - p.userData.r); if(d < .5) near = Math.max(near, 1 - d/.5); });
+      p.material.opacity = s.ph;
+      p.material.emissiveIntensity = s.ph * (.25 + near*2.2);
+    });
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
