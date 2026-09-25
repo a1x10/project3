@@ -182,8 +182,103 @@
     *{ animation:none !important; transition:none !important; }
     .js .rise{ transform:none; }
   }
+
+  /* ================= design layer ================= */
+  /* film grain */
+  .grain{ position:fixed; inset:-50%; z-index:90; pointer-events:none; opacity:.055; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    animation:grain 1.2s steps(6) infinite; }
+  @keyframes grain{ 0%{transform:translate(0,0)} 20%{transform:translate(-3%,2%)} 40%{transform:translate(2%,-3%)} 60%{transform:translate(-2%,-1%)} 80%{transform:translate(3%,3%)} 100%{transform:translate(0,0)} }
+
+  /* intro curtain */
+  .intro{ position:fixed; inset:0; z-index:200; background:#000; display:grid; place-items:center; pointer-events:none;
+    animation:curtain .9s cubic-bezier(.76,0,.24,1) 1.35s forwards; }
+  .intro .word{ display:flex; gap:.06em; font-weight:800; font-size:clamp(34px,6vw,64px); letter-spacing:.18em; overflow:hidden; }
+  .intro .word span{ display:inline-block; transform:translateY(110%); animation:up .7s cubic-bezier(.16,1,.3,1) forwards; }
+  .intro .bar{ position:absolute; left:50%; top:calc(50% + clamp(34px,5vw,54px)); width:clamp(140px,22vw,260px); height:2px;
+    transform:translateX(-50%) scaleX(0); transform-origin:left; background:linear-gradient(90deg,var(--warm),var(--amber));
+    animation:draw 1s cubic-bezier(.65,0,.35,1) .35s forwards; box-shadow:0 0 18px var(--warm); }
+  @keyframes up{ to{ transform:none } }
+  @keyframes draw{ to{ transform:translateX(-50%) scaleX(1) } }
+  @keyframes curtain{ to{ transform:translateY(-100%) } }
+
+  /* hero letters */
+  .p0 h1 .ch{ display:inline-block; transform:translateY(.9em) rotate(6deg); opacity:0;
+    animation:chIn 1s cubic-bezier(.16,1,.3,1) forwards; background:inherit; -webkit-background-clip:text; background-clip:text; }
+  @keyframes chIn{ to{ transform:none; opacity:1 } }
+  .p0 .eyebrow, .p0 .sub, .p0 .cta{ animation:fadeUp 1s cubic-bezier(.16,1,.3,1) both; }
+  .p0 .eyebrow{ animation-delay:1.55s } .p0 .sub{ animation-delay:2.15s } .p0 .cta{ animation-delay:2.3s }
+  @keyframes fadeUp{ from{ opacity:0; transform:translateY(18px) } to{ opacity:1; transform:none } }
+
+  /* cursor */
+  .cur, .cur-ring{ position:fixed; left:0; top:0; z-index:150; pointer-events:none; border-radius:50%; }
+  .cur{ width:6px; height:6px; background:#fff; margin:-3px 0 0 -3px; mix-blend-mode:difference; }
+  .cur-ring{ width:38px; height:38px; margin:-19px 0 0 -19px; border:1px solid rgba(255,255,255,.35);
+    transition:width .3s, height .3s, margin .3s, background .3s, border-color .3s; }
+  .cur-ring.hot{ width:70px; height:70px; margin:-35px 0 0 -35px; background:rgba(255,122,26,.12); border-color:rgba(255,122,26,.6); }
+  @media (hover:none){ .cur,.cur-ring{ display:none } }
+
+  /* scroll-lit statement */
+  .statement{ padding-block:clamp(110px,16vw,200px); }
+  .statement p{ font-size:clamp(30px,4.6vw,58px); font-weight:700; letter-spacing:-.035em; line-height:1.12; max-width:20ch; }
+  .statement .w{ color:#2a2a2e; transition:color .35s; }
+  .statement .w.lit{ color:var(--ink); }
+  .statement .w.hot.lit{ background:linear-gradient(90deg,var(--warm),var(--amber)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+  /* marquee */
+  .marquee{ border-block:1px solid var(--line); overflow:hidden; padding-block:22px; }
+  .marquee .track{ display:flex; gap:48px; width:max-content; animation:mq 38s linear infinite; }
+  .marquee span{ font-size:clamp(22px,3vw,34px); font-weight:700; letter-spacing:-.02em; color:#3a3a40; white-space:nowrap;
+    display:flex; align-items:center; gap:48px; }
+  .marquee span::after{ content:""; width:10px; height:10px; border-radius:50%; background:var(--warm); box-shadow:0 0 14px var(--warm); }
+  .marquee:hover .track{ animation-play-state:paused; }
+  @keyframes mq{ to{ transform:translateX(-50%) } }
+
+  /* pinned horizontal gallery */
+  .hgal{ position:relative; height:320vh; }
+  .hgal .pin{ position:sticky; top:0; height:100vh; height:100svh; overflow:hidden; display:flex; flex-direction:column; justify-content:center; }
+  .hgal .head{ margin-bottom:40px; }
+  .hgal .rail{ display:flex; gap:24px; will-change:transform; padding-left:max(20px, calc((100vw - 1040px)/2)); }
+  .scn{ flex:none; width:min(78vw,520px); aspect-ratio:4/5; max-height:62vh; border-radius:32px; position:relative; overflow:hidden;
+    background:var(--tile); display:flex; flex-direction:column; justify-content:flex-end; padding:32px; }
+  .scn canvas{ position:absolute; inset:0; width:100%; height:100%; }
+  .scn .lbl{ position:relative; font-size:14px; color:var(--amber); font-weight:600; }
+  .scn h3{ position:relative; font-size:clamp(28px,3.2vw,38px); margin-top:8px; }
+  .scn p{ position:relative; color:#b8b8bf; margin-top:10px; font-size:16px; max-width:34ch; }
+  .scn::after{ content:""; position:absolute; inset:0; background:linear-gradient(180deg,transparent 35%,rgba(0,0,0,.85)); }
+  .scn > *{ z-index:1; }
+  .hgal .count{ margin-top:28px; padding-left:max(20px, calc((100vw - 1040px)/2)); color:var(--dim); font-size:14px; }
+  .hgal .count b{ color:var(--ink); }
+
+  /* tilt + glare */
+  .tilt{ transform-style:preserve-3d; transition:transform .5s cubic-bezier(.16,1,.3,1); }
+  .tilt .glare{ position:absolute; inset:0; pointer-events:none; border-radius:inherit; opacity:0; transition:opacity .4s;
+    background:radial-gradient(420px circle at var(--gx,50%) var(--gy,50%), rgba(255,255,255,.10), transparent 45%); }
+  .tilt:hover .glare{ opacity:1; }
+  .tile, .tri{ transition:transform .5s cubic-bezier(.16,1,.3,1), box-shadow .5s; }
+  .tile:hover, .tri:hover{ box-shadow:0 30px 70px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.06); }
+
+  /* signal path drawing */
+  .route{ margin-top:72px; }
+  .route svg{ width:100%; height:auto; display:block; overflow:visible; }
+  .route .path{ fill:none; stroke:url(#rg); stroke-width:3; stroke-linecap:round; }
+  .route .node text{ fill:#d2d2d7; font-size:15px; font-weight:600; font-family:var(--f); }
+  .route .node small{ fill:var(--muted); }
+  .route .pulse{ fill:#fff; filter:drop-shadow(0 0 8px var(--warm)); }
+
+  /* magnetic */
+  .mag{ transition:transform .35s cubic-bezier(.16,1,.3,1), background .25s; will-change:transform; }
+
+  @media (prefers-reduced-motion: reduce){
+    .intro{ display:none } .p0 h1 .ch{ transform:none; opacity:1 } .grain{ animation:none }
+    .statement .w{ color:var(--ink) } .hgal{ height:auto } .hgal .pin{ position:static; height:auto; padding-block:80px }
+    .hgal .rail{ overflow-x:auto; transform:none !important }
+  }
 </style>
 
+<div class="intro" aria-hidden="true"><div class="word"><span style="animation-delay:.05s">S</span><span style="animation-delay:.1s">T</span><span style="animation-delay:.15s">E</span><span style="animation-delay:.2s">L</span><span style="animation-delay:.25s">L</span><span style="animation-delay:.3s">A</span></div><div class="bar"></div></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="cur" aria-hidden="true"></div><div class="cur-ring" aria-hidden="true"></div>
 <nav class="subnav gut">
   <a class="name" href="#top">Stella Pocket</a>
   <div class="links">
@@ -199,7 +294,7 @@
 
     <div class="panel p0" data-i="0">
       <div class="eyebrow">Новое устройство для зон бедствия</div>
-      <h1>Stella Pocket</h1>
+      <h1 aria-label="Stella Pocket" id="heroTitle">Stella Pocket</h1>
       <p class="sub">Связь, когда её нет.</p>
       <div class="cta">
         <a class="pill big" href="#features">Смотреть обзор</a>
@@ -233,6 +328,28 @@
 
     <div class="scrollhint" id="hint">Прокрутите</div>
     <div class="progress" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+  </div>
+</div>
+
+<section class="statement gut" aria-label="Зачем нужен Stella Pocket">
+  <p id="lit">Когда падает связь, <em data-hot>каждая минута</em> решает. Stella Pocket не ждёт, пока починят вышки. Он <em data-hot>сам становится сетью</em>, выслушивает каждого и показывает спасателям, <em data-hot>кому помощь нужна первым.</em></p>
+</section>
+
+<div class="marquee" aria-hidden="true"><div class="track">
+  <span>Землетрясение</span><span>Наводнение</span><span>Обрушение здания</span><span>Лавина</span><span>Пожар</span><span>Блэкаут</span><span>Ураган</span>
+  <span>Землетрясение</span><span>Наводнение</span><span>Обрушение здания</span><span>Лавина</span><span>Пожар</span><span>Блэкаут</span><span>Ураган</span>
+</div></div>
+
+<div class="hgal" id="hgal">
+  <div class="pin">
+    <div class="head gut"><h2 class="headline"><span class="grad-w">Где пригодится.</span></h2></div>
+    <div class="rail" id="rail">
+      <div class="scn" data-kind="quake"><canvas></canvas><div class="lbl">Сценарий 01</div><h3>После землетрясения</h3><p>Вышки лежат, люди под завалами. Хаб в кармане спасателя поднимает сеть за минуту.</p></div>
+      <div class="scn" data-kind="flood"><canvas></canvas><div class="lbl">Сценарий 02</div><h3>Затопленный квартал</h3><p>Жители на крышах. Каждый присылает свой этаж и число людей рядом.</p></div>
+      <div class="scn" data-kind="mount"><canvas></canvas><div class="lbl">Сценарий 03</div><h3>Горы и лавины</h3><p>Нет покрытия на десятки километров. Хаб на базе спасателей собирает всех, кто в зоне.</p></div>
+      <div class="scn" data-kind="dark"><canvas></canvas><div class="lbl">Сценарий 04</div><h3>Городской блэкаут</h3><p>Вышки без питания. Stella работает от повербанка и держит связь до утра.</p></div>
+    </div>
+    <div class="count"><b id="gi">01</b> / 04</div>
   </div>
 </div>
 
@@ -299,6 +416,17 @@
 
 <section class="s gut" id="how">
   <h2 class="headline rise"><span class="grad-w">Три шага до помощи.</span></h2>
+  <div class="route rise" aria-label="Путь сигнала от телефона к спасателю">
+    <svg viewBox="0 0 1000 220" id="routeSvg">
+      <defs><linearGradient id="rg" x1="0" x2="1"><stop offset="0" stop-color="#5ee7df"/><stop offset=".5" stop-color="#ff7a1a"/><stop offset="1" stop-color="#ffb340"/></linearGradient></defs>
+      <path class="path" id="rpath" d="M60 150 C 220 150, 260 60, 420 70 S 620 170, 760 110 S 900 60, 940 70"/>
+      <g class="node"><circle cx="60" cy="150" r="9" fill="#5ee7df"/><text x="60" y="190" text-anchor="middle">Телефон</text></g>
+      <g class="node" id="midNode"><circle cx="500" cy="100" r="11" fill="#ff7a1a"/><circle cx="500" cy="100" r="22" fill="none" stroke="#ff7a1a" stroke-opacity=".35"/><text x="500" y="54" text-anchor="middle">Stella Pocket</text></g>
+      <g class="node"><circle cx="940" cy="70" r="9" fill="#ffb340"/><text x="940" y="112" text-anchor="middle">Спасатель</text></g>
+      <circle class="pulse" id="rpulse" r="5"/>
+    </svg>
+  </div>
+
   <div class="steps">
     <div class="step rise">
       <div class="n">Шаг 1</div>
@@ -568,6 +696,20 @@
     ph.userData.r = rad; scene.add(ph); phones.push(ph);
   }
 
+
+  /* dust in the key light */
+  var dustN = 420, dPos = new Float32Array(dustN*3), dSpd = new Float32Array(dustN);
+  var sd = 3; function rd(){ sd = (sd*16807) % 2147483647; return sd/2147483647; }
+  for(var q=0;q<dustN;q++){ dPos[q*3]=(rd()-.5)*7; dPos[q*3+1]=rd()*3.2; dPos[q*3+2]=(rd()-.5)*7; dSpd[q]=.02+rd()*.06; }
+  var dGeo = new THREE.BufferGeometry(); dGeo.setAttribute('position', new THREE.BufferAttribute(dPos,3));
+  var dotTex = canvasTex(64,64,function(g,w,h){ var gr=g.createRadialGradient(32,32,0,32,32,32); gr.addColorStop(0,'rgba(255,220,180,1)'); gr.addColorStop(1,'rgba(255,220,180,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+  var dust = new THREE.Points(dGeo, new THREE.PointsMaterial({ size:.035, map:dotTex, transparent:true, opacity:.55, depthWrite:false, blending:THREE.AdditiveBlending }));
+  scene.add(dust);
+  /* soft halo around the glowing seam */
+  var haloTex = canvasTex(512,256,function(g,w,h){ var gr=g.createRadialGradient(w/2,h/2,10,w/2,h/2,w/2); gr.addColorStop(0,'rgba(255,120,30,.55)'); gr.addColorStop(.5,'rgba(255,120,30,.12)'); gr.addColorStop(1,'rgba(255,120,30,0)'); g.fillStyle=gr; g.fillRect(0,0,w,h); });
+  var halo = new THREE.Mesh(new THREE.PlaneGeometry(3.2,1.9), new THREE.MeshBasicMaterial({ map:haloTex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending }));
+  halo.rotation.x = -Math.PI/2; halo.position.y = BASE_TOP+.005; device.add(halo);
+
   /* lights */
   var key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(3,6,4); key.castShadow = true;
   key.shadow.mapSize.set(2048,2048); key.shadow.camera.left = -3; key.shadow.camera.right = 3; key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
@@ -637,10 +779,154 @@
       p.material.emissiveIntensity = s.ph * (.25 + near*2.2);
     });
 
+    if(!reduce){ var ar = dGeo.attributes.position.array;
+      for(var q=0;q<dustN;q++){ ar[q*3+1] += dSpd[q]*.016; ar[q*3] += Math.sin(t*.3+q)*.0006; if(ar[q*3+1] > 3.2) ar[q*3+1] = 0; }
+      dGeo.attributes.position.needsUpdate = true; }
+    halo.material.opacity = .75 + (reduce ? 0 : Math.sin(t*2.2)*.2) + s.chip*.3;
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+})();
+</script>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function clamp(x,a,b){ return Math.max(a,Math.min(b,x)); }
+
+  /* hero title: split into letters */
+  var h = document.getElementById('heroTitle');
+  if(h && !reduce){
+    var txt = h.textContent; h.textContent = '';
+    for(var i=0;i<txt.length;i++){ var c = document.createElement('span'); c.className = 'ch'; c.setAttribute('aria-hidden','true');
+      c.textContent = txt[i] === ' ' ? ' ' : txt[i]; c.style.animationDelay = (1.5 + i*.045) + 's'; h.appendChild(c); }
+  }
+
+  /* cursor */
+  var cur = document.querySelector('.cur'), ring = document.querySelector('.cur-ring');
+  var cx = innerWidth/2, cy = innerHeight/2, rx = cx, ry = cy;
+  if(matchMedia('(hover:hover)').matches){
+    addEventListener('pointermove', function(e){ cx = e.clientX; cy = e.clientY; cur.style.transform = 'translate('+cx+'px,'+cy+'px)'; }, {passive:true});
+    (function loop(){ rx += (cx-rx)*.16; ry += (cy-ry)*.16; ring.style.transform = 'translate('+rx+'px,'+ry+'px)'; requestAnimationFrame(loop); })();
+    document.querySelectorAll('a, button, .tile, .tri, .scn').forEach(function(el){
+      el.addEventListener('pointerenter', function(){ ring.classList.add('hot'); });
+      el.addEventListener('pointerleave', function(){ ring.classList.remove('hot'); });
+    });
+  }
+
+  /* magnetic buttons */
+  if(!reduce) document.querySelectorAll('.pill').forEach(function(b){
+    b.classList.add('mag');
+    b.addEventListener('pointermove', function(e){ var r = b.getBoundingClientRect();
+      b.style.transform = 'translate('+((e.clientX-r.left-r.width/2)*.28)+'px,'+((e.clientY-r.top-r.height/2)*.35)+'px)'; });
+    b.addEventListener('pointerleave', function(){ b.style.transform = ''; });
+  });
+
+  /* tilt + glare */
+  if(!reduce && matchMedia('(hover:hover)').matches) document.querySelectorAll('.tile, .tri').forEach(function(t){
+    t.classList.add('tilt'); var g = document.createElement('div'); g.className = 'glare'; t.appendChild(g);
+    t.addEventListener('pointermove', function(e){ var r = t.getBoundingClientRect(), x = (e.clientX-r.left)/r.width, y = (e.clientY-r.top)/r.height;
+      t.style.transform = 'perspective(900px) rotateX('+((.5-y)*7)+'deg) rotateY('+((x-.5)*9)+'deg) translateZ(0)';
+      t.style.setProperty('--gx', (x*100)+'%'); t.style.setProperty('--gy', (y*100)+'%'); });
+    t.addEventListener('pointerleave', function(){ t.style.transform = ''; });
+  });
+
+  /* count-up numbers */
+  function countUp(el){
+    var raw = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild.nodeValue.trim() : ''; var m = raw.match(/^(\d+)(?:,(\d))?$/);
+    if(!m || reduce) return; var target = parseFloat(m[1] + (m[2] ? '.' + m[2] : '')), dec = m[2] ? 1 : 0, t0 = null, node = el.firstChild;
+    function step(ts){ if(!t0) t0 = ts; var k = clamp((ts-t0)/1400,0,1), e = 1-Math.pow(1-k,4);
+      var v = (target*e).toFixed(dec).replace('.', ','); node.nodeValue = v + ' '; if(k<1) requestAnimationFrame(step); else node.nodeValue = raw + ' '; }
+    node.nodeValue = (dec ? '0,0' : '0') + ' '; requestAnimationFrame(step);
+  }
+  var bigs = document.querySelectorAll('.tile .big');
+  if('IntersectionObserver' in window){
+    var co = new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ countUp(e.target); co.unobserve(e.target); } }); }, {threshold:.6});
+    bigs.forEach(function(b){ co.observe(b); });
+  }
+
+  /* scroll-lit statement */
+  var lit = document.getElementById('lit'), words = [];
+  if(lit){
+    var frag = document.createDocumentFragment();
+    [].slice.call(lit.childNodes).forEach(function(n){
+      var hot = n.nodeType === 1 && n.hasAttribute('data-hot'), text = n.textContent;
+      text.split(/(\s+)/).forEach(function(tok){
+        if(!tok) return; if(/^\s+$/.test(tok)){ frag.appendChild(document.createTextNode(tok)); return; }
+        var w = document.createElement('span'); w.className = 'w' + (hot ? ' hot' : ''); w.textContent = tok; frag.appendChild(w); words.push(w);
+      });
+    });
+    lit.textContent = ''; lit.appendChild(frag);
+  }
+
+  /* horizontal gallery */
+  var hg = document.getElementById('hgal'), rail = document.getElementById('rail'), gi = document.getElementById('gi');
+
+  function onScroll(){
+    if(words.length){
+      var r = lit.getBoundingClientRect(), k = clamp((innerHeight*.78 - r.top) / (r.height + innerHeight*.35), 0, 1);
+      var n = Math.round(k * words.length);
+      for(var i=0;i<words.length;i++) words[i].classList.toggle('lit', reduce || i < n);
+    }
+    if(hg && !reduce){
+      var rr = hg.getBoundingClientRect(), span = rr.height - innerHeight, p = span > 0 ? clamp(-rr.top/span,0,1) : 0;
+      var max = rail.scrollWidth - innerWidth + 40; rail.style.transform = 'translate3d(' + (-p*Math.max(0,max)) + 'px,0,0)';
+      gi.textContent = '0' + (1 + Math.min(3, Math.floor(p*4*.999)));
+    }
+    var rp = document.getElementById('rpath'), pulse = document.getElementById('rpulse');
+    if(rp){
+      var L = rp.getTotalLength(), b = rp.getBoundingClientRect(), k2 = reduce ? 1 : clamp((innerHeight*.85 - b.top)/(innerHeight*.55),0,1);
+      rp.style.strokeDasharray = L; rp.style.strokeDashoffset = L*(1-k2);
+    }
+  }
+  addEventListener('scroll', onScroll, {passive:true}); addEventListener('resize', onScroll); onScroll();
+
+  /* pulse travelling along the route */
+  (function(){ var rp = document.getElementById('rpath'), pulse = document.getElementById('rpulse'); if(!rp) return;
+    var L = rp.getTotalLength(), t0 = performance.now();
+    var mid = rp.getPointAtLength(L*.5), mn = document.getElementById('midNode');
+    mn.querySelectorAll('circle').forEach(function(c){ c.setAttribute('cx', mid.x); c.setAttribute('cy', mid.y); });
+    var mt = mn.querySelector('text'); mt.setAttribute('x', mid.x); mt.setAttribute('y', mid.y - 34);
+    (function loop(now){ var k = ((now-t0)/2600) % 1, pt = rp.getPointAtLength(L*k); pulse.setAttribute('cx',pt.x); pulse.setAttribute('cy',pt.y);
+      pulse.setAttribute('opacity', (Math.sin(k*Math.PI)).toFixed(2)); if(!reduce) requestAnimationFrame(loop); })(t0);
+  })();
+
+  /* generative scenario art */
+  document.querySelectorAll('.scn').forEach(function(card, idx){
+    var cv = card.querySelector('canvas'), g = cv.getContext('2d'), kind = card.dataset.kind, dpr = Math.min(2, devicePixelRatio||1), W, H;
+    function size(){ var r = cv.getBoundingClientRect(); W = cv.width = Math.max(1,r.width*dpr); H = cv.height = Math.max(1,r.height*dpr); }
+    size(); addEventListener('resize', size);
+    var pal = { quake:['#2a1206','#ff7a1a'], flood:['#04121a','#5ee7df'], mount:['#0b0e16','#9bb7ff'], dark:['#07070a','#ffb340'] }[kind];
+    var visible = false; new IntersectionObserver(function(es){ visible = es[0].isIntersecting; }).observe(card);
+    function draw(now){
+      if(visible || reduce){
+        var t = now/1000; g.fillStyle = pal[0]; g.fillRect(0,0,W,H);
+        var gr = g.createRadialGradient(W*.5,H*.42,0,W*.5,H*.42,W*.9); gr.addColorStop(0,pal[1]+'33'); gr.addColorStop(1,'transparent'); g.fillStyle = gr; g.fillRect(0,0,W,H);
+        g.lineWidth = 1.2*dpr;
+        if(kind === 'quake'){ // city skyline trembling + seismic line
+          for(var i=0;i<14;i++){ var bw = W/14, bh = H*(.18 + ((i*37)%10)/28), sh = Math.sin(t*18+i)*2*dpr*Math.max(0,Math.sin(t*1.3));
+            g.fillStyle = '#140905'; g.fillRect(i*bw+sh, H*.62-bh, bw-3*dpr, bh); }
+          g.strokeStyle = pal[1]; g.beginPath(); for(var x=0;x<W;x+=3*dpr){ var y = H*.28 + Math.sin(x*.05/dpr + t*6)*Math.max(0,Math.sin(t*1.3))*18*dpr*Math.exp(-Math.abs(x-W/2)/(W*.3)); x?g.lineTo(x,y):g.moveTo(x,y);} g.stroke();
+        } else if(kind === 'flood'){ // rising waves + rooftops
+          for(var i=0;i<9;i++){ g.fillStyle='#061a22'; var bx=i*W/9; g.fillRect(bx+6*dpr,H*.35+((i*53)%7)*8*dpr,W/9-12*dpr,H); }
+          for(var l=0;l<5;l++){ g.strokeStyle = 'rgba(94,231,223,' + (.12+l*.1) + ')'; g.beginPath();
+            for(var x=0;x<=W;x+=4*dpr){ var y = H*(.5+l*.05) + Math.sin(x*.012/dpr + t*1.4 + l)*8*dpr; x?g.lineTo(x,y):g.moveTo(x,y);} g.stroke(); }
+        } else if(kind === 'mount'){ // ridges + snow particles
+          for(var l=0;l<3;l++){ g.fillStyle = ['#121828','#0e1320','#0a0e18'][l]; g.beginPath(); g.moveTo(0,H);
+            for(var x=0;x<=W;x+=W/12){ g.lineTo(x, H*(.35+l*.12) + Math.abs(Math.sin(x*.004/dpr*(l+1)+l))*H*.18); } g.lineTo(W,H); g.fill(); }
+          g.fillStyle='rgba(220,230,255,.8)'; for(var i=0;i<60;i++){ var px=(i*97%W + t*12*dpr*(1+i%3))%W, py=(i*53%H + t*30*dpr*(1+i%2))%H; g.fillRect(px,py,1.6*dpr,1.6*dpr); }
+        } else { // dark city windows flickering + one beacon
+          for(var i=0;i<60;i++){ var wx=(i*89)%W, wy=H*.3+((i*41)%Math.floor(H*.4)); var on = Math.sin(t*2+i*1.7) > .92;
+            g.fillStyle = on ? 'rgba(255,200,120,.8)' : 'rgba(255,255,255,.04)'; g.fillRect(wx,wy,5*dpr,7*dpr); }
+          var r = (t*60*dpr)%(W*.6); g.strokeStyle='rgba(255,179,64,'+(1-r/(W*.6))+')'; g.beginPath(); g.arc(W*.5,H*.42,r,0,Math.PI*2); g.stroke();
+          g.fillStyle='#ffb340'; g.beginPath(); g.arc(W*.5,H*.42,4*dpr,0,Math.PI*2); g.fill();
+        }
+      }
+      if(!reduce) requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+  });
 })();
 </script>
 
