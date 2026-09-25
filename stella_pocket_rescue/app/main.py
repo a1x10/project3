@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, llm, stations
+from . import config, llm, mode, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 
@@ -73,6 +73,13 @@ def rescuer_page():
 @app.get("/canonical.html", include_in_schema=False)
 def connectivity_check():
     return RedirectResponse(config.PORTAL_URL, status_code=302)
+
+
+@app.get("/api/status")
+def status():
+    """Публичный статус узла: портал по нему переключается между «ожиданием» и «ЧС»."""
+    m = mode.read()
+    return {"mode": m["mode"], "source": m.get("source"), "since": m.get("since"), "note": m.get("note")}
 
 
 @app.get("/api/health")
@@ -364,6 +371,28 @@ def rescuer_reply(incident_id: int, body: TextIn):
     incident = db.get_incident_by_id(incident_id) or _not_found()
     db.add_message(incident["session_id"], "rescuer", body.text.strip())
     return {"ok": True}
+
+
+class ModeIn(BaseModel):
+    mode: str
+    source: str = "manual"
+    note: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/rescuer/mode", dependencies=[Depends(rescuer)])
+def set_mode(body: ModeIn):
+    """Кнопка в консоли: «Имитировать землетрясение» (учения) или «Режим ожидания»."""
+    if body.mode not in (mode.STANDBY, mode.EMERGENCY):
+        raise HTTPException(400, "mode must be standby or emergency")
+    if body.source not in mode.SOURCES:
+        raise HTTPException(400, f"source must be one of {mode.SOURCES}")
+    before = mode.read()["mode"]
+    m = mode.write(body.mode, body.source if body.mode == mode.EMERGENCY else None, body.note)
+    if body.mode == mode.EMERGENCY and before != mode.EMERGENCY:
+        text = ("УЧЕБНАЯ ТРЕВОГА. " if body.source == "drill" else "") + \
+               "Режим ЧС: землетрясение. Сохраняйте спокойствие. Опишите, где вы и есть ли раненые."
+        db.add_broadcast(text)
+    return m
 
 
 @app.post("/api/rescuer/broadcast", dependencies=[Depends(rescuer)])
