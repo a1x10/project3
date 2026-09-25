@@ -32,7 +32,7 @@ cp -r "$SRC/app" "$SRC/deploy" "$SRC/requirements.txt" "$DST/"
 chown -R stella:stella /var/lib/stella
 
 if [ ! -f /etc/stella/stella.env ]; then
-  PIN=$(tr -dc 0-9 </dev/urandom | head -c 6)
+  PIN=$(shuf -i 100000-999999 -n 1)
   sed "s/^STELLA_RESCUER_PIN=.*/STELLA_RESCUER_PIN=$PIN/" "$SRC/deploy/stella.env.example" > /etc/stella/stella.env
   chmod 640 /etc/stella/stella.env && chgrp stella /etc/stella/stella.env
   echo "PIN спасателей: $PIN  (хранится в /etc/stella/stella.env)"
