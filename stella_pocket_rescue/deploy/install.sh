@@ -61,9 +61,17 @@ if [ ! -x "$DST/llama.cpp/build/bin/llama-server" ]; then
   # На Ubuntu 20.04 штатный g++ 9 слишком старый — берём g++-10, если есть
   CCX=""; if g++ -dumpversion | awk -F. '{exit !($1<10)}'; then apt-get install -y g++-10 gcc-10 && CCX="-DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10"; fi
   [ -d "$DST/llama.cpp" ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp "$DST/llama.cpp"
+  # llama.cpp нужен CMake >= 3.18; в Ubuntu 20.04 только 3.16 — берём свежий из pip в venv
+  CMAKE=cmake
+  if ! cmake --version | awk 'NR==1{split($3,v,"."); exit !(v[1]>3 || (v[1]==3 && v[2]>=18))}'; then
+    if [ -x /opt/stella/uv/uv ]; then /opt/stella/uv/uv pip install --python "$DST/venv/bin/python" cmake
+    else "$DST/venv/bin/pip" install cmake; fi
+    CMAKE="$DST/venv/bin/cmake"
+  fi
+  rm -rf "$DST/llama.cpp/build"
   # Сборка нейросети не должна ронять всю установку: без неё работает резервный диспетчер
-  if ! { cmake -S "$DST/llama.cpp" -B "$DST/llama.cpp/build" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF $CCX \
-        && cmake --build "$DST/llama.cpp/build" --target llama-server llama-bench -j "${JOBS:-3}"; }; then
+  if ! { "$CMAKE" -S "$DST/llama.cpp" -B "$DST/llama.cpp/build" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF $CCX \
+        && "$CMAKE" --build "$DST/llama.cpp/build" --target llama-server llama-bench -j "${JOBS:-3}"; }; then
     LLM_OK=0
     echo "!!! llama.cpp не собралась. Сайт и сортировка будут работать, отвечать будет резервный диспетчер."
     echo "!!! Пришлите последние строки ошибки сборки — поправим отдельно."
