@@ -119,6 +119,7 @@ nginx -t
 
 echo "==> Службы"
 install -m 644 "$SRC"/deploy/systemd/*.service /etc/systemd/system/
+install -m 755 "$SRC/deploy/stella" /usr/local/bin/stella
 systemctl daemon-reload
 systemctl unmask hostapd
 systemctl enable stella-net hostapd dnsmasq nginx stella-app stella-hw

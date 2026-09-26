@@ -1,0 +1,69 @@
+#!/bin/bash
+# stella — управление узлом одной командой.
+#   sudo stella status                      что сейчас работает
+#   sudo stella home "ИМЯ_WIFI" "ПАРОЛЬ"    режим обслуживания: плата в домашнем Wi-Fi (есть интернет)
+#   sudo stella sos                         вернуть спасательную сеть SOS-STELLA-RESCUE
+#   sudo stella update                      поставить новый архив ~/stella_pocket_rescue.zip (нужен интернет)
+#   sudo stella logs                        последние записи журнала
+#   sudo stella pin                         показать PIN спасателя
+set -u
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+NM_CONF=/etc/NetworkManager/conf.d/stella-unmanaged.conf
+SRC_HOME=$(getent passwd "${SUDO_USER:-orangepi}" | cut -d: -f6)
+
+status() {
+  echo "== Режим сети"
+  if systemctl is-active --quiet hostapd; then echo "   SOS: раздаёт сеть SOS-STELLA-RESCUE (адрес 10.42.0.1)"
+  else echo "   ОБСЛУЖИВАНИЕ: плата в обычном Wi-Fi"; fi
+  echo "== Адреса платы: $(hostname -I)"
+  echo "== Службы"
+  for s in hostapd dnsmasq nginx stella-app stella-llm stella-hw; do
+    printf "   %-11s %s\n" "$s" "$(systemctl is-active $s 2>/dev/null)"
+  done
+  echo "== Режим узла: $(cat /var/lib/stella/mode.json 2>/dev/null || echo 'ожидание')"
+}
+
+home() {
+  if [ $# -lt 2 ]; then echo 'Использование: sudo stella home "ИМЯ_WIFI" "ПАРОЛЬ"'; exit 1; fi
+  echo "Переключаю плату в домашний Wi-Fi «$1». Сеть SOS выключится, SSH через неё оборвётся."
+  echo "Через ~30 секунд заходите по новому адресу: он будет в роутере, имя orangepi4-lts."
+  systemctl stop hostapd dnsmasq
+  rm -f "$NM_CONF"
+  iptables -F; iptables -t nat -F
+  ip addr flush dev wlan0
+  systemctl restart NetworkManager
+  sleep 12
+  nmcli dev wifi connect "$1" password "$2" && echo "Готово. Адрес платы: $(hostname -I)"
+  echo "Вернуть сеть SOS: sudo stella sos  (или просто перезагрузите плату)"
+}
+
+sos() {
+  echo "Возвращаю спасательную сеть SOS-STELLA-RESCUE…"
+  mkdir -p /etc/NetworkManager/conf.d
+  printf '[keyfile]\nunmanaged-devices=interface-name:wlan0\n' > "$NM_CONF"
+  systemctl reload NetworkManager 2>/dev/null || systemctl restart NetworkManager
+  sleep 2
+  systemctl restart stella-net hostapd dnsmasq nginx stella-app
+  systemctl restart stella-hw 2>/dev/null
+  echo "Готово. Подключитесь к SOS-STELLA-RESCUE: чат http://10.42.0.1/ , консоль http://10.42.0.1/rescuer"
+}
+
+update() {
+  ZIP="$SRC_HOME/stella_pocket_rescue.zip"
+  [ -f "$ZIP" ] || { echo "Нет файла $ZIP — сначала скопируйте архив: scp stella_pocket_rescue.zip orangepi@АДРЕС:~"; exit 1; }
+  cd "$SRC_HOME" && unzip -oq "$ZIP" && cd stella_pocket_rescue || exit 1
+  echo "Установка идёт в фоне. Ход: tail -f $SRC_HOME/stella_pocket_rescue/install.log"
+  echo "В конце плата перезагрузится и вернётся в режим SOS."
+  STELLA_OVER_WIFI=1 nohup ./deploy/install.sh > install.log 2>&1 &
+}
+
+case "${1:-status}" in
+  status) status ;;
+  home)   shift; home "$@" ;;
+  sos)    sos ;;
+  update) update ;;
+  logs)   journalctl -u stella-app -u stella-llm -u stella-hw -u hostapd -n 60 --no-pager ;;
+  pin)    grep '^STELLA_RESCUER_PIN=' /etc/stella/stella.env | cut -d= -f2 ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

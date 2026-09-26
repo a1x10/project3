@@ -25,6 +25,14 @@ iptables -A STELLA_IN -p udp --dport 67 -j ACCEPT      # DHCP
 iptables -A STELLA_IN -p udp --dport 53 -j ACCEPT      # DNS
 iptables -A STELLA_IN -p tcp --dport 53 -j ACCEPT
 iptables -A STELLA_IN -p tcp --dport 80 -j ACCEPT      # портал
+# SSH для администратора прямо из сети SOS (ноутбук -> ssh orangepi@10.42.0.1).
+# Сеть открытая, поэтому у пользователя платы должен быть надёжный пароль.
+# Отключить: STELLA_ADMIN_SSH=0 в /etc/stella/stella.env
+if [ "${STELLA_ADMIN_SSH:-1}" = 1 ]; then
+  iptables -A STELLA_IN -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set --name ssh
+  iptables -A STELLA_IN -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 6 --name ssh -j DROP
+  iptables -A STELLA_IN -p tcp --dport 22 -j ACCEPT
+fi
 iptables -A STELLA_IN -p icmp -j ACCEPT
 # HTTPS сразу отбиваем, чтобы браузер быстро понял, что интернета нет
 iptables -A STELLA_IN -p tcp --dport 443 -j REJECT --reject-with tcp-reset
