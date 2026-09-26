@@ -1,4 +1,3 @@
-"""SQLite-хранилище: переживает перезагрузку и отключение питания (WAL)."""
 import json
 import sqlite3
 import threading
@@ -73,7 +72,6 @@ class Database:
         with self._lock:
             return [dict(r) for r in self._conn.execute(sql, args).fetchall()]
 
-    # --- messages ---
     def add_message(self, session_id: str, role: str, text: str) -> int:
         return self._exec(
             "INSERT INTO messages(session_id, role, text, ts) VALUES (?, ?, ?, ?)",
@@ -94,7 +92,6 @@ class Database:
         )
         return rows[0] if rows else None
 
-    # --- incidents ---
     def get_incident(self, session_id: str) -> dict | None:
         rows = self._all("SELECT * FROM incidents WHERE session_id = ?", (session_id,))
         return _decode(rows[0]) if rows else None
@@ -129,7 +126,6 @@ class Database:
         )
         return [_decode(r) for r in rows]
 
-    # --- broadcasts ---
     def add_broadcast(self, text: str) -> int:
         return self._exec(
             "INSERT INTO broadcasts(text, ts) VALUES (?, ?)", (text, time.time())
@@ -140,9 +136,7 @@ class Database:
             "SELECT id, text, ts FROM broadcasts WHERE id > ? ORDER BY id", (after_id,)
         )
 
-
     def touch(self, session_id: str, **fields) -> None:
-        """Отметить, что сессия жива (опрос сообщений), и обновить лёгкие поля."""
         fields["last_seen"] = time.time()
         self.upsert_incident(session_id, **fields)
 

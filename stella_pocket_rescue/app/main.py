@@ -1,8 +1,3 @@
-"""Stella Pocket Rescue — бэкенд (FastAPI).
-
-Запуск на устройстве: uvicorn app.main:app --host 127.0.0.1 --port 8000
-(снаружи всё проходит через nginx, см. deploy/nginx-stella.conf)
-"""
 import hmac
 import logging
 import re
@@ -25,26 +20,19 @@ log = logging.getLogger("stella")
 STATIC = Path(__file__).parent / "static"
 SESSION_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUSES = ("new", "assigned", "resolved")
-# Хосты, на которых отдаём портал; любой другой домен -> редирект (captive portal)
 PORTAL_HOSTS = {config.PORTAL_HOST, "stella.rescue", "localhost", "127.0.0.1", "testserver"}
 
 app = FastAPI(title="Stella Pocket Rescue", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 db = Database(config.DB_PATH)
 
-_pending: set[str] = set()          # сессии, для которых диспетчер "печатает"
+_pending: set[str] = set()
 _pin_failures: dict[str, list[float]] = {}
 
 
-# ---------------------------------------------------------------- captive portal
 @app.middleware("http")
 async def captive_portal(request: Request, call_next):
-    """Телефон при подключении проверяет интернет (connectivitycheck.gstatic.com,
-    captive.apple.com, msftconnecttest.com …). DNS отвечает нашим IP на любой домен,
-    а здесь мы отвечаем редиректом — ОС понимает, что это портал, и открывает чат."""
     host = (request.headers.get("host") or "").split(":")[0].lower()
-    # IP-адрес (например, http://192.168.1.50/rescuer по кабелю) — отдаём как есть;
-    # редиректим только чужие доменные имена: так телефоны узнают портал.
     is_ip = bool(re.fullmatch(r"[0-9.]+", host)) or host.startswith("[")
     if host and host not in PORTAL_HOSTS and not is_ip:
         return RedirectResponse(config.PORTAL_URL, status_code=302)
@@ -64,7 +52,6 @@ def rescuer_page():
     return FileResponse(STATIC / "rescuer.html")
 
 
-# Пути проверки связи, если запрос пришёл прямо на IP портала
 @app.get("/generate_204", include_in_schema=False)
 @app.get("/gen_204", include_in_schema=False)
 @app.get("/hotspot-detect.html", include_in_schema=False)
@@ -77,7 +64,6 @@ def connectivity_check():
 
 @app.get("/api/status")
 def status():
-    """Публичный статус узла: портал по нему переключается между «ожиданием» и «ЧС»."""
     m = mode.read()
     return {"mode": m["mode"], "source": m.get("source"), "since": m.get("since"), "note": m.get("note")}
 
@@ -87,7 +73,6 @@ async def health():
     return {"ok": True, "llm": await llm.healthy(), "time": time.time()}
 
 
-# ---------------------------------------------------------------- пострадавшие
 class ChatIn(BaseModel):
     session_id: str
     text: str = Field(min_length=1, max_length=config.MAX_MESSAGE_LEN)
@@ -107,8 +92,6 @@ def _client_ip(request: Request) -> str | None:
 
 
 class DeviceInfo(BaseModel):
-    """Данные, которые телефон сам сообщает через браузер. Всё необязательное —
-    чем больше пришлём, тем точнее спасатель поймёт, чей это телефон и не сядет ли он."""
     ua: str | None = Field(default=None, max_length=400)
     platform: str | None = Field(default=None, max_length=80)
     lang: str | None = Field(default=None, max_length=40)
@@ -128,7 +111,6 @@ class SessionIn(BaseModel):
     device: DeviceInfo | None = None
 
 
-# Модель телефона по User-Agent — для колонки «чей телефон» у спасателя
 _DEVICE_PATTERNS = [
     (re.compile(r"iPhone"), "iPhone"),
     (re.compile(r"iPad"), "iPad"),
@@ -156,7 +138,7 @@ def _device_name(ua: str | None) -> str | None:
 @app.post("/api/session")
 def new_session(body: SessionIn | None = None, request: Request = None):
     sid = uuid.uuid4().hex
-    info = (body.device.model_dump() if body and body.device else {})
+    info = body.device.model_dump() if body and body.device else {}
     db.upsert_incident(
         sid,
         client_ip=_client_ip(request),
@@ -179,8 +161,6 @@ def chat(body: ChatIn, background: BackgroundTasks, request: Request):
     db.add_message(sid, "user", body.text.strip())
     db.touch(sid, client_ip=_client_ip(request))
     result = update_incident(sid, body.lat, body.lon, body.accuracy)
-
-    # Первая помощь выдаётся мгновенно и детерминированно, без ожидания нейросети
     given = {m["text"] for m in db.messages(sid) if m["role"] == "advice"}
     for tip in first_aid(result.tags):
         if tip not in given:
@@ -197,20 +177,18 @@ def update_incident(sid: str, lat=None, lon=None, accuracy=None):
         priority=result.priority, score=result.score, tags=result.tags,
         people=result.people, location_text=result.location_text, panic=int(result.panic),
     )
-    if lat is not None and lon is not None:       # геолокация браузера (если доступна)
+    if lat is not None and lon is not None:
         fields.update(lat=lat, lon=lon, accuracy=accuracy)
-    elif result.coords:                           # координаты, присланные текстом
+    elif result.coords:
         fields.update(lat=result.coords[0], lon=result.coords[1], accuracy=None)
     incident = db.get_incident(sid)
     if incident and incident["status"] == "resolved":
-        fields["status"] = "new"                  # человек снова пишет — вернуть в работу
+        fields["status"] = "new"
     db.upsert_incident(sid, **fields)
     return result
 
 
 async def dispatcher_reply(sid: str):
-    """Готовит ответ диспетчера. Если пока модель думала пришли новые сообщения,
-    отвечаем ещё раз уже с учётом всего — но не больше трёх кругов."""
     if sid in _pending:
         return
     _pending.add(sid)
@@ -238,8 +216,8 @@ class Heartbeat(BaseModel):
 @app.get("/api/messages")
 def messages(session_id: str, after: int = 0, after_broadcast: int = 0):
     sid = _check_session(session_id)
-    if db.get_incident(sid):            # не создаём карточку из случайного опроса
-        db.touch(sid)                   # телефон опрашивает раз в пару секунд -> он онлайн
+    if db.get_incident(sid):
+        db.touch(sid)
     return {
         "messages": db.messages(sid, after),
         "typing": sid in _pending,
@@ -249,10 +227,8 @@ def messages(session_id: str, after: int = 0, after_broadcast: int = 0):
 
 @app.post("/api/heartbeat")
 def heartbeat(body: Heartbeat, request: Request, session_id: str):
-    """Телефон фоном шлёт свежий заряд и (если разрешил) координаты — чтобы
-    спасатель видел, садится ли телефон, и мог доследить движение человека."""
     sid = _check_session(session_id)
-    if not db.get_incident(sid):        # только для реально созданных сессий
+    if not db.get_incident(sid):
         raise HTTPException(404, "unknown session")
     fields = {"client_ip": _client_ip(request)}
     if body.battery is not None:
@@ -265,10 +241,8 @@ def heartbeat(body: Heartbeat, request: Request, session_id: str):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- спасатели
 def rescuer(request: Request):
-    """PIN из заголовка. Сеть открытая, поэтому после 5 ошибок IP блокируется на 5 минут."""
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    ip = _client_ip(request) or "?"
     now = time.time()
     fails = [t for t in _pin_failures.get(ip, []) if now - t < 300]
     if len(fails) >= 5:
@@ -290,7 +264,6 @@ class TextIn(BaseModel):
 
 
 def _enrich(items: list[dict], by_ip: dict[str, dict]) -> None:
-    """Дополняем каждую карточку живыми данными с точки доступа."""
     now = time.time()
     for it in items:
         it["waiting_min"] = round((now - it["created"]) / 60, 1)
@@ -327,8 +300,6 @@ def list_incidents():
 
 @app.get("/api/rescuer/connections", dependencies=[Depends(rescuer)])
 def connections():
-    """Живые подключения к Wi-Fi хаба + привязка к карточкам вызовов.
-    Это визуализация «вижу каждое подключение»: устройство, сигнал, близость."""
     conns = stations.connected()
     incidents = {i.get("client_ip"): i for i in db.incidents() if i.get("client_ip")}
     now = time.time()
@@ -367,7 +338,6 @@ def patch_incident(incident_id: int, body: IncidentPatch):
 
 @app.post("/api/rescuer/incidents/{incident_id}/reply", dependencies=[Depends(rescuer)])
 def rescuer_reply(incident_id: int, body: TextIn):
-    """Спасатель пишет пострадавшему напрямую (в чате помечается отдельно)."""
     incident = db.get_incident_by_id(incident_id) or _not_found()
     db.add_message(incident["session_id"], "rescuer", body.text.strip())
     return {"ok": True}
@@ -381,7 +351,6 @@ class ModeIn(BaseModel):
 
 @app.post("/api/rescuer/mode", dependencies=[Depends(rescuer)])
 def set_mode(body: ModeIn):
-    """Кнопка в консоли: «Имитировать землетрясение» (учения) или «Режим ожидания»."""
     if body.mode not in (mode.STANDBY, mode.EMERGENCY):
         raise HTTPException(400, "mode must be standby or emergency")
     if body.source not in mode.SOURCES:
@@ -397,7 +366,6 @@ def set_mode(body: ModeIn):
 
 @app.post("/api/rescuer/broadcast", dependencies=[Depends(rescuer)])
 def broadcast(body: TextIn):
-    """Объявление всем подключённым: пункт сбора, вода, где медики."""
     return {"id": db.add_broadcast(body.text.strip())}
 
 

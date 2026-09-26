@@ -1,10 +1,3 @@
-"""Клиент к локальному llama.cpp (llama-server, OpenAI-совместимый API).
-
-RK3399 выдаёт единицы токенов в секунду, поэтому:
-  * одновременно в модель идёт LLM_CONCURRENCY запросов, очередь ограничена;
-  * если модель занята, недоступна или не уложилась в таймаут — возвращаем None,
-    и отвечает детерминированный диспетчер из triage.fallback_reply.
-"""
 import asyncio
 import logging
 
@@ -51,7 +44,7 @@ def build_messages(history: list[dict], triage: TriageResult) -> list[dict]:
     missing = ", ".join(MISSING_LABELS[m] for m in triage.missing) or "ничего, всё собрано"
     system = f"{SYSTEM_PROMPT}\n\nИзвестно: {'; '.join(known)}.\nНе хватает: {missing}."
     msgs = [{"role": "system", "content": system}]
-    for m in history[-8:]:  # короткий контекст — быстрее на слабом CPU
+    for m in history[-8:]:
         if m["role"] in ("user", "assistant"):
             msgs.append({"role": m["role"], "content": m["text"]})
     return msgs
@@ -63,7 +56,7 @@ async def generate(history: list[dict], triage: TriageResult) -> str | None:
         return None
     sem = _sem()
     if sem.locked() and _waiting >= config.LLM_QUEUE_LIMIT:
-        return None  # очередь переполнена — пусть ответит детерминированный диспетчер
+        return None
     _waiting += 1
     try:
         await sem.acquire()
@@ -81,7 +74,7 @@ async def generate(history: list[dict], triage: TriageResult) -> str | None:
             resp.raise_for_status()
             text = resp.json()["choices"][0]["message"]["content"].strip()
             return text or None
-    except Exception as exc:  # сеть, таймаут, неожиданный ответ — всё уходит в fallback
+    except Exception as exc:
         log.warning("LLM недоступна: %s", exc)
         return None
     finally:
