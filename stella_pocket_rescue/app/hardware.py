@@ -11,8 +11,7 @@ from app import mode
 
 TICK = 0.02
 FAN_GPIO = os.getenv("STELLA_FAN_GPIO", "").strip()
-LED_GPIO = os.getenv("STELLA_LED_GPIO", "").strip()
-FAN_TEMP_ON =float(os.getenv("STELLA_FAN_TEMP_ON", "60"))
+FAN_TEMP_ON = float(os.getenv("STELLA_FAN_TEMP_ON", "60"))
 I2C_BUS = os.getenv("STELLA_SENSOR_I2C_BUS", "").strip()
 I2C_ADDR = int(os.getenv("STELLA_SENSOR_ADDR", "0x68"), 16)
 QUAKE_G = float(os.getenv("STELLA_QUAKE_G", "0.12"))
@@ -109,36 +108,6 @@ class Fan:
         self.set(bool(vals) and max(vals) >= FAN_TEMP_ON)
 
 
-class SosLamp:
-    def __init__(self):
-        self.path = None
-        self.state = None
-        self.emergency = False
-        if not LED_GPIO:
-            log("лампочка SOS: STELLA_LED_GPIO не задан")
-            return
-        base = "/sys/class/gpio/gpio" + LED_GPIO
-        if not os.path.exists(base):
-            _write("/sys/class/gpio/export", LED_GPIO)
-            time.sleep(0.2)
-        if _write(base + "/direction", "out"):
-            self.path = base + "/value"
-            log("лампочка SOS на GPIO", LED_GPIO)
-        else:
-            log("лампочка SOS: не удалось настроить GPIO", LED_GPIO)
-
-    def tick(self, now):
-        if not self.path:
-            return
-        if self.emergency:
-            on = int(now * 6) % 2 == 0
-        else:
-            on = now % 3 < 0.15
-        if on != self.state:
-            self.state = on
-            _write(self.path, 1 if on else 0)
-
-
 class QuakeSensor:
     I2C_SLAVE = 0x0703
 
@@ -188,7 +157,7 @@ class QuakeSensor:
 
 
 def main():
-    leds, fan, sensor, lamp = Leds(), Fan(), QuakeSensor(), SosLamp()
+    leds, fan, sensor = Leds(), Fan(), QuakeSensor()
     current = None
     last_mode_check = 0
     while True:
@@ -203,7 +172,6 @@ def main():
             if m != current:
                 current = m
                 log("режим:", m)
-                lamp.emergency = m == mode.EMERGENCY
                 if m == mode.EMERGENCY:
                     leds.emergency()
                     fan.set(True)
@@ -212,7 +180,6 @@ def main():
             if current != mode.EMERGENCY:
                 fan.auto()
         leds.tick(now)
-        lamp.tick(now)
         time.sleep(TICK)
 
 
