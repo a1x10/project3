@@ -1,23 +1,9 @@
-"""Детерминированный триаж по мотивам START.
-
-Приоритет НЕ зависит от нейросети: маленькая модель может ошибиться или
-не ответить, а сортировка пострадавших должна быть объяснимой и
-воспроизводимой. Нейросеть отвечает только за диалог.
-
-Категории:
-  red     — помощь нужна немедленно (угроза жизни)
-  yellow  — срочно, но состояние стабильное
-  green   — лёгкие травмы / в безопасности
-  unknown — данных пока недостаточно
-"""
 import re
 from dataclasses import dataclass, field
 
 RED, YELLOW, GREEN, UNKNOWN = "red", "yellow", "green", "unknown"
 PRIORITY_RANK = {RED: 0, YELLOW: 1, UNKNOWN: 2, GREEN: 3}
 
-# (тег, вес, регулярное выражение). Вес >= 10 — сразу "red".
-# Шаблоны пишем по основам слов, текст заранее приводится к нижнему регистру, ё -> е.
 RULES: list[tuple[str, int, str]] = [
     ("не дышит", 10, r"не\s*дыш|не\s+дыхан|нет\s+дыхан|not breathing"),
     ("без сознания", 10, r"без\s+сознан|потерял\w*\s+сознан|не\s+приход\w*\s+в\s+себя|"
@@ -52,8 +38,6 @@ RULES: list[tuple[str, int, str]] = [
 SAFE_RULES = r"(не\s+ранен|без\s+травм|в\s+безопасност|все\s+(хорошо|нормально|в\s+порядке)|" \
              r"я\s+в\s+порядке|мы\s+в\s+порядке|цел[аы]?\b|царапин|i'?m ok|safe)"
 
-# Отрицание перед симптомом ("нет кровотечения", "не сломал") гасит правило.
-# Правила, которые сами начинаются с отрицания ("не дышит"), не затрагиваются.
 NEGATION_BEFORE = re.compile(r"(\bне|\bнет|\bбез|\bno|\bnot)\s+$")
 
 _COMPILED = [(tag, weight, re.compile(pattern)) for tag, weight, pattern in RULES]
@@ -104,7 +88,6 @@ class TriageResult:
 
     @property
     def missing(self) -> list[str]:
-        """Какие данные диспетчеру ещё нужно выяснить (в порядке важности)."""
         need = []
         if not self.location_text and not self.coords:
             need.append("location")
@@ -129,12 +112,9 @@ def _matches(regex: re.Pattern, text: str) -> bool:
 
 
 def panic_level(text: str) -> bool:
-    """Признаки паники: капс, "!!!", повторы "помогите". На приоритет НЕ влияют —
-    громкий крик не должен отодвигать тихого пострадавшего с кровотечением."""
     letters = [c for c in text if c.isalpha()]
     caps = sum(c.isupper() for c in letters) / len(letters) if len(letters) >= 8 else 0
-    lower = normalize(text)
-    return caps > 0.6 or "!!!" in text or lower.count("помог") >= 2
+    return caps > 0.6 or "!!!" in text or normalize(text).count("помог") >= 2
 
 
 def extract_coords(text: str) -> tuple[float, float] | None:
@@ -165,7 +145,6 @@ def extract_location(message: str) -> str | None:
 
 
 def assess(user_messages: list[str]) -> TriageResult:
-    """Оценка по всем сообщениям пострадавшего (факты накапливаются)."""
     result = TriageResult()
     full = normalize(" \n ".join(user_messages))
 
@@ -173,13 +152,12 @@ def assess(user_messages: list[str]) -> TriageResult:
         if _matches(regex, full):
             result.tags.append(tag)
             result.score += weight
-    # Сильное кровотечение включает обычное — не считаем дважды
     if "сильное кровотечение" in result.tags and "кровотечение" in result.tags:
         result.tags.remove("кровотечение")
         result.score -= 5
 
     result.safe = bool(_SAFE.search(full))
-    for msg in user_messages:  # последнее упоминание важнее первого
+    for msg in user_messages:
         result.coords = extract_coords(msg) or result.coords
         result.people = extract_people(msg) or result.people
         result.location_text = extract_location(msg) or result.location_text
@@ -194,7 +172,6 @@ def assess(user_messages: list[str]) -> TriageResult:
     else:
         result.priority = UNKNOWN
 
-    # Группа из многих людей с травмами — повышаем внимание
     if result.priority == YELLOW and (result.people or 0) >= 5:
         result.score += 3
     return result
@@ -215,7 +192,6 @@ QUESTIONS = {
 
 
 def fallback_reply(result: TriageResult) -> str:
-    """Ответ диспетчера без нейросети: спокойный, по делу, заполняет недостающие данные."""
     if result.missing:
         return QUESTIONS[result.missing[0]]
     if result.priority == RED:

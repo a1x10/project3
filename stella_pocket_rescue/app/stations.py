@@ -1,17 +1,4 @@
-"""Живые подключения к точке доступа Orange Pi.
-
-Берём данные прямо из сетевого стека — это честный аналог «вижу каждое
-подключение»: кто физически присоединился к Wi-Fi хаба, насколько сильный
-сигнал (значит — насколько близко человек), сколько времени в сети.
-
-Источники:
-  * `iw dev wlan0 station dump` — MAC, сигнал (dBm), время в сети, трафик;
-  * файл аренды dnsmasq — соответствие MAC ↔ IP ↔ имя устройства.
-
-На ноутбуке для разработки команды `iw` нет — тогда возвращаем пустой
-список, и панель спасателя просто показывает подключения по данным браузера.
-"""
-import math
+import os
 import re
 import subprocess
 import time
@@ -27,23 +14,21 @@ _TX_RE = re.compile(r"tx bytes:\s*(\d+)")
 
 
 def distance_m(rssi: int) -> float:
-    """Грубая оценка расстояния до телефона по силе сигнала (модель затухания)."""
     exp = (config.RSSI_REF_DBM - rssi) / (10 * config.RSSI_PATH_LOSS)
     return round(10 ** exp, 1)
 
 
 def proximity(rssi: int) -> str:
     if rssi >= -55:
-        return "рядом"          # несколько метров, в прямой видимости
+        return "рядом"
     if rssi >= -70:
-        return "близко"         # эта комната / соседняя
+        return "близко"
     if rssi >= -82:
-        return "далеко"         # через стены, дальний угол здания
-    return "на пределе"         # у границы зоны — сигнал вот-вот пропадёт
+        return "далеко"
+    return "на пределе"
 
 
 def _read_leases() -> dict[str, dict]:
-    """MAC -> {ip, hostname}. Формат dnsmasq: ts mac ip hostname clientid."""
     out: dict[str, dict] = {}
     try:
         with open(config.DHCP_LEASES) as f:
@@ -86,7 +71,6 @@ def _parse(dump: str) -> list[dict]:
 
 
 def connected() -> list[dict]:
-    """Список устройств на точке доступа, ближние — первыми."""
     leases = _read_leases()
     result = []
     for st in _parse(_station_dump()):
@@ -117,9 +101,8 @@ def uptime() -> dict:
             secs = float(f.read().split()[0])
     except OSError:
         secs = 0.0
-    load = None
     try:
-        load = round(__import__("os").getloadavg()[0], 2)
+        load = round(os.getloadavg()[0], 2)
     except OSError:
-        pass
+        load = None
     return {"uptime_s": int(secs), "load": load, "now": time.time()}

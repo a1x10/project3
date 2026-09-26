@@ -1,20 +1,3 @@
-"""Демон железа Stella: светодиоды, вентилятор и датчик землетрясения.
-
-Запускается отдельной службой от root (stella-hw.service), потому что писать в
-/sys/class/leds, GPIO и /dev/i2c-* обычному пользователю нельзя.
-
-  python3 -m app.hardware
-
-Что делает:
-  * светодиоды платы (/sys/class/leds/*): в ожидании мигают спокойно («сердцебиение»),
-    в режиме ЧС — часто вспыхивают;
-  * вентилятор: если он подключён через транзистор к GPIO (номер в STELLA_FAN_GPIO),
-    в режиме ЧС включается постоянно, в ожидании — по температуре процессора;
-  * датчик MPU-6050 на I2C (необязательный, STELLA_SENSOR_I2C_BUS): при сильной
-    продолжительной тряске сам переводит узел в режим ЧС.
-
-Совместим с Python 3.8 и не требует сторонних библиотек.
-"""
 import fcntl
 import glob
 import math
@@ -24,14 +7,14 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import mode  # noqa: E402
+from app import mode
 
-TICK = 0.02                      # 50 Гц — частота опроса датчика
+TICK = 0.02
 FAN_GPIO = os.getenv("STELLA_FAN_GPIO", "").strip()
-FAN_TEMP_ON = float(os.getenv("STELLA_FAN_TEMP_ON", "60"))   # °C, в режиме ожидания
+FAN_TEMP_ON = float(os.getenv("STELLA_FAN_TEMP_ON", "60"))
 I2C_BUS = os.getenv("STELLA_SENSOR_I2C_BUS", "").strip()
 I2C_ADDR = int(os.getenv("STELLA_SENSOR_ADDR", "0x68"), 16)
-QUAKE_G = float(os.getenv("STELLA_QUAKE_G", "0.12"))         # порог отклонения от 1g
+QUAKE_G = float(os.getenv("STELLA_QUAKE_G", "0.12"))
 QUAKE_SECONDS = float(os.getenv("STELLA_QUAKE_SECONDS", "0.8"))
 
 
@@ -56,7 +39,6 @@ def _read(path):
         return None
 
 
-# ------------------------------------------------------------------ светодиоды
 class Leds:
     def __init__(self):
         self.leds = sorted(p for p in glob.glob("/sys/class/leds/*") if os.path.exists(p + "/brightness"))
@@ -98,7 +80,6 @@ class Leds:
                 _write(p + "/brightness", _read(p + "/max_brightness") or 1 if on else 0)
 
 
-# ------------------------------------------------------------------ вентилятор
 class Fan:
     def __init__(self):
         self.path = None
@@ -127,11 +108,7 @@ class Fan:
         self.set(bool(vals) and max(vals) >= FAN_TEMP_ON)
 
 
-# ------------------------------------------------------------------ датчик
 class QuakeSensor:
-    """MPU-6050 по I2C. Считаем отклонение модуля ускорения от 1g.
-    Если отклонение держится выше порога заданное время — это землетрясение,
-    а не случайный удар по столу."""
     I2C_SLAVE = 0x0703
 
     def __init__(self):
@@ -145,8 +122,8 @@ class QuakeSensor:
         try:
             self.fd = os.open("/dev/i2c-" + I2C_BUS, os.O_RDWR)
             fcntl.ioctl(self.fd, self.I2C_SLAVE, I2C_ADDR)
-            os.write(self.fd, bytes([0x6B, 0x00]))   # разбудить MPU-6050
-            os.write(self.fd, bytes([0x1C, 0x00]))   # диапазон ±2g
+            os.write(self.fd, bytes([0x6B, 0x00]))
+            os.write(self.fd, bytes([0x1C, 0x00]))
             log("датчик MPU-6050 на /dev/i2c-%s, адрес 0x%02x" % (I2C_BUS, I2C_ADDR))
         except OSError as e:
             log("датчик: ошибка I2C:", e)
@@ -158,14 +135,13 @@ class QuakeSensor:
         return math.sqrt(ax * ax + ay * ay + az * az) / 16384.0
 
     def poll(self, now):
-        """Возвращает строку-описание, если зафиксировано землетрясение."""
         if self.fd is None:
             return None
         try:
             g = self.read_g()
         except OSError:
             return None
-        self.base += (g - self.base) * 0.002          # медленно следим за «покоем»
+        self.base += (g - self.base) * 0.002
         dev = abs(g - self.base)
         if dev > QUAKE_G:
             self.peak = max(self.peak, dev)

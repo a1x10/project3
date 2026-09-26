@@ -36,7 +36,6 @@ def test_distance_grows_as_signal_weakens():
 
 
 def test_connected_is_empty_without_iw(monkeypatch):
-    # на машине разработки команды iw нет -> честный пустой список, без падения
     monkeypatch.setattr(stations, "_station_dump", lambda: "")
     monkeypatch.setattr(stations, "_read_leases", lambda: {})
     assert stations.connected() == []

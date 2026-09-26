@@ -9,7 +9,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("STELLA_DB", str(tmp_path / "t.db"))
     monkeypatch.setenv("STELLA_RESCUER_PIN", "123456")
     monkeypatch.setenv("STELLA_MIN_INTERVAL", "0")
-    monkeypatch.setenv("STELLA_LLM_ENABLED", "0")   # проверяем резервный диспетчер
+    monkeypatch.setenv("STELLA_LLM_ENABLED", "0")
     from app import config, main
     importlib.reload(config)
     importlib.reload(main)
@@ -122,7 +122,7 @@ def test_connection_appears_before_any_message(client):
     c, _ = client
     c.post("/api/session", json={"device": {"ua": "Pixel 7"}})
     data = c.get("/api/rescuer/incidents", headers={"X-Rescuer-Pin": "123456"}).json()
-    assert data["incidents"][0]["device"] == "Pixel 7"      # видно подключение до чата
+    assert data["incidents"][0]["device"] == "Pixel 7"
     assert data["incidents"][0]["priority"] == "unknown"
     assert "server" in data and "connections" not in data
 
@@ -149,7 +149,6 @@ def test_llm_reply_used_when_available(client, monkeypatch):
 
 
 def test_console_reachable_by_board_ip(client):
-    # спасатель открывает консоль по кабелю: http://192.168.1.50/rescuer
     c, _ = client
     r = c.get("/rescuer", headers={"Host": "192.168.1.50"}, follow_redirects=False)
     assert r.status_code == 200
