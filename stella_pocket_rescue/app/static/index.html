@@ -2,224 +2,161 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<meta name="theme-color" content="#b91c1c">
-<title>Служба спасения — экстренная связь</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>Stella — аварийная сеть</title>
 <style>
-  :root {
-    --bg:#f4f1ec; --card:#ffffff; --ink:#20242b; --muted:#6b7280; --line:#e6e1d8;
-    --me:#0f766e; --op:#ffffff; --advice:#fff7ed; --advice-b:#f59e0b; --resc:#eef6ff; --resc-b:#2563eb;
-    --brand:#b91c1c; --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.06);
-  }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
-    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif; }
-  body { display:flex; flex-direction:column; max-width:680px; margin:0 auto; }
-
-  header { padding:12px 16px; background:var(--brand); color:#fff; display:flex; align-items:center; gap:12px;
-    box-shadow:var(--shadow); position:relative; z-index:2; }
-  .badge { width:40px; height:40px; border-radius:12px; background:rgba(255,255,255,.16);
-    display:grid; place-items:center; font-size:22px; flex:none; }
-  header h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:.2px; }
-  header .sub { font-size:12.5px; opacity:.92; display:flex; align-items:center; gap:6px; }
-  .dot { width:8px; height:8px; border-radius:50%; background:#4ade80; box-shadow:0 0 0 0 rgba(74,222,128,.7);
-    animation:pulse 2s infinite; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(74,222,128,.6)} 70%{box-shadow:0 0 0 8px rgba(74,222,128,0)} 100%{box-shadow:0 0 0 0 rgba(74,222,128,0)} }
-
-  #banner { background:#fffbeb; color:#92400e; border-bottom:1px solid #fde68a; padding:9px 16px; font-size:13.5px; }
-  #broadcast { display:none; background:#1e3a8a; color:#fff; padding:10px 16px; font-size:14.5px; }
-
-  #log { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
-  .row { display:flex; gap:8px; align-items:flex-end; }
-  .row.me { justify-content:flex-end; }
-  .av { width:30px; height:30px; border-radius:50%; background:var(--brand); color:#fff; flex:none;
-    display:grid; place-items:center; font-size:14px; font-weight:700; box-shadow:var(--shadow); }
-  .bubble { max-width:78%; padding:10px 13px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word;
-    box-shadow:var(--shadow); animation:pop .18s ease-out; }
-  @keyframes pop { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
-  .op   { background:var(--op); border:1px solid var(--line); border-bottom-left-radius:5px; }
-  .me .bubble { background:var(--me); color:#fff; border-bottom-right-radius:5px; }
-  .advice { background:var(--advice); border:1px solid var(--advice-b); border-radius:12px; align-self:stretch; max-width:100%; }
-  .advice .cap, .resc .cap { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
-  .advice .cap { color:#b45309; } .resc .cap { color:#1d4ed8; }
-  .resc { background:var(--resc); border:1px solid var(--resc-b); border-radius:12px; }
-  .name { font-size:11.5px; color:var(--muted); margin:0 0 3px 4px; }
-
-  #typing { display:none; align-items:center; gap:8px; padding:0 16px 8px; }
-  #typing .av { width:30px; height:30px; }
-  .typing-b { background:#fff; border:1px solid var(--line); border-radius:16px; padding:11px 14px; box-shadow:var(--shadow); }
-  .typing-b i { display:inline-block; width:7px; height:7px; margin:0 1px; border-radius:50%; background:#9aa1ab; animation:blink 1.3s infinite both; }
-  .typing-b i:nth-child(2){animation-delay:.2s} .typing-b i:nth-child(3){animation-delay:.4s}
-  @keyframes blink { 0%,80%,100%{opacity:.25; transform:translateY(0)} 40%{opacity:1; transform:translateY(-3px)} }
-
-  #quick { display:flex; gap:8px; overflow-x:auto; padding:8px 16px 2px; scrollbar-width:none; }
-  #quick::-webkit-scrollbar{display:none}
-  #quick button { flex:none; background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:20px;
-    padding:8px 14px; font-size:14px; font-weight:600; box-shadow:var(--shadow); }
-  #quick button:active { transform:scale(.96); }
-
-  #loc { display:flex; align-items:center; gap:8px; padding:6px 16px; font-size:13px; color:var(--muted); }
-  #loc button { background:none; border:0; color:#1d4ed8; font-weight:600; text-decoration:underline; font-size:13px; padding:0; }
-  #loc .ok { color:#0f766e; }
-
-  form { display:flex; gap:8px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); background:var(--card); border-top:1px solid var(--line); }
-  textarea { flex:1; resize:none; min-height:46px; max-height:130px; padding:12px 14px; border-radius:14px;
-    border:1px solid var(--line); background:#faf9f6; color:var(--ink); font:inherit; }
-  textarea:focus { outline:none; border-color:var(--me); background:#fff; }
-  .send { flex:none; width:46px; height:46px; border:0; border-radius:50%; background:var(--brand); color:#fff;
-    font-size:20px; box-shadow:var(--shadow); }
-  .send:active { transform:scale(.94); }
+:root{--bg:#f5f6f8;--card:#fff;--ink:#111827;--ink2:#374151;--mute:#6b7280;--line:#e5e7eb;
+--red:#dc2626;--redbg:#fef2f2;--amber:#b45309;--amberbg:#fffbeb;--amberln:#fcd34d;--blue:#1d4ed8;--bluebg:#eff6ff;--green:#16a34a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+body{display:flex;flex-direction:column;max-width:600px;margin:0 auto}
+button{font:inherit;cursor:pointer}
+[hidden]{display:none!important}
+.top{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+.mk{width:26px;height:26px;border-radius:7px;background:var(--ink);position:relative;flex:none}
+.mk:after{content:"";position:absolute;inset:8px;border:2px solid #fff;border-radius:50%}
+.top b{font-size:15px;display:block;line-height:1.2}.top small{color:var(--mute);font-size:12.5px}
+.st{margin-left:auto;font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:99px;background:#f3f4f6;color:var(--ink2);white-space:nowrap}
+.st i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:1px}
+.st.em{background:var(--red);color:#fff}.st.em i{background:#fff;animation:bl 1s infinite}
+@keyframes bl{50%{opacity:.2}}
+.alert{background:var(--red);color:#fff;padding:12px 16px;font-size:14.5px}
+.alert b{display:block;font-size:16px}
+/* ожидание */
+.idle{flex:1;padding:28px 20px;display:flex;flex-direction:column;gap:18px}
+.idle h1{font-size:24px;line-height:1.25;margin:0}
+.idle p{margin:0;color:var(--ink2)}
+.help{border:0;border-radius:14px;background:var(--red);color:#fff;font-size:18px;font-weight:700;padding:18px;width:100%}
+.help:active{transform:scale(.99)}
+.list{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 16px}
+.list div{padding:12px 0;border-bottom:1px solid var(--line);font-size:15px;color:var(--ink2)}
+.list div:last-child{border:0}.list b{color:var(--ink)}
+/* чат */
+.chat{flex:1;display:flex;flex-direction:column;min-height:0}
+#log{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:85%;padding:10px 13px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word;font-size:15.5px}
+.m.op{background:var(--card);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+.m.me{background:var(--ink);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.m.aid{background:var(--amberbg);border:1px solid var(--amberln);max-width:100%}
+.m.res{background:var(--bluebg);border:1px solid #bfdbfe;align-self:flex-start}
+.m.ann{background:var(--redbg);border:1px solid #fecaca;max-width:100%}
+.m .l{display:block;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+.aid .l{color:var(--amber)}.res .l{color:var(--blue)}.ann .l{color:var(--red)}.op .l{color:var(--mute)}
+.typing{align-self:flex-start;color:var(--mute);font-size:14px;padding:0 4px}
+.quick{display:flex;gap:8px;overflow-x:auto;padding:8px 16px;scrollbar-width:none}
+.quick::-webkit-scrollbar{display:none}
+.quick button{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:7px 13px;font-size:14px;color:var(--ink)}
+.bar{display:flex;gap:8px;padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--card);border-top:1px solid var(--line)}
+.bar textarea{flex:1;resize:none;height:44px;max-height:120px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:15.5px;background:#fafafa;color:var(--ink)}
+.bar textarea:focus{outline:2px solid var(--ink);outline-offset:-1px;background:#fff}
+.send{flex:none;width:44px;height:44px;border:0;border-radius:12px;background:var(--red);color:#fff;font-size:18px}
+.loc{border:0;background:none;color:var(--blue);font-size:13.5px;padding:0 16px 6px;text-align:left}
 </style>
 </head>
 <body>
-<header>
-  <div class="badge">🆘</div>
-  <div>
-    <h1>Служба экстренной помощи</h1>
-    <div class="sub"><span class="dot"></span> Оператор на связи · работает без интернета</div>
+<div class="top">
+  <span class="mk"></span>
+  <div><b>Stella</b><small>аварийная сеть · без интернета</small></div>
+  <span class="st" id="st"><i></i>Ожидание</span>
+</div>
+<div class="alert" id="alert" hidden><b id="alertT">Режим ЧС</b><span id="alertS">Опишите, где вы и есть ли раненые. Спасатели видят ваши сообщения.</span></div>
+
+<section class="idle" id="idle">
+  <h1>Вы подключены к аварийной сети Stella</h1>
+  <p>Сеть работает без интернета. Через неё сообщения попадают напрямую к спасателям.</p>
+  <button class="help" id="help" type="button">Мне нужна помощь</button>
+  <div class="list">
+    <div><b>Что это?</b> Автономный узел связи для спасательных работ.</div>
+    <div><b>Что делать?</b> Нажмите кнопку и опишите, где вы и что случилось.</div>
+    <div><b>Подключайтесь заранее.</b> Телефон запомнит сеть и подключится сам, если случится беда.</div>
   </div>
-</header>
-<div id="banner">Вы подключены к аварийной сети спасателей. Чтобы вас нашли, устройство передаёт спасателям
-  ваше местоположение и заряд телефона. Опишите, что случилось.</div>
-<div id="broadcast"></div>
+</section>
 
-<div id="log" aria-live="polite"></div>
-<div id="typing"><div class="av">О</div><div class="typing-b"><i></i><i></i><i></i></div></div>
-
-<div id="quick">
-  <button type="button">Меня завалило</button>
-  <button type="button">Есть раненые</button>
-  <button type="button">Сильное кровотечение</button>
-  <button type="button">Человек без сознания</button>
-  <button type="button">Не могу выйти</button>
-  <button type="button">Я цел, в безопасности</button>
-</div>
-<div id="loc">
-  <span id="locState">📍 Местоположение не передаётся</span>
-  <button id="locBtn" type="button">разрешить</button>
-</div>
-
-<form id="form">
-  <textarea id="text" maxlength="1000" placeholder="Напишите, где вы и что случилось…" autocomplete="off"></textarea>
-  <button class="send" type="submit" aria-label="Отправить">➤</button>
-</form>
+<section class="chat" id="chat" hidden>
+  <div id="log" aria-live="polite"></div>
+  <div class="quick" id="quick">
+    <button type="button">Меня завалило</button><button type="button">Есть раненые</button>
+    <button type="button">Сильное кровотечение</button><button type="button">Человек без сознания</button>
+    <button type="button">Не могу выйти</button><button type="button">Я в безопасности</button>
+  </div>
+  <button class="loc" id="loc" type="button">📍 Отправить местоположение</button>
+  <form class="bar" id="form">
+    <textarea id="text" maxlength="1000" placeholder="Где вы и что случилось?" autocomplete="off"></textarea>
+    <button class="send" type="submit" aria-label="Отправить">➤</button>
+  </form>
+</section>
 
 <script>
-(function () {
-  var log = document.getElementById('log');
-  var sid = null, lastId = 0, lastBroadcast = 0, watchId = null;
-  var NAME = { assistant:'Оператор', rescuer:'Спасатель' };
+(function(){
+  var $=function(id){return document.getElementById(id)}, log=$('log');
+  var sid=null, last=0, lastB=0, typingEl=null, chatOpen=false, curMode='standby';
+  var LBL={assistant:'Оператор',advice:'Первая помощь',rescuer:'Спасатель',ann:'Объявление'};
+  function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+  function api(m,u,b){return fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined})
+    .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||r.status);return j})})}
 
-  function store(k,v){ try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k,v);}catch(e){return null;} }
-  function api(method,url,body){
-    return fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})
-      .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.error||r.status); return j; }); });
+  function add(role,text){
+    var d=document.createElement('div'), cls={user:'me',assistant:'op',advice:'aid',rescuer:'res',ann:'ann'}[role]||'op';
+    d.className='m '+cls;
+    if(role!=='user'){var l=document.createElement('span');l.className='l';l.textContent=LBL[role]||'';d.appendChild(l)}
+    d.appendChild(document.createTextNode(text));
+    log.insertBefore(d,typingEl&&typingEl.parentNode===log?typingEl:null); log.scrollTop=log.scrollHeight;
   }
-
-  // ---- что телефон честно сообщает о себе: помогает спасателю понять, чей это
-  //      аппарат и не сядет ли он раньше, чем доберётся помощь.
-  function deviceInfo(){
-    var n = navigator, c = n.connection || {};
-    var info = { ua:n.userAgent, platform:n.platform, lang:n.language, tz:null,
-      screen:(screen.width)+'x'+(screen.height), dpr:window.devicePixelRatio||1,
-      cores:n.hardwareConcurrency||null, memory_gb:n.deviceMemory||null,
-      touch:('ontouchstart'in window)||n.maxTouchPoints>0,
-      net_type:c.effectiveType||null, downlink:c.downlink||null };
-    try { info.tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e){}
-    return info;
+  function typing(on){
+    if(on&&!typingEl){typingEl=document.createElement('div');typingEl.className='typing';typingEl.textContent='Оператор печатает…';log.appendChild(typingEl)}
+    if(!on&&typingEl){typingEl.remove();typingEl=null}
+    log.scrollTop=log.scrollHeight;
   }
-
-  var battery = null;
-  function readBattery(cb){
-    if(!navigator.getBattery){ cb({}); return; }
-    navigator.getBattery().then(function(b){ battery=b; cb({battery:b.level,charging:b.charging}); }).catch(function(){cb({});});
+  function openChat(){
+    if(chatOpen)return; chatOpen=true; $('idle').hidden=true; $('chat').hidden=false; ls('stella_chat','1');
+    if(!last) add('assistant','Здравствуйте. Я оператор службы спасения. Где вы находитесь и есть ли рядом раненые?');
   }
-
-  function add(role, text){
-    var me = role === 'user';
-    var wrap = document.createElement('div'); wrap.className = 'row' + (me?' me':'');
-    if(!me && (role==='assistant'||role==='rescuer')){
-      var av=document.createElement('div'); av.className='av'; av.textContent = role==='rescuer'?'С':'О'; wrap.appendChild(av);
-    }
-    var col = document.createElement('div');
-    if(!me && NAME[role]){ var nm=document.createElement('div'); nm.className='name'; nm.textContent=NAME[role]; col.appendChild(nm); }
-    var b = document.createElement('div');
-    b.className = 'bubble ' + (me?'me':role==='advice'?'advice':role==='rescuer'?'resc':'op');
-    if(role==='advice'||role==='rescuer'){ var cap=document.createElement('div'); cap.className='cap';
-      cap.textContent = role==='advice'?'Первая помощь':'Сообщение спасателя'; b.appendChild(cap); }
-    b.appendChild(document.createTextNode(text));   // textContent — без XSS
-    col.appendChild(b); wrap.appendChild(col); log.appendChild(wrap);
-    log.scrollTop = log.scrollHeight;
+  function session(){
+    sid=ls('stella_sid'); if(sid) return Promise.resolve();
+    return api('POST','/api/session').then(function(d){sid=d.session_id;ls('stella_sid',sid)});
   }
-
   function poll(){
-    if(!sid) return;
-    api('GET','/api/messages?session_id='+sid+'&after='+lastId+'&after_broadcast='+lastBroadcast)
-      .then(function(d){
-        d.messages.forEach(function(m){ lastId=m.id; add(m.role,m.text); });
-        d.broadcasts.forEach(function(b){ lastBroadcast=b.id; var el=document.getElementById('broadcast');
-          el.textContent='📢 '+b.text; el.style.display='block'; });
-        document.getElementById('typing').style.display = d.typing?'flex':'none';
-      }).catch(function(){});
+    if(!sid)return;
+    api('GET','/api/messages?session_id='+sid+'&after='+last+'&after_broadcast='+lastB).then(function(d){
+      if(d.messages.length||(d.broadcasts.length&&curMode==='emergency')) openChat();
+      d.messages.forEach(function(m){last=m.id;add(m.role,m.text)});
+      d.broadcasts.forEach(function(b){lastB=b.id;add('ann',b.text)});
+      typing(d.typing);
+    }).catch(function(){});
+  }
+  function status(){
+    api('GET','/api/status').then(function(s){
+      var em=s.mode==='emergency', st=$('st');
+      st.className='st'+(em?' em':''); st.lastChild.nodeValue=em?(s.source==='drill'?'Учения':'Режим ЧС'):'Ожидание';
+      $('alert').hidden=!em;
+      $('alertT').textContent=s.source==='drill'?'Учебная тревога: землетрясение':'Режим ЧС: землетрясение';
+      if(em&&curMode!=='emergency') openChat();
+      curMode=s.mode;
+    }).catch(function(){});
+  }
+  function send(text,extra){
+    text=(text||'').trim(); if(!text||!sid)return;
+    var b={session_id:sid,text:text}; for(var k in (extra||{}))b[k]=extra[k];
+    typing(true);
+    api('POST','/api/chat',b).then(poll).catch(function(e){typing(false);add('assistant','Не отправлено: '+e.message+'. Попробуйте ещё раз.')});
   }
 
-  function heartbeat(){
-    if(!sid) return;
-    var pos = window._lastPos;
-    readBattery(function(bat){
-      var body = { battery:bat.battery!=null?bat.battery:null, charging:bat.charging!=null?bat.charging:null };
-      if(pos){ body.lat=pos.lat; body.lon=pos.lon; body.accuracy=pos.acc; }
-      api('POST','/api/heartbeat?session_id='+sid, body).catch(function(){});
-    });
-  }
+  $('help').onclick=openChat;
+  $('form').addEventListener('submit',function(e){e.preventDefault();var t=$('text');send(t.value);t.value=''});
+  $('text').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('form').requestSubmit()}});
+  [].forEach.call(document.querySelectorAll('#quick button'),function(b){b.onclick=function(){send(b.textContent)}});
+  $('loc').onclick=function(){
+    var fail=function(){add('assistant','Телефон не дал доступ к местоположению. Напишите адрес, этаж и ориентиры рядом или пришлите координаты из приложения карт.')};
+    if(!navigator.geolocation)return fail();
+    navigator.geolocation.getCurrentPosition(function(p){
+      send('Моё местоположение: '+p.coords.latitude.toFixed(5)+', '+p.coords.longitude.toFixed(5),{lat:p.coords.latitude,lon:p.coords.longitude,accuracy:p.coords.accuracy});
+    },fail,{enableHighAccuracy:true,timeout:15000});
+  };
 
-  function send(text, extra){
-    text=(text||'').trim(); if(!text||!sid) return;
-    var body={session_id:sid,text:text}; for(var k in (extra||{})) body[k]=extra[k];
-    document.getElementById('typing').style.display='flex';
-    return api('POST','/api/chat',body).then(poll).catch(function(e){ add('assistant','Не отправлено: '+e.message); });
-  }
-
-  document.getElementById('form').addEventListener('submit',function(e){
-    e.preventDefault(); var t=document.getElementById('text'); send(t.value); t.value='';
-  });
-  document.getElementById('text').addEventListener('keydown',function(e){
-    if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('form').requestSubmit(); }
-  });
-  Array.prototype.forEach.call(document.querySelectorAll('#quick button'),function(b){
-    b.addEventListener('click',function(){ send(b.textContent); });
-  });
-
-  // Геолокацию браузер отдаёт по-разному; если разрешат — шлём и держим слежение,
-  // чтобы спасатель видел движение. Если нет — просим прислать координаты текстом.
-  function startGeo(){
-    var st=document.getElementById('locState'), btn=document.getElementById('locBtn');
-    if(!navigator.geolocation){ st.textContent='📍 Телефон не даёт геолокацию — пришлите адрес и ориентиры'; btn.style.display='none'; return; }
-    watchId = navigator.geolocation.watchPosition(function(p){
-      window._lastPos={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy};
-      st.innerHTML='<span class="ok">📍 Местоположение передаётся спасателям (±'+Math.round(p.coords.accuracy)+' м)</span>';
-      btn.style.display='none'; heartbeat();
-    }, function(){
-      st.textContent='📍 Доступ к геолокации закрыт — откройте карты, скопируйте координаты и пришлите в чат';
-    }, { enableHighAccuracy:true, maximumAge:10000, timeout:20000 });
-  }
-  document.getElementById('locBtn').addEventListener('click', startGeo);
-
-  // старт
-  readBattery(function(bat){
-    var payload = { device: deviceInfo() };
-    if(bat.battery!=null){ payload.device.battery=bat.battery; payload.device.charging=bat.charging; }
-    sid = store('stella_sid');
-    var ready = sid ? Promise.resolve() : api('POST','/api/session',payload).then(function(d){ sid=d.session_id; store('stella_sid',sid); });
-    ready.then(function(){
-      add('assistant','Здравствуйте, я оператор службы спасения, на связи без интернета. '
-        + 'Скажите, где вы находитесь и есть ли рядом раненые — я передам спасателям.');
-      poll(); setInterval(poll,2500);
-      heartbeat(); setInterval(heartbeat,15000);
-      startGeo();
-      if(battery){ ['levelchange','chargingchange'].forEach(function(ev){ try{battery.addEventListener(ev,heartbeat);}catch(e){} }); }
-    });
-  });
+  if(ls('stella_chat')==='1') openChat();
+  session().then(function(){poll();setInterval(poll,2500)});
+  status(); setInterval(status,3000);
 })();
 </script>
 </body>

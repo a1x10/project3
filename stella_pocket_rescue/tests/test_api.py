@@ -30,7 +30,7 @@ def test_captive_portal_redirects_foreign_hosts(client):
 def test_portal_page_served(client):
     c, _ = client
     r = c.get("/", headers={"Host": "10.42.0.1"})
-    assert r.status_code == 200 and "экстренной" in r.text
+    assert r.status_code == 200 and "аварийн" in r.text
 
 
 def test_chat_flow_and_triage(client):
