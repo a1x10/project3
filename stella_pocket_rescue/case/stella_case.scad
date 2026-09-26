@@ -1,7 +1,8 @@
 // Stella Pocket — корпус для Orange Pi 4 LTS
 // Откройте в OpenSCAD, выберите part, нажмите F6 и File → Export → STL.
 // part: "base" основание, "lid" крышка, "dome" колпачок лампочки, "plug" красная заглушка,
-//       "test" тестовая рамка (печать ~15 мин), "all" сборка, "exploded" разнесённый вид
+//       "test" тестовая рамка (печать ~15 мин), "plate" все детали на одном столе,
+//       "all" сборка, "exploded" разнесённый вид
 
 part = "all";
 $fn = 64;
@@ -168,6 +169,12 @@ if (part == "base") base();
 if (part == "lid") translate([0, out_w, lid_top]) rotate([180, 0, 0]) lid();
 if (part == "dome") translate([0, 0, 2]) dome();
 if (part == "plug") translate([0, 0, 5]) plug();
+if (part == "plate") {
+  base();
+  translate([0, out_w + 8, 0]) translate([0, out_w, lid_top]) rotate([180, 0, 0]) lid();
+  translate([out_l + 14, 12, 2]) dome();
+  translate([out_l + 14, 32, 5]) plug();
+}
 if (part == "test") test_frame();
 if (part == "all" || part == "exploded") {
   e = part == "exploded" ? 30 : 0;
