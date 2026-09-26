@@ -6,6 +6,7 @@ Wants=sys-subsystem-net-devices-wlan0.device
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/stella/stella.env
 RemainAfterExit=yes
 ExecStart=/opt/stella/deploy/stella-net.sh
 
