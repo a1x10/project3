@@ -1,6 +1,6 @@
 // Stella Pocket — корпус для Orange Pi 4 LTS
 // Откройте в OpenSCAD, выберите part, нажмите F6 и File → Export → STL.
-// part: "base" основание, "lid" крышка, "dome" колпачок лампочки,
+// part: "base" основание, "lid" крышка,
 //       "test" тестовая рамка (печать ~15 мин), "all" сборка, "exploded" разнесённый вид
 
 part = "all";
@@ -25,9 +25,6 @@ lip_clr = 0.3;
 fan = 30;
 fan_holes = 24;
 fan_pos = [40, 28];
-
-led_pos = [80, 44];
-led_d = 5.2;
 
 pins = [[3.5, 3.5], [3.5, 52.5], [87.5, 3.5], [87.5, 52.5]];
 pins_on = [true, true, true, true];
@@ -119,28 +116,13 @@ module lid() {
       translate([0, 0, lid_z - lip_h]) lip();
       for (i = [0 : len(pins) - 1]) if (pins_on[i])
         translate([o + pins[i][0], o + pins[i][1], top_z + 0.4]) cylinder(d = 3, h = lid_z + lid_skirt - top_z - 0.3);
-      translate([o + led_pos[0], o + led_pos[1], lid_z + lid_skirt - 5]) cylinder(d = 8, h = 5.1);
     }
     windows_cut();
     translate([o + fan_pos[0], o + fan_pos[1], lid_top - 1]) grille();
     for (dx = [-1, 1], dy = [-1, 1])
       translate([o + fan_pos[0] + dx * fan_holes / 2, o + fan_pos[1] + dy * fan_holes / 2, lid_z]) cylinder(d = 3.2, h = 20);
-    translate([o + led_pos[0], o + led_pos[1], lid_z]) cylinder(d = led_d, h = 20);
-    translate([o + led_pos[0], o + led_pos[1], lid_top - 1.4]) cylinder(d = 10.6, h = 2);
     translate([o + 6, o + 4, lid_top - 0.8])
       linear_extrude(1) text("STELLA", size = 6, font = "Liberation Sans:style=Bold", spacing = 1.15);
-  }
-}
-
-module dome() {
-  difference() {
-    union() {
-      cylinder(d = 10.2, h = 1.2);
-      translate([0, 0, 1.2]) sphere(r = 4.6);
-      translate([0, 0, -2]) cylinder(d = 7.6, h = 2);
-    }
-    translate([0, 0, -2.1]) cylinder(d = 5.3, h = 6.5);
-    translate([0, 0, -10]) cube([30, 30, 16.2], center = true);
   }
 }
 
@@ -153,12 +135,10 @@ module test_frame() {
 
 if (part == "base") base();
 if (part == "lid") translate([0, out_w, lid_top]) rotate([180, 0, 0]) lid();
-if (part == "dome") translate([0, 0, 2]) dome();
 if (part == "test") test_frame();
 if (part == "all" || part == "exploded") {
   e = part == "exploded" ? 30 : 0;
   color("#3b3e45") base();
   color("#16171a") translate([0, 0, e]) lid();
-  color("#ff3b30") translate([o + led_pos[0], o + led_pos[1], lid_top - 1.4 + 2 * e]) dome();
   color("#1f6f4a") translate([o, o, pcb_z + e / 2]) cube([board_l, board_w, pcb_t]);
 }
