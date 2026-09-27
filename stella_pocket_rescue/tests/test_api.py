@@ -10,6 +10,11 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("STELLA_RESCUER_PIN", "123456")
     monkeypatch.setenv("STELLA_MIN_INTERVAL", "0")
     monkeypatch.setenv("STELLA_LLM_ENABLED", "0")
+    monkeypatch.setenv("STELLA_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("STELLA_MODE_FILE", str(tmp_path / "state" / "mode.json"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    for name in ("STELLA_HW_STATE", "STELLA_POWER_FILE", "STELLA_HUB_FILE", "STELLA_HUB_LAT", "STELLA_HUB_LON"):
+        monkeypatch.delenv(name, raising=False)
     from app import config, main
     importlib.reload(config)
     importlib.reload(main)
@@ -137,15 +142,18 @@ def test_connections_endpoint_requires_pin(client):
 def test_llm_reply_used_when_available(client, monkeypatch):
     c, main = client
 
-    async def fake_generate(history, triage):
+    async def fake_complete(history, triage, timeout=None):
         assert history[-1]["text"] == "где помощь?"
         return "Спасатели уже знают о вас. Где вы находитесь?"
 
-    monkeypatch.setattr(main.llm, "generate", fake_generate)
+    monkeypatch.setattr(main.config, "LLM_ENABLED", True)
+    monkeypatch.setattr(main.config, "AI_MODE", "local")
+    monkeypatch.setattr(main.ai.llm, "complete", fake_complete)
     sid = new_session(c)
     c.post("/api/chat", json={"session_id": sid, "text": "где помощь?"})
     msgs = c.get("/api/messages", params={"session_id": sid}).json()["messages"]
     assert msgs[-1]["text"].startswith("Спасатели уже знают")
+    assert msgs[-1]["engine"] == "local"
 
 
 def test_console_reachable_by_board_ip(client):

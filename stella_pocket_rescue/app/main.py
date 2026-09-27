@@ -1,16 +1,20 @@
+import asyncio
 import hmac
 import logging
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, llm, mode, stations
+from . import ai, config, diagnostics, llm, mode, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 
@@ -21,12 +25,53 @@ STATIC = Path(__file__).parent / "static"
 SESSION_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUSES = ("new", "assigned", "resolved")
 PORTAL_HOSTS = {config.PORTAL_HOST, "stella.rescue", "localhost", "127.0.0.1", "testserver"}
+AI_TEST_SAMPLE = "Нас двое, у мамы кровь из ноги, мы на 3 этаже, дом 12 по улице Абая"
+HELLO_CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS",
+              "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Private-Network": "true",
+              "Access-Control-Max-Age": "600"}
+FALLBACK_PAGE = ("<!doctype html><html lang=\"ru\"><meta charset=\"utf-8\">"
+                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                 "<title>Stella Pocket</title><body style=\"font:18px sans-serif;padding:24px\">"
+                 "<h1>Stella Pocket</h1><p>Страница временно недоступна. Обновите её через минуту.</p>"
+                 "</body></html>")
+VALIDATION_RU = {"missing": "обязательное поле", "string_too_long": "слишком длинный текст",
+                 "string_too_short": "пустое значение", "less_than_equal": "вне допустимого диапазона",
+                 "greater_than_equal": "вне допустимого диапазона", "finite_number": "должно быть числом",
+                 "float_parsing": "должно быть числом", "float_type": "должно быть числом",
+                 "json_invalid": "некорректный JSON"}
 
-app = FastAPI(title="Stella Pocket Rescue", docs_url=None, redoc_url=None)
+
+def _open_db() -> Database:
+    try:
+        return Database(config.DB_PATH)
+    except Exception as exc:
+        log.error("база %s недоступна (%s) — работаю в памяти, вызовы не сохранятся", config.DB_PATH, exc)
+        return Database(":memory:")
+
+
+async def _guarded(what: str, action, timeout: float = 15) -> None:
+    try:
+        await asyncio.wait_for(action(), timeout)
+    except Exception as exc:
+        log.warning("%s: %r", what, exc)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    log.info("Stella Pocket %s · узел %s", config.VERSION, diagnostics.node_id())
+    await _guarded("запуск ИИ", ai.start)
+    try:
+        yield
+    finally:
+        await _guarded("остановка ИИ", ai.stop)
+
+
+app = FastAPI(title="Stella Pocket Rescue", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
-db = Database(config.DB_PATH)
+db = _open_db()
 
 _pending: set[str] = set()
+_busy: set[str] = set()
 _pin_failures: dict[str, list[float]] = {}
 
 
@@ -42,14 +87,27 @@ async def captive_portal(request: Request, call_next):
     return response
 
 
+def _page(name: str):
+    path = STATIC / name
+    if path.is_file():
+        return FileResponse(path)
+    log.error("нет страницы %s", path)
+    return HTMLResponse(FALLBACK_PAGE, status_code=503)
+
+
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC / "index.html")
+    return _page("index.html")
 
 
 @app.get("/rescuer", include_in_schema=False)
 def rescuer_page():
-    return FileResponse(STATIC / "rescuer.html")
+    return _page("rescuer.html")
+
+
+@app.get("/verify", include_in_schema=False)
+def verify_page():
+    return _page("verify.html")
 
 
 @app.get("/generate_204", include_in_schema=False)
@@ -62,15 +120,23 @@ def connectivity_check():
     return RedirectResponse(config.PORTAL_URL, status_code=302)
 
 
+def _active_engine(snap: dict) -> str:
+    active = snap.get("active")
+    return active if active in ai.ENGINES else "reserve"
+
+
 @app.get("/api/status")
-def status():
-    m = mode.read()
-    return {"mode": m["mode"], "source": m.get("source"), "since": m.get("since"), "note": m.get("note")}
+async def status():
+    m = diagnostics.mode_state()
+    return {"mode": m["mode"], "source": m.get("source"), "since": m.get("since"), "note": m.get("note"),
+            "ai": _active_engine(diagnostics.ai_snapshot())}
 
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "llm": await llm.healthy(), "time": time.time()}
+    snap = diagnostics.ai_snapshot()
+    local = snap.get("local") if isinstance(snap.get("local"), dict) else {}
+    return {"ok": True, "llm": local.get("state") == "ok", "ai": _active_engine(snap), "time": time.time()}
 
 
 class ChatIn(BaseModel):
@@ -188,6 +254,17 @@ def update_incident(sid: str, lat=None, lon=None, accuracy=None):
     return result
 
 
+async def _ai_reply(history: list[dict], result) -> tuple[str, str]:
+    try:
+        text, engine = await asyncio.wait_for(ai.reply(history, result), config.REPLY_DEADLINE + 15)
+    except Exception as exc:
+        log.warning("ИИ не ответил, отвечаю по правилам: %r", exc)
+        return fallback_reply(result), "reserve"
+    if not isinstance(text, str) or not text.strip():
+        return fallback_reply(result), "reserve"
+    return text.strip(), engine if engine in ai.ENGINES else "reserve"
+
+
 async def dispatcher_reply(sid: str):
     if sid in _pending:
         return
@@ -195,12 +272,17 @@ async def dispatcher_reply(sid: str):
     try:
         for _ in range(3):
             answered = db.last_message(sid, "user")
+            if not answered:
+                break
             history = db.messages(sid)
             result = assess([m["text"] for m in history if m["role"] == "user"])
-            text = await llm.generate(history, result) or fallback_reply(result)
-            db.add_message(sid, "assistant", text)
-            if db.last_message(sid, "user")["id"] == answered["id"]:
+            text, engine = await _ai_reply(history, result)
+            db.add_message(sid, "assistant", text, engine=engine)
+            latest = db.last_message(sid, "user")
+            if not latest or latest["id"] == answered["id"]:
                 break
+    except Exception as exc:
+        log.error("ответ диспетчера для %s не записан: %r", sid, exc)
     finally:
         _pending.discard(sid)
 
@@ -294,7 +376,7 @@ def list_incidents():
     counts = {p: sum(1 for i in items if i["priority"] == p and i["status"] != "resolved")
               for p in PRIORITY_RANK}
     return {"incidents": items, "counts": counts,
-            "hub": {"lat": config.HUB_LAT, "lon": config.HUB_LON, "mode": config.HUB_MODE},
+            "hub": {**diagnostics.hub_location(), "mode": config.HUB_MODE},
             "server": stations.uptime()}
 
 
@@ -369,6 +451,101 @@ def broadcast(body: TextIn):
     return {"id": db.add_broadcast(body.text.strip())}
 
 
+@app.get("/api/rescuer/ai", dependencies=[Depends(rescuer)])
+async def rescuer_ai():
+    return diagnostics.json_safe({
+        "ai": diagnostics.ai_snapshot(),
+        "power": diagnostics.read_json(config.POWER_FILE),
+        "hw": diagnostics.read_json(config.HW_STATE_FILE),
+    })
+
+
+@app.post("/api/rescuer/ai/probe", dependencies=[Depends(rescuer)])
+async def rescuer_ai_probe():
+    try:
+        snap = await asyncio.wait_for(ai.probe_now(), 20)
+    except Exception as exc:
+        log.warning("проверка ИИ не завершилась: %r", exc)
+        return diagnostics.json_safe({"ai": diagnostics.ai_snapshot(),
+                                      "error": "Проверка ИИ не завершилась, показано последнее состояние"})
+    return diagnostics.json_safe({"ai": snap if isinstance(snap, dict) else diagnostics.ai_snapshot()})
+
+
+@app.options("/api/verify/hello", include_in_schema=False)
+def verify_hello_preflight():
+    return Response(status_code=204, headers=HELLO_CORS)
+
+
+@app.get("/api/verify/hello")
+def verify_hello(response: Response):
+    response.headers.update(HELLO_CORS)
+    return {
+        "node": diagnostics.node_id(),
+        "name": "Stella Pocket",
+        "version": config.VERSION,
+        "ssid": config.SSID,
+        "portal": config.PORTAL_URL,
+        "uptime_s": diagnostics.uptime_s(),
+        "time": time.time(),
+        "mode": diagnostics.mode_state()["mode"],
+    }
+
+
+@app.get("/api/verify/report", dependencies=[Depends(rescuer)])
+async def verify_report():
+    return await diagnostics.run(db)
+
+
+class LocationIn(BaseModel):
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    label: str | None = Field(default=None, max_length=80)
+
+
+@app.post("/api/verify/location", dependencies=[Depends(rescuer)])
+def set_location(body: LocationIn):
+    try:
+        hub = diagnostics.save_hub(body.lat, body.lon, body.label)
+    except (OSError, ValueError) as exc:
+        log.error("координаты коробки не сохранены: %r", exc)
+        raise HTTPException(500, "Не удалось сохранить координаты коробки")
+    return {"hub": hub}
+
+
+@app.delete("/api/verify/location", dependencies=[Depends(rescuer)])
+def clear_location():
+    try:
+        hub = diagnostics.clear_hub()
+    except OSError as exc:
+        log.error("координаты коробки не удалены: %r", exc)
+        raise HTTPException(500, "Не удалось сбросить координаты коробки")
+    return {"hub": hub}
+
+
+class AiTestIn(BaseModel):
+    text: str | None = Field(default=None, max_length=300)
+
+
+@app.post("/api/verify/ai-test", dependencies=[Depends(rescuer)])
+async def verify_ai_test(body: AiTestIn | None = None):
+    text = ((body.text if body else None) or "").strip() or AI_TEST_SAMPLE
+    if "ai-test" in _busy:
+        raise HTTPException(429, "Проверка ИИ уже идёт, подождите")
+    _busy.add("ai-test")
+    try:
+        result = await asyncio.wait_for(ai.self_test(text), config.REPLY_DEADLINE + 15)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "ИИ не ответил вовремя")
+    except Exception as exc:
+        log.warning("самопроверка ИИ упала: %r", exc)
+        raise HTTPException(502, "Самопроверка ИИ не удалась")
+    finally:
+        _busy.discard("ai-test")
+    if not isinstance(result, dict):
+        raise HTTPException(502, "ИИ вернул некорректный ответ")
+    return diagnostics.json_safe(result)
+
+
 def _not_found():
     raise HTTPException(404, "not found")
 
@@ -376,3 +553,24 @@ def _not_found():
 @app.exception_handler(HTTPException)
 async def http_error(_: Request, exc: HTTPException):
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+
+def _validation_message(errors: list) -> str:
+    if not errors:
+        return "Неверные данные"
+    first = errors[0] if isinstance(errors[0], dict) else {}
+    field = ".".join(str(p) for p in first.get("loc", ()) if p != "body") or "запрос"
+    return f"Неверные данные: {field} — {VALIDATION_RU.get(first.get('type'), 'неверное значение')}"
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    detail = diagnostics.json_safe(jsonable_encoder(errors))
+    return JSONResponse({"error": _validation_message(errors), "detail": detail}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def server_error(request: Request, exc: Exception):
+    log.exception("ошибка на %s %s", request.method, request.url.path)
+    return JSONResponse({"error": "Внутренняя ошибка сервера"}, status_code=500)
