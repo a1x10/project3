@@ -1,13 +1,17 @@
 [Unit]
-Description=Stella Rescue: светодиоды, вентилятор и датчик землетрясения
+Description=Stella Rescue: светодиоды, вентилятор, датчик землетрясения и сторож питания
 After=local-fs.target
+StartLimitIntervalSec=0
 
 [Service]
-EnvironmentFile=/etc/stella/stella.env
+EnvironmentFile=-/etc/stella/stella.env
 WorkingDirectory=/opt/stella
 ExecStart=/opt/stella/venv/bin/python -m app.hardware
 Restart=always
 RestartSec=3
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
