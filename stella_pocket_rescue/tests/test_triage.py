@@ -57,3 +57,26 @@ def test_fallback_asks_for_location_first():
 def test_first_aid_for_bleeding():
     tips = first_aid(assess(["сильное кровотечение"]).tags)
     assert any("прижмите" in t.lower() for t in tips)
+
+
+def test_address_is_extracted_from_mixed_message():
+    r = assess(["Нас двое, у мамы кровь из ноги, мы на 3 этаже, дом 12 по улице Абая"])
+    assert r.location_text == "ул. Абая, д. 12 · этаж 3"
+    assert r.address == {"street": "ул. Абая", "house": "12", "floor": 3}
+
+
+def test_address_parts_collected_across_messages():
+    r = assess(["помогите", "я на Абая 12", "третий этаж, второй подъезд"])
+    assert r.location_text == "Абая, д. 12 · подъезд 2 · этаж 3"
+
+
+def test_address_street_forms_and_landmarks():
+    assert assess(["пр. Абылай хана 10 кв. 7"]).location_text == "пр. Абылай хана, д. 10 · кв. 7"
+    assert assess(["мкр Самал-2, дом 33, 5-й этаж"]).location_text == "мкр. Самал-2, д. 33 · этаж 5"
+    assert assess(["мы в подвале возле школы №5 на улице ленина"]).location_text == \
+        "ул. Ленина · в подвале · возле школы №5"
+
+
+def test_no_address_from_unrelated_numbers():
+    assert assess(["у меня нога сломана, за 5 минут стало хуже"]).location_text is None
+    assert assess(["ждем на Сейфуллина 5 минут"]).address == {}

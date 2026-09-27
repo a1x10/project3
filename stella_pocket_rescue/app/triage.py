@@ -83,6 +83,7 @@ class TriageResult:
     people: int | None = None
     coords: tuple[float, float] | None = None
     location_text: str | None = None
+    address: dict = field(default_factory=dict)
     panic: bool = False
     safe: bool = False
 
@@ -138,10 +139,170 @@ def extract_people(text: str) -> int | None:
     return None
 
 
-def extract_location(message: str) -> str | None:
-    if LOCATION_HINT_RE.search(normalize(message)):
-        return message.strip()[:200]
+STREET_KINDS = (
+    (r"ул(?:иц\w*|\.)?", "ул."),
+    (r"пр(?:оспект\w*|-т|\.)", "пр."),
+    (r"пер(?:еул\w*|\.)", "пер."),
+    (r"бульвар\w*|б-р", "б-р"),
+    (r"шоссе", "ш."),
+    (r"площад\w*|пл\.", "пл."),
+    (r"микрорайон\w*|мкрн?\.?", "мкр."),
+)
+STREET_RE = re.compile(
+    r"(?<![\w-])(" + "|".join(p for p, _ in STREET_KINDS) + r")\s*[,.]?\s*"
+    r"([^\W\d_][\w-]*(?:\s+[^\W\d_][\w-]*)?|\d{1,3}(?:-?[а-я]{1,2})?(?:\s+[^\W\d_][\w-]*)?)",
+    re.I,
+)
+HOUSE_AFTER_RE = re.compile(r"^\s*,?\s*(?:д(?:ом)?\.?\s*)?№?\s*(\d{1,4}[а-яa-z]?(?:/\d{1,4})?)(?![\d])", re.I)
+HOUSE_RE = re.compile(r"(?<![\w])(?:дом|д\.)\s*№?\s*(\d{1,4}[а-яa-z]?(?:/\d{1,4})?)(?![\d])", re.I)
+NOT_HOUSE_RE = re.compile(r"^\s*(?:-?(?:й|м|ом|ем|ой|я))?\s*(?:этаж|подъезд|челов|раз|мин|час|лет|год)", re.I)
+BARE_STREET_RE = re.compile(r"(?<![\w])(?:на|по)\s+([А-ЯЁ][а-яё]+(?:-[А-ЯЁа-яё]+)?)\s*,?\s*(\d{1,4}[а-я]?(?:/\d{1,4})?)(?![\d])")
+NAME_TAIL = {"би", "хана", "батыра", "ата", "бия", "хан", "батыр"}
+LANDMARK_CUT_RE = re.compile(r"\s+(?:на|по|в)\s+(?=ул|пр|пер|мкр|микро|бульв|шосс|площ|дом\b|д\.)", re.I)
+ORDINALS = {"перв": 1, "втор": 2, "трет": 3, "четверт": 4, "пят": 5, "шест": 6, "седьм": 7,
+            "восьм": 8, "девят": 9, "десят": 10}
+ORDINAL_RE = "(" + "|".join(ORDINALS) + r")\w*"
+FLOOR_RE = re.compile(r"(\d{1,3})\s*(?:-?(?:й|м|ом|ем|ой))?\s*этаж|этаж\w*\s*№?\s*(\d{1,3})|" + ORDINAL_RE + r"\s+этаж", re.I)
+ENTRANCE_RE = re.compile(r"(\d{1,2})\s*(?:-?(?:й|м|ом|ем|ой))?\s*подъезд|подъезд\w*\s*№?\s*(\d{1,2})|"
+                         + ORDINAL_RE + r"\s+подъезд", re.I)
+APARTMENT_RE = re.compile(r"(?<![\w])(?:кв\.?|квартир\w*)\s*№?\s*(\d{1,4})", re.I)
+LANDMARK_RE = re.compile(
+    r"(рядом\s+с|возле|около|напротив|недалеко\s+от|у\s+входа\s+в|за)\s+"
+    r"((?:школ|больниц|поликлиник|магазин|остановк|рын|вокзал|парк|мечет|церк|храм|торгов|тц|аптек|"
+    r"банк|кафе|садик|детск|университет|колледж|завод|мост|реки|памятник|стадион|дом\s+культур|[А-ЯЁ«\"])"
+    r"[^,.!?;\n]{0,40})",
+    re.I,
+)
+PLACE_RE = re.compile(
+    r"((?:школ\w*|больниц\w*|поликлиник\w*|детск\w+\s+сад\w*|торгов\w*\s+центр\w*|вокзал\w*|мечет\w*|"
+    r"стадион\w*)\s*№?\s*\d{0,4})",
+    re.I,
+)
+SPOT_RE = re.compile(r"(в\s+подвал\w*|на\s+крыш\w*|во\s+дворе|на\s+балкон\w*|в\s+лифт\w*|на\s+лестниц\w*)", re.I)
+NAME_STOP = {"дом", "д", "этаж", "подъезд", "кв", "квартира", "у", "мы", "я", "и", "в", "на", "возле", "рядом",
+             "около", "напротив", "нас", "под", "за", "по", "с", "там", "тут", "здесь", "уже", "нет", "не"}
+ADDRESS_KEYS = ("street", "house", "entrance", "floor", "apartment", "landmark", "spot")
+
+
+def _ordinal(word: str | None) -> int | None:
+    if not word:
+        return None
+    for stem, n in ORDINALS.items():
+        if word.lower().startswith(stem):
+            return n
     return None
+
+
+def _number(m: re.Match | None) -> int | None:
+    if not m:
+        return None
+    for g in m.groups():
+        if g and g.isdigit():
+            n = int(g)
+            return n if 0 < n < 200 else None
+        value = _ordinal(g)
+        if value:
+            return value
+    return None
+
+
+def _street(message: str) -> tuple[str | None, str | None]:
+    for m in STREET_RE.finditer(message):
+        kind_raw, name = m.group(1), m.group(2)
+        words = [w for w in name.split() if w.lower().strip(".") not in NAME_STOP]
+        if not words:
+            continue
+        if len(words) > 1 and words[1].lower() not in NAME_TAIL and (words[1][:1].islower() or len(words[1]) < 3):
+            words = words[:1]
+        kind = next(label for pattern, label in STREET_KINDS if re.fullmatch(pattern, kind_raw, re.I))
+        pretty = " ".join(w if w.lower() in NAME_TAIL else w[:1].upper() + w[1:] for w in words)
+        house = None
+        after = message[m.end():]
+        h = HOUSE_AFTER_RE.match(after)
+        if h and not NOT_HOUSE_RE.match(after[h.end():]):
+            house = h.group(1)
+        return f"{kind} {pretty}", house
+    for m in BARE_STREET_RE.finditer(message):
+        if not NOT_HOUSE_RE.match(message[m.end():]):
+            return m.group(1), m.group(2)
+    return None, None
+
+
+def _clean_phrase(text: str) -> str:
+    text = LANDMARK_CUT_RE.split(text)[0]
+    text = re.sub(r"\s+", " ", text).strip(" ,.;:-—")
+    words = text.split()
+    while words and words[-1].lower() in NAME_STOP:
+        words.pop()
+    return " ".join(words)[:48]
+
+
+def parse_address(message: str) -> dict:
+    found: dict = {}
+    street, house = _street(message)
+    if street:
+        found["street"] = street
+    if not house:
+        h = HOUSE_RE.search(message)
+        if h and not NOT_HOUSE_RE.match(message[h.end():]):
+            house = h.group(1)
+    if house:
+        found["house"] = house.lower()
+    for key, regex in (("entrance", ENTRANCE_RE), ("floor", FLOOR_RE)):
+        value = _number(regex.search(message))
+        if value:
+            found[key] = value
+    a = APARTMENT_RE.search(message)
+    if a:
+        found["apartment"] = int(a.group(1))
+    lm = LANDMARK_RE.search(message)
+    if lm:
+        phrase = _clean_phrase(lm.group(0))
+        if phrase:
+            found["landmark"] = phrase[:1].lower() + phrase[1:]
+    else:
+        p = PLACE_RE.search(message)
+        if p:
+            found["landmark"] = _clean_phrase(p.group(1)).lower()
+    s = SPOT_RE.search(message)
+    if s:
+        found["spot"] = _clean_phrase(s.group(1)).lower()
+    return found
+
+
+def merge_address(messages: list[str]) -> dict:
+    merged: dict = {}
+    for msg in messages:
+        parts = parse_address(msg)
+        if "street" in parts and parts["street"] != merged.get("street"):
+            merged.pop("house", None)
+        merged.update(parts)
+    return {k: merged[k] for k in ADDRESS_KEYS if k in merged}
+
+
+def format_address(parts: dict) -> str | None:
+    head = []
+    if parts.get("street"):
+        head.append(parts["street"] + (f", д. {parts['house']}" if parts.get("house") else ""))
+    elif parts.get("house"):
+        head.append(f"д. {parts['house']}")
+    if parts.get("entrance"):
+        head.append(f"подъезд {parts['entrance']}")
+    if parts.get("floor"):
+        head.append(f"этаж {parts['floor']}")
+    if parts.get("apartment"):
+        head.append(f"кв. {parts['apartment']}")
+    if parts.get("spot"):
+        head.append(parts["spot"])
+    if parts.get("landmark"):
+        head.append(parts["landmark"])
+    return " · ".join(head) or None
+
+
+def extract_location(message: str) -> str | None:
+    if not LOCATION_HINT_RE.search(normalize(message)):
+        return None
+    return format_address(parse_address(message)) or message.strip()[:200]
 
 
 def assess(user_messages: list[str]) -> TriageResult:
@@ -161,6 +322,8 @@ def assess(user_messages: list[str]) -> TriageResult:
         result.coords = extract_coords(msg) or result.coords
         result.people = extract_people(msg) or result.people
         result.location_text = extract_location(msg) or result.location_text
+    result.address = merge_address(user_messages)
+    result.location_text = format_address(result.address) or result.location_text
     result.panic = any(panic_level(m) for m in user_messages[-3:])
 
     if any(w >= 10 for tag, w, _ in RULES if tag in result.tags):
