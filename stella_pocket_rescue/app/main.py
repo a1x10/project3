@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, config, diagnostics, llm, mode, stations
+from . import ai, config, diagnostics, mode, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 

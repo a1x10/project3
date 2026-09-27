@@ -1,16 +1,22 @@
 [Unit]
-Description=Stella Rescue: локальная языковая модель (llama.cpp)
-After=network.target
+Description=Stella Rescue: локальная языковая модель (llama.cpp) под присмотром сторожа питания
+After=network.target stella-hw.service
+Wants=stella-hw.service
+StartLimitIntervalSec=900
+StartLimitBurst=3
 
 [Service]
 User=stella
-EnvironmentFile=/etc/stella/stella.env
-ExecStart=/usr/bin/taskset -c ${LLAMA_CPUS} /opt/stella/llama.cpp/build/bin/llama-server \
-    -m ${LLAMA_MODEL} --host 127.0.0.1 --port 8081 \
-    -c ${LLAMA_CTX} -t ${LLAMA_THREADS} --parallel 1
-Restart=always
-RestartSec=5
-Nice=5
+Group=stella
+WorkingDirectory=/opt/stella
+EnvironmentFile=-/etc/stella/stella.env
+ExecStartPre=+/opt/stella/deploy/stella-power.sh
+ExecStart=/opt/stella/deploy/stella-llm.sh
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=240
+TimeoutStopSec=20
+Nice=10
 
 [Install]
 WantedBy=multi-user.target
