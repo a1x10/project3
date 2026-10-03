@@ -41,8 +41,19 @@ TYPE_WORDS = [  # (основы слов, типы устройств Яндек
     (("кофеварк", "кофемашин"), ("devices.types.cooking.coffee_maker",), ("switch",)),
     (("стиральн", "стиралк"), ("devices.types.washing_machine",), ("switch",)),
     (("посудомо",), ("devices.types.dishwasher",), ("switch",)),
-    (("колонк", "станци"), ("devices.types.media_device.receiver", "devices.types.smart_speaker"), ("media_player",)),
+    # «станция» не считаем колонкой: «включи станцию Маяк» — это радио
+    (("колонк",), ("devices.types.media_device.receiver", "devices.types.smart_speaker"), ("media_player",)),
 ]
+LIGHT_WORDS = r"(?:свет|ламп\w*|люстр\w*|подсветк\w*|ленту|гирлянд\w*|ночник\w*|торшер\w*|светильник\w*)"
+_COLOR_RE = r"(красн|оранжев|желт|зелен|бирюзов|голуб|син|фиолетов|сиренев|розов|малинов|тепл|холодн|бел|дневн|нейтральн|мягк)"
+
+
+def has_word(text: str, stem: str) -> bool:
+    """Слово с этой основой: «ламп» — «лампу», «лампочку»; короткие основы — только целым словом
+    («тв» не должно находиться в «твою», «бра» — в «брата»)."""
+    if len(stem) <= 3:
+        return re.search(rf"\b{stem}\b", text) is not None
+    return re.search(rf"\b{stem}\w{{0,4}}\b", text) is not None
 COLORS = {
     "красн": {"h": 0, "s": 100, "v": 100}, "оранжев": {"h": 25, "s": 100, "v": 100}, "желт": {"h": 50, "s": 100, "v": 100},
     "зелен": {"h": 120, "s": 100, "v": 100}, "бирюзов": {"h": 170, "s": 100, "v": 100},
@@ -221,21 +232,26 @@ class SmartHome(Skill):
         if not devs:
             return []
         t = clean(text)
-        everywhere = bool(re.search(r"\b(?:везде|во всем доме|во всей квартире|по всему дому|все)\b", t))
+        everywhere = bool(re.search(r"\b(?:везде|во всем доме|во всей квартире|по всему дому|все|весь)\b", t))
         room = None
         for r in self._rooms():
             if contains_phrase(t, r):
                 room = r
                 break
+        # просто «свет» — весь свет (там, где стоит Стелла, если её комната указана), а не одно устройство
+        generic = re.fullmatch(r"(?:весь |все )?(?:свет|освещение)(?: везде| во всем доме| во всей квартире)?", t)
+        here = self.cfg.get("smarthome.room") or ""
+        if generic and not room and not everywhere and here in self._rooms():
+            room = here
         best, score = best_match(t, devs, key=lambda d: d.name, threshold=0.7)
-        if best and score >= 0.85 and (not room or best.room == room):
+        if best and score >= 0.85 and (not room or best.room == room) and not generic:
             return [best]
         for d in devs:  # синонимы, заданные в приложении Яндекса
             for al in d.aliases:
                 if contains_phrase(t, al):
                     return [d]
         for words, ya_types, ha_domains in TYPE_WORDS:
-            if any(re.search(rf"\b{w}", t) for w in words):
+            if any(has_word(t, w) for w in words):
                 cand = [d for d in devs if (d.backend == "yandex" and any(d.type.startswith(x) for x in ya_types)) or
                         (d.backend == "ha" and d.domain in ha_domains and any(re.search(rf"\b{w}", clean(d.name))
                                                                                for w in words + ("свет",)))]
@@ -243,12 +259,13 @@ class SmartHome(Skill):
                     cand = [d for d in devs if "свет" in clean(d.name)]
                 if room:
                     cand = [d for d in cand if d.room == room] or [d for d in cand if contains_phrase(t, d.name)]
-                elif not everywhere and len(cand) > 1:
+                elif not everywhere and not generic and len(cand) > 1:
                     named = [d for d in cand if similarity(t, d.name) > 0.5]
                     cand = named or cand
                 if cand:
                     return cand
-        if best:
+        # нечёткое совпадение только уверенное: «брата» похоже на «Бра», но это не лампа
+        if best and score >= 0.8:
             return [best]
         return []
 
@@ -345,16 +362,16 @@ class SmartHome(Skill):
             return None
         return Reply("Готово." if not errs else f"Ошибка: {errs[0]}", emotion="confidence", intensity=0.3)
 
-    @intent(r"\b(?:сделай|поставь|включи|переключи)\s+(?:свет|ламп\w*|люстр\w*|подсветк\w*|ленту|гирлянду)?\s*"
-            r"(?:\w+\s+)?(красн|оранжев|желт|зелен|бирюзов|голуб|син|фиолетов|сиренев|розов|малинов|тепл|холодн|"
-            r"бел|дневн|нейтральн|мягк)\w*(?:\s+(?:свет|цвет))?", priority=50)
+    # цвет только вместе со словом про свет: «включи синий трактор» и «поставь белый шум» — это музыка
+    @intent(r"\b(?:сделай|поставь|включи|переключи|измени)\s+(?:" + LIGHT_WORDS + r"\s+(?:\w+\s+){0,3}?" + _COLOR_RE +
+            r"\w*|(?:\w+\s+)?" + _COLOR_RE + r"\w*\s+(?:свет|цвет)\b)", priority=50)
     def color(self, ctx):
         if not self.configured:
             return self._not_configured()
         devs = [d for d in self.find(ctx.norm) if d.type.startswith("devices.types.light") or d.domain == "light"]
         if not devs:
             return None
-        key = ctx.group(1)
+        key = ctx.group(1) or ctx.group(2)
         ya = [d.id for d in devs if d.backend == "yandex"]
         if key in COLORS:
             action = {"type": "devices.capabilities.color_setting", "state": {"instance": "hsv", "value": COLORS[key]}}

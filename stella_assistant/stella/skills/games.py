@@ -141,11 +141,11 @@ class Games(Skill):
             self.a.end_session()
             return Reply("Ура, я победила! Сыграем ещё как-нибудь.", emotion="joy")
         name = re.sub(r"^(?:город|мой город|ну|это)\s+", "", n).strip()
-        city = self._city_known(name)
+        city = self._norm_cities.get(clean(name).replace("ё", "е"))
+        if not city and (len(name.split()) > 3 or self.a.matches_intent(ctx, exclude=self)):
+            return None  # «включи музыку» посреди игры — это не город, пусть выполнят
+        city = city or self._city_known(name)
         if not city:
-            if len(name.split()) > 3:
-                self.a.end_session()
-                return None  # видимо, это уже не игра
             return Reply(f"Не знаю города «{name}». Назови другой на букву «{self.state['need'].upper()}».",
                          emotion="surprise", intensity=0.6, expect_reply=True)
         key = clean(city).replace("ё", "е")
@@ -213,9 +213,8 @@ class Games(Skill):
             if max(scores) >= 0.6:
                 choice = scores.index(max(scores))
         if choice is None:
-            if len(n.split()) > 5:
-                self.a.end_session()
-                return None
+            if len(n.split()) > 5 or self.a.matches_intent(ctx, exclude=self):
+                return None  # другая команда — игра подождёт
             return Reply("Скажи номер варианта: первый, второй или третий.", expect_reply=True)
         if choice == ans:
             self.state["score"] += 1
@@ -243,8 +242,13 @@ class Games(Skill):
         if re.search(r"\b(?:сдаюсь|не знаю)\b", ctx.norm):
             self.a.end_session()
             return Reply(f"Я загадала {self.state['num']}! Ничего, в следующий раз угадаешь.", emotion="joy")
-        val = words_to_number(ctx.norm)
-        if not isinstance(val, (int, float)):
+        # ход — это число («50», «может быть 37», «наверное сорок»), а не «поставь будильник на 7»
+        guess = re.fullmatch(r"(?:(?:это|может|быть|наверное|давай|число|ну|тогда|а|я думаю|думаю)\s+)*"
+                             r"(\d+)(?:\s+(?:наверное|может быть|да))?", ctx.norm)
+        val = int(guess.group(1)) if guess else None
+        if val is None:
+            if self.a.matches_intent(ctx, exclude=self) or len(ctx.norm.split()) > 3:
+                return None
             return Reply("Назови число от 1 до 100.", expect_reply=True)
         self.state["tries"] += 1
         num, val = self.state["num"], int(val)
@@ -279,6 +283,8 @@ class Games(Skill):
             self.state["ended"] = time.time()
             return Reply(random.choice(["Правильно! Ты молодец!", "Угадал! Здорово!", "Верно!"]) + " Ещё загадку?",
                          emotion="joy", expect_reply=True)
+        if self.a.matches_intent(ctx, exclude=self):
+            return None  # не ответ на загадку, а другая команда
         self.state["tries"] += 1
         if self.state["tries"] >= 3:
             self.a.end_session()

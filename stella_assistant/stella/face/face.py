@@ -232,32 +232,54 @@ class Face:
             self.set_mood(name, 1.0, {"anger_mark": 1.0} if name == "anger" else None)
         self.set_info(EMOTION_NAMES_RU.get(name, name))
 
+    def end_demo(self):
+        """Демо закончилось: убираем подпись и последнюю эмоцию, настроение снова задаёт характер."""
+        self.demo = False
+        self.set_info("")
+        with self._lock:
+            self.transient = None
+            self.mood = ("neutral", 1.0)
+            self.extra = {}
+            self.state = "idle"
+        bus.emit("face_reset")
+
     # ---------------------------------------------------------- окно / цикл --
     def _init_display(self):
         import pygame
         if self.headless:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-        pygame.display.init()
-        pygame.font.init()
-        if self.headless or self.backend == "luma":
-            self.screen = pygame.Surface(self.size)
-        else:
-            flags = pygame.SCALED
-            if self.fullscreen:
-                flags |= pygame.FULLSCREEN
-            try:
-                self.screen = pygame.display.set_mode(self.size, flags, vsync=1)
-            except Exception:
-                self.screen = pygame.display.set_mode(self.size, flags)
-            pygame.display.set_caption(self.cfg.get("assistant.name", "Стелла"))
-            if self.hide_cursor and self.fullscreen:
-                pygame.mouse.set_visible(False)
+        try:
+            self._open_window(pygame)
+        except Exception as e:
+            # нет HDMI/DSI-экрана или доступа к DRM: голос, веб и Telegram должны работать и так
+            log.error("Экран недоступен (%s) — продолжаю без него, лицо видно в веб-панели", e)
+            pygame.display.quit()
+            os.environ["SDL_VIDEODRIVER"] = "dummy"
+            self.headless = True
+            self._open_window(pygame)
         d = self.cfg["display"]
         self.renderer = FaceRenderer(self.size, tuple(d.get("eye_color", (70, 190, 255))),
                                      tuple(d.get("background", (0, 0, 0))), int(d.get("supersample", 1)),
                                      bool(d.get("show_mouth", True)), bool(d.get("show_brows", True)))
         if self.backend == "luma":
             self._luma = _open_luma(d.get("luma", {}))
+
+    def _open_window(self, pygame):
+        pygame.display.init()
+        pygame.font.init()
+        if self.headless or self.backend == "luma":
+            self.screen = pygame.Surface(self.size)
+            return
+        flags = pygame.SCALED
+        if self.fullscreen:
+            flags |= pygame.FULLSCREEN
+        try:
+            self.screen = pygame.display.set_mode(self.size, flags, vsync=1)
+        except Exception:
+            self.screen = pygame.display.set_mode(self.size, flags)
+        pygame.display.set_caption(self.cfg.get("assistant.name", "Стелла"))
+        if self.hide_cursor and self.fullscreen:
+            pygame.mouse.set_visible(False)
 
     def request_frames(self, seconds: float = 5.0):
         """Веб-панель просит кадры лица (MJPEG) — рендерим JPEG только пока кто-то смотрит."""
@@ -267,12 +289,22 @@ class Face:
         return self._jpeg
 
     def run(self, stop: threading.Event):
-        import pygame
-        self._init_display()
+        try:
+            import pygame
+            self._init_display()
+        except Exception:
+            log.exception("Лицо не запустилось — работаю без экрана")
+            while not stop.wait(0.5):
+                pass
+            return
         clock = pygame.time.Clock()
-        log.info("Лицо запущено: %sx%s, %s FPS", *self.size, self.fps)
+        log.info("Лицо запущено: %sx%s, %s FPS%s", *self.size, self.fps, " (без экрана)" if self.headless else "")
+        was_demo = False
         while not stop.is_set():
-            dt = min(0.1, clock.tick(self.fps) / 1000.0)
+            now = time.time()
+            # без экрана рисуем, только пока лицо смотрят в веб-панели — иначе зря грузим процессор
+            drawing = not self.headless or self._luma is not None or now < self._jpeg_wanted_until
+            dt = min(0.1, clock.tick(self.fps if drawing else 10) / 1000.0)
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     stop.set()
@@ -298,7 +330,12 @@ class Face:
                     self.look_at((ev.pos[0] / self.size[0]) * 2 - 1, (ev.pos[1] / self.size[1]) * 2 - 1, 1.5)
             if self.demo:
                 self.demo_tick(time.time())
+            elif was_demo:
+                self.end_demo()
+            was_demo = self.demo
             self.update(dt)
+            if not drawing:
+                continue
             eyes = self.renderer.eye_positions(self.params, self.anim)
             self.renderer.update(dt, self.params, eyes)
             self.renderer.render(self.screen, self.params, self.anim)

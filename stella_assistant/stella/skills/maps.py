@@ -273,8 +273,11 @@ class Maps(Skill):
             self.log.warning("OSRM: %s", e)
             return None
 
-    @intent(r"\b(?:как (?:доехать|добраться|дойти|проехать|пройти)|сколько (?:ехать|идти|добираться|минут)|"
-            r"маршрут|проложи (?:маршрут|путь)|далеко ли|как далеко|расстояние)\b\s*(?:до|к|в|на)?\s*(.+)$", priority=57)
+    # предлог — целым словом: иначе «сколько минут варить яйца» превращалось в маршрут до «арить яйца»
+    @intent(r"\b(?:как (?:доехать|добраться|дойти|проехать|пройти)|"
+            r"сколько (?:минут |времени |часов )?(?:ехать|идти|добираться|лететь)|"
+            r"маршрут|проложи (?:маршрут|путь)|далеко ли|как далеко|расстояние)\b\s*(?:(?:до|к|в|на|от)\s+)?(.+)$",
+            priority=57)
     def route(self, ctx):
         n = ctx.norm
         dest = ctx.group(1)
@@ -291,9 +294,15 @@ class Maps(Skill):
         elif re.match(r"^(?:дом\w*)$", dest) and self.cfg.get("traffic.home"):
             h = self.cfg.get("traffic.home")
             target = (float(h[0]), float(h[1]), "дома")
+        elif re.match(r"^(?:работ\w*|офис\w*|дом\w*)$", dest):
+            key = "traffic.home" if dest.startswith("дом") else "traffic.work"
+            return Reply(f"Я не знаю, где {'твой дом' if key == 'traffic.home' else 'твоя работа'}: укажи координаты "
+                         f"в настройках ({key}).", emotion="sadness", intensity=0.5)
         else:
             target = self.geocode(dest)
         if not target:
+            if not re.search(r"\b(?:доехать|добраться|дойти|проехать|пройти|ехать|идти|добираться|маршрут|путь)\b", n):
+                return None  # «как далеко луна», «расстояние от Земли до Солнца» — вопрос, а не маршрут
             return Reply(f"Не нашла на карте «{dest}».", emotion="sadness")
         r = self._route(self.origin(), target[:2], mode)
         if not r:
@@ -374,6 +383,8 @@ class Maps(Skill):
     def nearest(self, ctx):
         what = (ctx.match.group(1) or ctx.match.group(2) or "").strip()
         flt, label = self._category(what)
+        if not ctx.match.group(1) and not flt:
+            return None  # «будь рядом», «посиди рядом» — не поиск на карте
         places = None
         try:
             places = self._yandex_orgs(what)

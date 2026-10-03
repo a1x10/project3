@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import concurrent.futures as cf
 import json
 import logging
 import queue
@@ -24,21 +25,27 @@ from .io import RATE
 log = logging.getLogger("stella.stt")
 
 
-def _lev(a: str, b: str) -> int:
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
 class WakeMatcher:
-    """Нечёткое сравнение со словом-активатором: «стелла», «стела», «стеллу», «stella»…"""
+    """Слово-активатор: «стелла», «стела», «stella» и то, как его на самом деле слышит Vosk.
 
-    def __init__(self, words):
+    Нечёткое сравнение («отличается на одну букву») для короткого слова будило Стеллу на «стена»,
+    «Стёпа», «стекла». Поэтому — точный список: слова из assistant.wake_words, их падежи
+    («стеллу», «стелле»), замена «е»→«и» («стила» — так Vosk слышит «Стелла, который час»)
+    и свои варианты из assistant.wake_aliases.
+    """
+
+    def __init__(self, words, aliases=()):
         self.words = [self._n(w) for w in words if w]
+        forms = set()
+        for w in self.words + [self._n(a) for a in aliases if a]:
+            forms.add(w)
+            if len(w) >= 4 and w[-1] == "а":  # «с телом» — тоже частая ошибка Vosk
+                forms.update(w[:-1] + end for end in ("у", "е", "ой", "ою", "ом"))
+            elif len(w) >= 4 and w[-1] == "я":
+                forms.update(w[:-1] + end for end in ("ю", "е", "ей", "ею"))
+            if "е" in w:
+                forms.add(w.replace("е", "и", 1))
+        self.forms = {f for f in forms if len(f) >= 3}
 
     @staticmethod
     def _n(w: str) -> str:
@@ -46,31 +53,29 @@ class WakeMatcher:
         return re.sub(r"(.)\1+", r"\1", w)  # «стелла» -> «стела»
 
     def is_wake(self, word: str) -> bool:
-        w = self._n(word)
-        if len(w) < 3:
-            return False
-        for ref in self.words:
-            if w == ref:
-                return True
-            # падежи и мелкие ошибки распознавания, но первые буквы должны совпадать
-            if len(ref) >= 4 and w[:3] == ref[:3] and _lev(w, ref) <= 1:
-                return True
-        return False
+        return self._n(word) in self.forms
 
     def find(self, text: str):
         """-> (есть ли активатор, команда без активатора)."""
         words = text.split()
         for i, w in enumerate(words):
+            rest = None
             if self.is_wake(w):
-                rest = words[:i] + words[i + 1:]
-                # «Стелла, стоп» / «включи музыку, Стелла»
-                return True, " ".join(rest).strip()
-            # Vosk иногда слышит «Стелла» как два слова: «с тела», «с телом»
-            if w == "с" and i + 1 < len(words) and "стела" in self.words and \
-                    re.fullmatch(r"тел+[аоуеы]?м?", words[i + 1]):
-                rest = words[:i] + words[i + 2:]
-                return True, " ".join(rest).strip()
+                rest = words[:i] + words[i + 1:]  # «Стелла, стоп» / «включи музыку, Стелла»
+            elif i + 1 < len(words) and len(w) == 1 and self._n(w + words[i + 1]) in self.forms:
+                rest = words[:i] + words[i + 2:]  # Vosk слышит «Стелла» как «с тела», «с телом»
+            elif i == 0 and len(words) > 1 and self._n("с" + w) in self.words and self._n(w) not in COMMON_WORDS:
+                rest = words[1:]  # …или теряет первую «с»: «тела стоп» (только в начале и перед командой)
+            if rest is not None:
+                command = " ".join(rest).strip()
+                return True, "" if command in FILLERS else command
         return False, text
+
+
+# слова, которые не должны будить Стеллу, даже если похожи на обрывок имени
+COMMON_WORDS = {"тело"}
+# «Эй, Стелла» — это не команда «эй», а просто обращение
+FILLERS = {"эй", "ну", "слушай", "алло", "а", "о", "ой"}
 
 
 class Listener(threading.Thread):
@@ -83,7 +88,7 @@ class Listener(threading.Thread):
         self.on_command = on_command
         self.on_timeout = on_timeout or (lambda: None)
         self.on_partial = on_partial or (lambda text: None)
-        self.wake = WakeMatcher(cfg.get("assistant.wake_words") or ["стелла"])
+        self.wake = WakeMatcher(cfg.get("assistant.wake_words") or ["стелла"], cfg.get("assistant.wake_aliases") or ())
         self.mode = "wake"
         self.deadline = 0.0
         self.muted_until = 0.0          # не слушаем собственную речь
@@ -96,22 +101,27 @@ class Listener(threading.Thread):
         self._rec = None
         self._last_partial = ""
         self._reset_pending = False
+        # облачное распознавание и отправка команды — в своём потоке, чтобы не задерживать микрофон
+        self._out = cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt-out")
 
     # ------------------------------------------------------- управление --
     def listen_now(self, timeout: float | None = None):
         """Начать слушать команду без слова-активатора (диалоговый режим)."""
-        self.mode = "command"
+        # сначала срок, потом режим: иначе поток распознавания может увидеть command со старым сроком
         self.deadline = time.time() + (timeout or float(self.cfg.get("assistant.listen_timeout", 8)))
+        self.mode = "command"
 
     def mute(self, seconds: float):
         self.muted_until = max(self.muted_until, time.time() + seconds)
 
-    def unmute(self):
+    def unmute(self, reset: bool = True):
         self.muted_until = 0.0
-        self._reset_pending = True  # сбросим распознаватель в его собственном потоке (Vosk не потокобезопасен)
+        if reset:  # сбросим распознаватель в его собственном потоке (Vosk не потокобезопасен)
+            self._reset_pending = True
 
     def stop(self):
         self._stop.set()
+        self._out.shutdown(wait=False, cancel_futures=True)
 
     # ------------------------------------------------------------- поток --
     def run(self):
@@ -174,6 +184,9 @@ class Listener(threading.Thread):
             found, _ = self.wake.find(text)
             if found and time.time() - self._woke_at > 3:
                 self._woke_at = time.time()
+                # дальше слушаем команду: если итог распознавания окажется пустым, сработает тайм-аут,
+                # а не «вечное» ожидание с приглушённой музыкой
+                self.listen_now()
                 self.on_wake()
         elif not muted:
             self.on_partial(text)
@@ -192,6 +205,7 @@ class Listener(threading.Thread):
                 return
             recently_woke = time.time() - self._woke_at < 4
             if not found and not recently_woke:
+                log.debug("Без слова-активатора: %r", text)  # подсказка для assistant.wake_aliases
                 return
             if not found:
                 command = text  # активатор был в частичном результате, но потерялся в итоговом
@@ -211,6 +225,13 @@ class Listener(threading.Thread):
                 self._deliver(command, whisper, audio)
 
     def _deliver(self, text: str, whisper: bool, audio: np.ndarray):
+        self._woke_at = 0.0
+        try:
+            self._out.submit(self._deliver_now, text, whisper, audio)
+        except RuntimeError:  # остановлены
+            pass
+
+    def _deliver_now(self, text: str, whisper: bool, audio: np.ndarray):
         if len(audio) > RATE // 3:  # уточняем команду облачным распознаванием (Groq Whisper / SpeechKit)
             better = cloud_recognize(self.cfg, audio)
             if better:
@@ -280,7 +301,7 @@ def yandex_recognize(cfg, audio: np.ndarray, sr: int = RATE) -> str | None:
         params["folderId"] = folder
     try:
         r = requests.post("https://stt.api.cloud.yandex.net/speech/v1/stt:recognize", params=params,
-                          headers=headers, data=dsp.to_int16(audio).tobytes(), timeout=10)
+                          headers=headers, data=dsp.to_int16(audio).tobytes(), timeout=(3.05, 8))
         if r.ok:
             return (r.json().get("result") or "").strip() or None
         log.warning("SpeechKit STT: %s %s", r.status_code, r.text[:200])

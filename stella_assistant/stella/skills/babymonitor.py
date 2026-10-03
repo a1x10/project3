@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 
@@ -86,8 +87,9 @@ class BabyMonitor(Skill):
         room = ctx.group(1) or ctx.group(2)
         peer = self.peers.find(room)
         if not peer:
-            if not self.peers.all:
-                return None if ctx.group(2) else Reply("Другие Стеллы не настроены (раздел peers в настройках).")
+            looks_like_room = re.match(r"(?:детск|кухн|спальн|гостин|комнат|зал|кабинет|ванн|прихож|коридор|этаж)", room)
+            if not self.peers.all and looks_like_room and not ctx.group(2):
+                return Reply("Другие Стеллы не настроены (раздел peers в настройках).")
             return None
         name, url = peer
         if self.link:

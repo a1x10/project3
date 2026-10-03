@@ -92,7 +92,7 @@ class Recipes(Skill):
             return Reply(f"Не знаю рецепт «{dish}». Я умею: {', '.join(BUILTIN)}. А с ИИ — что угодно.",
                          emotion="sadness")
         self.r, self.i = recipe, -1
-        self.a.start_session(self, self._session, "рецепт",
+        self.a.start_session(self, self._session, "рецепт", timeout=45 * 60,  # готовят долго
                              exit_words=("хватит", "стоп", "выход", "закончи", "закончим", "конец", "отмена"))
         n = len(recipe["ingredients"])
         return Reply(f"{recipe['title']}. Понадобится {n} {plural(n, 'ингредиент', 'ингредиента', 'ингредиентов')} "
@@ -132,15 +132,27 @@ class Recipes(Skill):
         if self.pending_timer and re.search(r"^(?:нет|не надо|не нужно)\b", n):
             self.pending_timer = None
             return Reply("Хорошо. Скажи «дальше», когда будешь готов.", expect_reply=True)
-        if re.search(r"\bингредиент\w*|\bперечисли\b|\bчто нужно\b|\bпродукты\b", n):
+        if re.search(r"\bингредиент\w*|^(?:перечисли|что нужно|какие продукты)\b", n):
             return Reply("Ингредиенты: " + "; ".join(self.r["ingredients"]) + ". Начинаем?", expect_reply=True)
-        if re.search(r"\b(?:дальше|следующ\w*|далее|готово|начинаем|начнем|начинай|давай|поехали|да|сделал\w*)\b", n):
+        # «дальше», «да, готово», «следующий шаг» — но не «следующая песня» и не «давай включим радио»
+        if _only(n, _NEXT, _FILLER | {"шаг"}):
             return self._step(self.i + 1)
-        if re.search(r"\b(?:повтори|еще раз|не расслышал\w*)\b", n):
+        if _only(n, {"повтори", "еще", "раз", "расслышал", "расслышала"}, _FILLER | {"шаг", "не", "этот"}):
             return self._step(max(0, self.i))
-        if re.search(r"\b(?:назад|предыдущ\w*|вернись)\b", n):
+        if _only(n, {"назад", "предыдущий", "вернись", "прошлый"}, _FILLER | {"шаг", "на", "обратно"}):
             return self._step(self.i - 1)
-        if re.search(r"\bсколько (?:шагов|осталось)\b", n):
+        if re.search(r"^сколько (?:еще )?(?:шагов|осталось)(?: шагов)?$", n):
             left = len(self.r["steps"]) - self.i - 1
             return Reply(f"Осталось {left} {plural(left, 'шаг', 'шага', 'шагов')}.", expect_reply=True)
         return None  # другая команда (например, «поставь таймер») — пусть обработают навыки
+
+
+_NEXT = {"дальше", "далее", "следующий", "следующая", "следующее", "готово", "готов", "готова", "начинаем", "начнем",
+         "начинай", "давай", "поехали", "да", "сделал", "сделала", "сделали", "продолжай", "продолжим"}
+_FILLER = {"ну", "так", "хорошо", "ок", "окей", "ладно", "пожалуйста", "все", "я", "уже", "можно", "а", "и"}
+
+
+def _only(text: str, triggers: set, allowed: set) -> bool:
+    """Фраза состоит только из этих слов и есть хотя бы одно слово-команда."""
+    words = text.split()
+    return bool(words) and any(w in triggers for w in words) and all(w in triggers or w in allowed for w in words)

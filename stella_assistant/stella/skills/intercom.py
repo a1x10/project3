@@ -79,12 +79,16 @@ class Intercom(Skill):
         if self.call:
             self.call.stop()
         ws = self.peers.ws_url(url, f"/ws/call?from={self.a.name}")
-        self.call = AudioLink(self.a, ws, send_mic=True, headers=self.peers._headers(),
-                              on_end=lambda: setattr(self, "call", None))
-        if self.a.listener:
-            self.a.listener.allow_barge_in = True
+        self.call = AudioLink(self.a, ws, send_mic=True, headers=self.peers._headers(), on_end=self._call_ended)
         self.call.start()
-        return Reply(f"Звоню: {name}. Чтобы закончить, скажи «Стелла, положи трубку».", emotion="joy", intensity=0.5)
+        # своё имя в ответе не произносим: распознаватель услышит его и разбудит Стеллу посреди фразы
+        return Reply(f"Звоню: {name}. Чтобы закончить, позови меня и скажи «положи трубку».", emotion="joy",
+                     intensity=0.5)
+
+    def _call_ended(self):
+        self.call = None
+        if self.a.listener:
+            self.a.listener.allow_barge_in = False
 
     @intent(r"^(?:позвони мне|набери меня)$", priority=63)
     def call_me(self, ctx):

@@ -6,10 +6,13 @@ import importlib
 import importlib.util
 import inspect
 import logging
+import queue
 import random
 import re
 import threading
 import time
+from dataclasses import dataclass, field
+from typing import Callable
 
 import requests
 
@@ -43,6 +46,23 @@ UNKNOWN = [
     "Я пока не поняла. Скажи по-другому?", "Хм, этого я не умею… пока.",
     "Не расслышала, повтори, пожалуйста.",
 ]
+# «стоп» из веб-панели или Telegram должен заглушить Стеллу сразу, не дожидаясь очереди команд
+QUICK_STOP = re.compile(r"^(?:стоп|хватит|замолчи|тихо|перестань|остановись|прекрати|помолчи|достаточно)"
+                        r"(?: пожалуйста)?$")
+# команды, которыми отвечают звенящему будильнику (остальные команды значат «я уже проснулся»)
+RINGER_INTENTS = {"alarms.snooze", "alarms.delete_alarm", "alarms.cancel_timer", "system.stop_cmd"}
+
+
+@dataclass
+class Utterance:
+    """Фраза в очереди речи. gen — «поколение»: interrupt_speech() отменяет всё, что поставлено раньше."""
+    text: str
+    emotion: str | None = None
+    whisper: bool | None = None
+    lang: str = "ru"
+    gen: int = 0
+    after: Callable[[bool], None] | None = None   # вызвать после (аргумент — «перебили»)
+    done: threading.Event = field(default_factory=threading.Event)
 
 
 class Assistant:
@@ -69,17 +89,29 @@ class Assistant:
         self.last_whisper = False       # последняя команда была шёпотом
         self.last_reply = ""
         self.listening = False
-        self.ringing = None             # активный будильник/таймер (объект с .stop() и .snooze())
+        self.ringing = None             # звенящий будильник/таймер (Ringer: stop / snooze / silence / resume)
+        self.last_rang = None           # (Ringer, время) — что звенело последним: «отключи будильник» после звонка
+        self.last_intent = ""
         self.stop_event = threading.Event()
         self._exec = cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="brain")
-        self._say_lock = threading.RLock()
+        # речь — в своём потоке: длинный ответ не держит очередь команд, а «стоп» и будильник его прерывают
+        self._speech_q: queue.Queue[Utterance] = queue.Queue()
+        self._speech_gen = 0
+        self._speech_busy = False
+        self._speech_cut = threading.Event()
+        self._speech_thread = threading.Thread(target=self._speech_loop, daemon=True, name="speech")
+        self._speech_thread.start()
         self.skills: list[Skill] = []
         self.intents = []
         self._load_skills()
-        bus.on("say", lambda text, emotion=None, **_: threading.Thread(
-            target=self.say, args=(text,), kwargs={"emotion": emotion}, daemon=True).start())
-        bus.on("wake", lambda **_: self.on_wake())
-        bus.on("touch", lambda **_: self._on_touch())
+        self._subs: list[tuple[str, Callable]] = []
+        self._sub("touch", lambda **_: self._on_touch())
+        self._sub("say", lambda text, emotion=None, **_: self.say(text, emotion=emotion, wait=False))
+        self._sub("wake", lambda **_: self.on_wake(manual=True))
+        self._sub("face_reset", lambda **_: self.mood.refresh())
+
+    def _sub(self, topic: str, fn: Callable):
+        self._subs.append((topic, bus.on(topic, fn)))
 
     # ---------------------------------------------------------- навыки --
     def _load_skills(self):
@@ -139,6 +171,9 @@ class Assistant:
 
     def shutdown(self):
         self.stop_event.set()
+        for topic, fn in self._subs:
+            bus.off(topic, fn)
+        self.interrupt_speech()
         for sk in self.skills:
             try:
                 sk.stop()
@@ -152,16 +187,19 @@ class Assistant:
         self._exec.shutdown(wait=False, cancel_futures=True)
 
     # ------------------------------------------------- голосовые события --
-    def on_wake(self):
+    def on_wake(self, manual: bool = False):
+        """«Стелла!» (или пробел на клавиатуре — manual): замолкаем, приглушаем музыку и слушаем."""
         log.info("Активатор!")
         self.mood.on_activity()
-        if self.speaker.speaking:
-            self.speaker.stop()  # перебили — замолкаем
+        self.interrupt_speech()  # перебили — замолкаем
         if self.ringing:
-            self.ringing.stop()
+            # не выключаем: следом может прозвучать «отложи» или «выключи будильник»
+            self.ringing.silence()
         self.listening = True
         self.player.duck()
         bus.emit("state", state="listening")
+        if manual and self.listener:
+            self.listener.listen_now()  # без этого команду без «Стелла» распознаватель бы пропустил
         if self.cfg.get("audio.beep", True):
             threading.Thread(target=self.speaker.play, args=(dsp.beep("listen"), 22050, False, 0.7),
                              daemon=True).start()
@@ -175,17 +213,31 @@ class Assistant:
 
     def on_timeout(self):
         self.listening = False
-        bus.emit("state", state="idle")
-        if not self.speaker.speaking:
+        if self.ringing and self.ringing.silenced:
+            self.ringing.resume()  # позвали и ничего не сказали — будильник звенит дальше
+        if not self.is_speaking():
+            bus.emit("state", state=self.idle_state())
             self.player.unduck()
 
     def _on_touch(self):
-        if self.ringing:  # касание экрана выключает будильник
+        """Касание экрана выключает будильник или прерывает речь; иначе Стелла реагирует на прикосновение."""
+        if self.ringing:
             self.ringing.stop()
+        elif self.is_speaking():
+            self.interrupt_speech()
+        else:
+            self.mood.on_touch()
+
+    def idle_state(self) -> str:
+        return "sleep" if self.mood.sleeping else "idle"
 
     # --------------------------------------------------------- обработка --
     def submit(self, text: str, source: str = "voice", whisper: bool = False, user=None, chat_id=None,
                speak: bool | None = None) -> cf.Future:
+        if source != "voice" and QUICK_STOP.match(norm(text or "")):
+            self.interrupt_speech()
+            if self.ringing:
+                self.ringing.stop()
         return self._exec.submit(self._process, text, source, whisper, user, chat_id, speak)
 
     def ask(self, text: str, source: str = "web", timeout: float = 60, **kw) -> Reply:
@@ -222,35 +274,50 @@ class Assistant:
             return Reply("Слушаю!", expect_reply=True, emotion="interest")
         if depth == 0:
             self.mood.on_user_text(text)
+        # будильник замолчал на «Стелла» и ждёт: «отложи», «стоп» — или любая другая команда, значит, проснулись
+        ringer = self.ringing if source == "voice" and self.ringing and self.ringing.silenced else None
+        self.last_intent = ""
         reply = None
-        # 1. активная сессия (игра, рецепт, внешний навык)
-        if self.session:
-            sess = self.session
+        # 1. активная сессия (игра, рецепт, внешний навык); сценарии и другие Стеллы в неё не попадают
+        sess = self.session
+        if sess and sess.expired():
+            log.info("Сессия «%s» закончилась по тишине", sess.name)
+            self.session = sess = None
+        if sess and depth == 0 and source not in ("scenario", "peer"):
             words = set(ctx.norm.split())
             if words & set(sess.exit_words) and len(words) <= 4:
                 self.session = None
                 reply = Reply("Хорошо, закончили.", emotion="neutral")
             else:
-                try:
-                    reply = as_reply(sess.handler(ctx))
-                except Exception:
-                    log.exception("Сессия %s упала", sess.name)
-                    self.session = None
-                    reply = None
+                reply = self.route(ctx, min_priority=90)  # «стоп», «отложи», грубость — важнее игры
+                if reply is None:
+                    sess.touch()
+                    try:
+                        reply = as_reply(sess.handler(ctx))
+                    except Exception:
+                        log.exception("Сессия %s упала", sess.name)
+                        self.session = None
+                        reply = None
+                    if reply is not None:
+                        self.last_intent = f"session.{sess.name}"
         # 2. навыки по шаблонам
         if reply is None:
             reply = self.route(ctx)
         # 3. ИИ-собеседник
         if reply is None:
             reply = self.think(ctx, depth)
+        if ringer is not None and ringer.active and self.last_intent not in RINGER_INTENTS:
+            ringer.stop(greet=False)
         if depth == 0:
             self.memory.add_dialog("user", text)
             if reply and reply.text:
                 self.memory.add_dialog("assistant", reply.text)
         return reply or Reply(random.choice(UNKNOWN), emotion="sadness", expect_reply=True)
 
-    def route(self, ctx: Context) -> Reply | None:
+    def route(self, ctx: Context, min_priority: int | None = None) -> Reply | None:
         for it in self.intents:
+            if min_priority is not None and it.priority < min_priority:
+                break  # намерения отсортированы по приоритету
             for pat in it.patterns:
                 m = pat.search(ctx.norm)
                 if not m:
@@ -265,8 +332,20 @@ class Assistant:
                     return Reply("Не получилось, извини. Что-то сломалось внутри.", emotion="sadness")
                 if r is not None:
                     log.debug("→ %s", it.name)
+                    self.last_intent = it.name
                     return r
         return None
+
+    def matches_intent(self, ctx: Context, exclude: Skill | None = None) -> bool:
+        """Похожа ли фраза на команду какого-нибудь навыка (без выполнения). Нужна играм и уточнениям,
+        чтобы «включи музыку» посреди игры в города не считалось ходом."""
+        for it in self.intents:
+            if it.skill is exclude:
+                continue
+            for pat in it.patterns:
+                if pat.pattern not in (".", ".+", ".*") and pat.search(ctx.norm):
+                    return True
+        return False
 
     def think(self, ctx: Context, depth: int = 0) -> Reply | None:
         if not self.brain.available:
@@ -291,6 +370,7 @@ class Assistant:
 
     # ------------------------------------------------------------- ответ --
     def respond(self, reply: Reply, source: str = "voice", speak: bool = True):
+        """Показать и озвучить ответ. Не ждёт конца речи: очередь команд свободна, пока Стелла говорит."""
         if reply is None:
             return
         emotion = reply.emotion
@@ -301,26 +381,80 @@ class Assistant:
             bus.emit("emotion", name=emotion, intensity=reply.intensity)
         self.last_reply = reply.text or self.last_reply
         bus.emit("reply", text=reply.text, emotion=emotion, card=reply.card, source=source)
+        follow = source == "voice" and reply.expect_reply and self.listener is not None
         if speak and reply.speak and reply.text:
-            self.say(reply.text, emotion=emotion, whisper=reply.whisper, lang=reply.lang)
-        if source == "voice" and reply.expect_reply and self.listener:
-            self.listener.listen_now(float(self.cfg.get("assistant.follow_up_seconds", 6)))
-            self.listening = True
-            bus.emit("state", state="listening")
-            self.player.duck()
-        else:
-            if not self.listening:
-                bus.emit("state", state="idle")
-                self.player.unduck()
+            after = (lambda cut: None if cut else self._follow_up()) if follow else None
+            self.say(reply.text, emotion=emotion, whisper=reply.whisper, lang=reply.lang, wait=False, after=after)
+        elif follow:
+            self._follow_up()
+        elif not self.listening and not self.is_speaking():
+            bus.emit("state", state=self.idle_state())
+            self.player.unduck()
+
+    def _follow_up(self):
+        """Стелла задала вопрос — слушаем ответ без «Стелла»."""
+        self.listener.listen_now(float(self.cfg.get("assistant.follow_up_seconds", 6)))
+        self.listening = True
+        bus.emit("state", state="listening")
+        self.player.duck()
 
     def say(self, text: str, emotion: str | None = None, whisper: bool | None = None, lang: str = "ru",
-            wait: bool = True):
-        """Произнести текст (с анимацией рта). wait=False — не ждать окончания."""
+            wait: bool = True, after: Callable[[bool], None] | None = None):
+        """Произнести текст (с анимацией рта). wait=False — не ждать окончания.
+        Фразы встают в очередь и звучат по одной; interrupt_speech() обрывает текущую и всю очередь."""
         if not text:
+            if after:
+                after(False)
             return
-        if not wait:
-            threading.Thread(target=self.say, args=(text, emotion, whisper, lang, True), daemon=True).start()
+        u = Utterance(text, emotion, whisper, lang, self._speech_gen, after)
+        if threading.current_thread() is self._speech_thread:
+            self._speak(u)  # вызов изнутри речи (из after) — без очереди, иначе ждали бы сами себя
             return
+        self._speech_q.put(u)
+        if wait:
+            while not u.done.wait(0.5) and not self.stop_event.is_set():
+                pass
+
+    def interrupt_speech(self):
+        """Замолчать сразу и выбросить всё, что ждёт очереди («стоп», касание, «Стелла», будильник)."""
+        self._speech_gen += 1
+        self._speech_cut.set()
+        self.speaker.stop()
+
+    def is_speaking(self) -> bool:
+        return self._speech_busy or not self._speech_q.empty() or self.speaker.speaking
+
+    def _speech_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                u = self._speech_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            self._speak(u)
+
+    def _speak(self, u: Utterance):
+        complete = False
+        try:
+            if u.gen == self._speech_gen:
+                self._speech_busy = True
+                complete = self._speak_chunks(u)
+        except Exception:
+            log.exception("Ошибка речи")
+        finally:
+            self._speech_busy = False
+            if u.after:
+                try:
+                    u.after(not complete)
+                except Exception:
+                    log.exception("Ошибка после речи")
+            if not self.listening and self._speech_q.empty():
+                bus.emit("state", state=self.idle_state())
+                self.player.unduck()
+            u.done.set()
+
+    def _speak_chunks(self, u: Utterance) -> bool:
+        """-> True, если фраза прозвучала до конца (False — перебили)."""
+        whisper = u.whisper
         if whisper is None:
             whisper = self.whisper_mode or self.last_whisper
         volume = float(self.cfg.get("tts.volume", 1.0))
@@ -328,30 +462,39 @@ class Assistant:
             volume *= 0.7
         elif self.mood.is_night():
             volume *= 0.65
-        log.info("%s: %s", self.name, text)
-        bus.emit("subtitle", text=text, seconds=min(12.0, 2 + len(text) / 14))
-        with self._say_lock:
-            self.player.duck()
-            bus.emit("state", state="speaking")
-            chunks = split_for_tts(text, 230)
-            nxt = self._exec_tts(chunks[0], emotion, whisper, lang) if chunks else None
+        self._speech_cut.clear()
+        if u.gen != self._speech_gen:
+            return False
+        log.info("%s: %s", self.name, u.text)
+        bus.emit("subtitle", text=u.text, seconds=min(12.0, 2 + len(u.text) / 14))
+        self.player.duck()
+        bus.emit("state", state="speaking")
+        chunks = split_for_tts(u.text, 230)
+        nxt = self._exec_tts(chunks[0], u.emotion, whisper, u.lang) if chunks else None
+        complete = False
+        try:
             for i in range(len(chunks)):
                 samples, sr = nxt.result() if nxt else (None, 0)
-                nxt = self._exec_tts(chunks[i + 1], emotion, whisper, lang) if i + 1 < len(chunks) else None
+                nxt = self._exec_tts(chunks[i + 1], u.emotion, whisper, u.lang) if i + 1 < len(chunks) else None
+                if u.gen != self._speech_gen:
+                    return False
                 if samples is None:
                     log.warning("Нет движка синтеза речи — текст только на экране")
-                    time.sleep(min(4.0, len(chunks[i]) / 15))
+                    if self._speech_cut.wait(min(4.0, len(chunks[i]) / 15)):
+                        return False
                     continue
                 if self.listener:
                     self.listener.mute(len(samples) / sr + 0.8)
-                if not self.speaker.play(samples, sr, volume=volume):
-                    break  # перебили
+                if u.gen != self._speech_gen or not self.speaker.play(samples, sr, volume=volume):
+                    return False  # перебили
+            complete = True
+            return True
+        finally:
             if self.listener:
-                self.listener.unmute()
+                # дочитали — сбрасываем распознаватель (в нём эхо своей речи); перебили «Стеллой» — нет,
+                # иначе потеряется команда, которую человек уже говорит
+                self.listener.unmute(reset=complete)
                 self.listener.mute(0.35)  # хвост эха
-            if not self.listening:
-                bus.emit("state", state="idle")
-                self.player.unduck()
 
     def _exec_tts(self, chunk, emotion, whisper, lang) -> cf.Future:
         fut: cf.Future = cf.Future()
@@ -370,9 +513,11 @@ class Assistant:
         bus.emit("notify", text=text, title=title, urgent=urgent)
 
     # ------------------------------------------------------------- сессии --
-    def start_session(self, skill: Skill, handler, name: str, exit_words=None):
+    def start_session(self, skill: Skill, handler, name: str, exit_words=None, timeout: float = 180):
+        """Реплики идут сначала в handler (игра, рецепт, уточнение). Без реплик дольше timeout сессия
+        заканчивается сама. handler возвращает None, если фраза не ему, — её разберут навыки."""
         self.session = SessionHandler(skill, handler, name, exit_words or (
-            "хватит", "стоп", "выход", "выйди", "закончи", "закончим", "надоело", "конец"))
+            "хватит", "стоп", "выход", "выйди", "закончи", "закончим", "надоело", "конец"), timeout=timeout)
         log.info("Сессия: %s", name)
 
     def end_session(self):

@@ -494,11 +494,11 @@ class Music(Skill):
         return Reply(f"Сейчас играет {cur.display()}.", emotion="interest", intensity=0.5)
 
     @intent(r"^(?:лайк|мне нравится|нравится|класс(?:ная песня)?|отличная песня|ставлю лайк|поставь лайк|"
-            r"запомни эту песню|добавь в избранное|супер песня|люблю эту песню)$", priority=75)
+            r"запомни эту песню|добавь в избранное|супер песня|люблю эту песню)$", priority=76)
     def like(self, ctx):
         cur = self.a.player.current()
-        if not cur:
-            return None
+        if not cur or not self.a.player.is_active():
+            return None  # музыка не играет — «класс» и «мне нравится» не про трек
         if cur.source == "yandex" and self.ym():
             try:
                 self.ym().users_likes_tracks_add(cur.id)
@@ -508,10 +508,10 @@ class Music(Skill):
         return Reply("Поставила лайк! Буду включать похожее.", emotion="love", intensity=0.7)
 
     @intent(r"^(?:дизлайк|не нравится|мне не нравится|плохая песня|не включай (?:больше|ее|это)|убери эту песню|"
-            r"поставь дизлайк|фу|отстой)$", priority=75)
+            r"поставь дизлайк|фу|отстой)$", priority=76)
     def dislike(self, ctx):
         cur = self.a.player.current()
-        if not cur:
+        if not cur or not self.a.player.is_active():
             return None
         if cur.source == "yandex" and self.ym():
             try:
@@ -519,7 +519,8 @@ class Music(Skill):
             except Exception as e:
                 self.log.warning("дизлайк: %s", e)
         self.a.memory.like_set(cur.id or cur.title, cur.display(), -1)
-        self.a.player.next()
+        if self.a.player.is_playing():
+            self.a.player.next()
         return Reply("Поняла, больше не включу.", emotion="contempt", intensity=0.5)
 
     @intent(r"\bсделай (?:музыку|радио|звук музыки) (тише|громче)\b|\b(тише|громче) музыку\b", priority=73)
