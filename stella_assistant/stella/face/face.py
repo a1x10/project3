@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..core.events import bus
-from .emotions import PRESETS, FaceParams, preset, resolve
+from .emotions import EMOTION_NAMES_RU, PRESETS, FaceParams, preset, resolve
 from .renderer import AnimState, FaceRenderer
 
 log = logging.getLogger("stella.face")
@@ -230,7 +230,7 @@ class Face:
         else:
             self.set_state("idle")
             self.set_mood(name, 1.0, {"anger_mark": 1.0} if name == "anger" else None)
-        self.set_info(f"{name}")
+        self.set_info(EMOTION_NAMES_RU.get(name, name))
 
     # ---------------------------------------------------------- окно / цикл --
     def _init_display(self):
