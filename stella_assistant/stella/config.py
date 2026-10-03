@@ -65,6 +65,7 @@ DEFAULTS: dict = {
         "engine": "vosk",
         "vosk_model": "models/vosk-model-small-ru-0.22",
         "whisper_detect": True,
+        "cloud": "auto",
         "yandex_stt": False,
     },
     "tts": {
@@ -76,6 +77,16 @@ DEFAULTS: dict = {
         "rhvoice_voice": "anna",
         "espeak_voice": "ru",
         "volume": 1.0,
+    },
+    "llm": {"provider": "auto"},
+    "groq": {
+        "api_key": "",
+        "model": "llama-3.3-70b-versatile",
+        "fallback_models": ["openai/gpt-oss-120b", "llama-3.1-8b-instant"],
+        "stt_model": "whisper-large-v3-turbo",
+        "temperature": 0.7,
+        "max_tokens": 800,
+        "proxy": "",
     },
     "yandex": {
         "api_key": "",
@@ -134,6 +145,8 @@ DEFAULTS: dict = {
 
 # переменные окружения -> путь в конфиге (чтобы не хранить ключи в файле)
 ENV_OVERRIDES = {
+    "GROQ_API_KEY": "groq.api_key",
+    "GROQ_PROXY": "groq.proxy",
     "YANDEX_API_KEY": "yandex.api_key",
     "YANDEX_IAM_TOKEN": "yandex.iam_token",
     "YANDEX_FOLDER_ID": "yandex.folder_id",

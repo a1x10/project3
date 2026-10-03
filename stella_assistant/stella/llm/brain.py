@@ -1,4 +1,4 @@
-"""«Мозг» Стеллы: диалог с YandexGPT с памятью, характером и эмоциями.
+"""«Мозг» Стеллы: диалог с ИИ (Groq или YandexGPT) с памятью, характером и эмоциями.
 
 Модель отвечает с тегом эмоции в начале ([joy], [anger] …) — по нему двигаются глаза.
 Если модель поняла, что человек просит действие, она возвращает «КОМАНДА: …»,
@@ -13,9 +13,44 @@ from datetime import datetime
 
 from ..face.emotions import EMOTIONS, resolve
 from ..nlp.timeparse import MONTHS_GEN, WEEKDAYS_NOM
+from .groq import GroqLLM
 from .yandexgpt import LLMError, YandexGPT
 
 log = logging.getLogger("stella.brain")
+
+
+class ChainLLM:
+    """Несколько ИИ-провайдеров по очереди: не ответил первый — спрашиваем следующего."""
+
+    def __init__(self, providers):
+        self.providers = providers
+
+    @property
+    def available(self) -> bool:
+        return any(p.available for p in self.providers)
+
+    @property
+    def name(self) -> str:
+        return next((p.name for p in self.providers if p.available), "нет")
+
+    def complete(self, messages: list[dict], **kw) -> str:
+        errors = []
+        for p in self.providers:
+            if not p.available:
+                continue
+            try:
+                return p.complete(messages, **kw)
+            except LLMError as e:
+                log.warning("%s: %s", p.name, e)
+                errors.append(f"{p.name}: {e}")
+        raise LLMError("; ".join(errors) or "ИИ не настроен: укажите ключ Groq или YandexGPT")
+
+
+def make_llm(cfg) -> ChainLLM:
+    """llm.provider: auto (сначала Groq, потом YandexGPT) | groq | yandex."""
+    groq, yandex = GroqLLM(cfg), YandexGPT(cfg)
+    pref = cfg.get("llm.provider", "auto")
+    return ChainLLM([yandex, groq] if pref == "yandex" else [groq, yandex])
 
 EMOTION_TAGS = EMOTIONS + ["neutral"]
 _TAG_RE = re.compile(r"\[\s*(" + "|".join(EMOTION_TAGS) + r"|радость|грусть|злость|страх|удивление|"
@@ -62,7 +97,7 @@ class Brain:
         self.cfg = cfg
         self.memory = memory
         self.mood = mood
-        self.llm = YandexGPT(cfg)
+        self.llm = make_llm(cfg)
 
     @property
     def available(self) -> bool:
@@ -114,7 +149,7 @@ class Brain:
             raw = self.llm.complete(msgs, temperature=temperature,
                                     max_tokens=1800 if long_form else int(self.cfg.get("yandex.max_tokens", 800)))
         except LLMError as e:
-            log.warning("%s", e)
+            log.debug("ИИ не ответил: %s", e)  # подробности уже в журнале провайдера
             return Thought(text="", emotion="sadness")
         log.debug("LLM: %s", raw)
         return parse_answer(raw)

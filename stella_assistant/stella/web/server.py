@@ -179,6 +179,7 @@ class WebServer(threading.Thread):
             "peers": list((self.cfg.get("peers") or {}).keys()),
             "baby": bool(getattr(a.skill("babymonitor"), "active", False)),
             "voice": bool(a.listener and a.listener.ok), "llm": a.brain.available,
+            "llm_name": getattr(a.brain.llm, "name", ""),
             "face": a.face is not None,
         })
 

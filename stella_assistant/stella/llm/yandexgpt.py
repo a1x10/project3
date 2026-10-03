@@ -16,6 +16,8 @@ class LLMError(RuntimeError):
 
 
 class YandexGPT:
+    name = "yandex"
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.session = requests.Session()

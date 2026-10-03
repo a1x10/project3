@@ -48,7 +48,8 @@ stt:
   engine: vosk                   # vosk (офлайн) | off
   vosk_model: models/vosk-model-small-ru-0.22
   whisper_detect: true           # заметить шёпот и ответить шёпотом
-  yandex_stt: false              # true — команды распознаёт SpeechKit (точнее, нужен ключ Yandex Cloud)
+  cloud: auto                    # уточнять команду в облаке: auto (Groq Whisper, если есть ключ) | groq | yandex | off
+  yandex_stt: false              # true — в режиме auto распознавать ещё и SpeechKit (нужен ключ Yandex Cloud)
 
 tts:
   engine: auto                   # auto | yandex | piper | rhvoice | espeak
@@ -58,6 +59,18 @@ tts:
   piper_model: models/piper/ru_RU-irina-medium.onnx
   rhvoice_voice: anna
   volume: 1.0
+
+llm:
+  provider: auto                 # auto — сначала Groq, при сбое YandexGPT | groq | yandex
+
+groq:                            # ИИ-«мозг» Стеллы: быстрые открытые модели, есть бесплатный тариф
+  api_key: ""                    # ключ с console.groq.com → API Keys (или переменная GROQ_API_KEY)
+  model: llama-3.3-70b-versatile # хорошо говорит по-русски и отвечает быстро
+  fallback_models: [openai/gpt-oss-120b, llama-3.1-8b-instant]   # если основная модель недоступна
+  stt_model: whisper-large-v3-turbo   # распознавание команд (точнее офлайн-Vosk)
+  temperature: 0.7
+  max_tokens: 800
+  proxy: ""                      # если Groq недоступен из вашей сети: "http://host:port" или "socks5://host:port"
 
 yandex:                          # Yandex Cloud: YandexGPT, SpeechKit, Переводчик
   api_key: ""                    # API-ключ сервисного аккаунта (или YANDEX_API_KEY)
