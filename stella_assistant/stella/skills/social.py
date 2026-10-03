@@ -6,7 +6,7 @@ import random
 import re
 from datetime import datetime
 
-from ..face.emotion_engine import _COMPILED, detect_tone
+from ..face.emotion_engine import detect_tone
 from .base import Reply, Skill, intent
 
 ANNOYED = ["Это было обидно.", "Ну и зачем так грубо?", "Я вообще-то стараюсь.", "Хм. Неприятно такое слышать.",
@@ -15,10 +15,6 @@ ANGRY = ["Знаешь что? Мне это не нравится!", "Ещё о
          "Со мной так нельзя!", "Я начинаю злиться. Не надо так.", "Ну всё, я сержусь!"]
 FURIOUS = ["Всё! Я злая! Пока не извинишься — ничего делать не буду!", "Хватит! Я требую извинений!",
            "Я в ярости! Даже смотреть на тебя не хочу!", "Р-р-р! Извинись немедленно!"]
-
-
-def _insult_like(norm: str) -> bool:
-    return any(p.search(norm) for p in _COMPILED["insult"])
 
 
 class Social(Skill):
@@ -30,7 +26,7 @@ class Social(Skill):
     @intent(r".", priority=90)
     def rude(self, ctx):
         """Грубость: ответ зависит от того, насколько Стелла уже рассержена."""
-        if not _insult_like(ctx.norm) or "insult" not in detect_tone(ctx.text):
+        if "insult" not in detect_tone(ctx.text):
             return None
         words = ctx.norm.split()
         # «включи эту дурацкую песню» — не оскорбление Стеллы, пусть выполняют другие навыки
@@ -43,8 +39,8 @@ class Social(Skill):
             return Reply(random.choice(ANGRY), emotion="anger", intensity=0.85)
         return Reply(random.choice(ANNOYED), emotion="contempt")
 
-    @intent(r"\b(?:извини\w*|прости\w*|извиняюсь|сорри|не обижайся|не злись|прошу прощения|мир\b|я не хотел\w*)",
-            priority=89)
+    @intent(r"\b(?:извини\w*|прости\w*|извиняюсь|сорри|не обижайся|не злись|прошу прощения|я не хотел\w*)|"
+            r"^(?:ну |давай )?мир(?: дружба)?$", priority=89)
     def apology(self, ctx):
         irr = self.a.mood.irritation
         before = getattr(self.a.mood, "prev_irritation", irr)

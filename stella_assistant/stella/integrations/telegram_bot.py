@@ -18,13 +18,27 @@ HELP = ("Я Стелла 🙂 Пиши мне как голосом дома: «
         "/say текст — сказать вслух дома\n/status — как дела у Стеллы")
 
 
+def parse_allowed(items) -> tuple[set[int], set[str]]:
+    """telegram.allowed_users: числовые ID (надёжнее) или имена пользователей («@masha», «masha»)."""
+    if isinstance(items, (str, int)):
+        items = [items]
+    ids, names = set(), set()
+    for x in items or []:
+        s = str(x).strip()
+        if s.lstrip("-").isdigit():
+            ids.add(int(s))
+        elif s:
+            names.add(s.lstrip("@").lower())
+    return ids, names
+
+
 class TelegramBot(threading.Thread):
     def __init__(self, assistant):
         super().__init__(daemon=True, name="telegram")
         self.a = assistant
         self.cfg = assistant.cfg
         self.token = self.cfg.get("telegram.token")
-        self.allowed = {int(x) for x in (self.cfg.get("telegram.allowed_users") or [])}
+        self.allowed, self.allowed_names = parse_allowed(self.cfg.get("telegram.allowed_users"))
         self.base = f"https://api.telegram.org/bot{self.token}"
         self.http = requests.Session()
         self.offset = 0
@@ -71,7 +85,7 @@ class TelegramBot(threading.Thread):
         chat = msg["chat"]["id"]
         user = msg.get("from", {})
         uid = user.get("id")
-        if uid not in self.allowed:
+        if uid not in self.allowed and (user.get("username") or "").lower() not in self.allowed_names:
             if (msg.get("text") or "").startswith("/start"):
                 self.send(chat, f"Привет! Твой Telegram ID: {uid}. Добавь его в config.yaml (telegram.allowed_users), "
                                 f"чтобы я тебя слушалась.")

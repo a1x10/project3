@@ -26,15 +26,21 @@ _SWEAR = (r"\b(?:ху[йяеёию]\w*|о?ху[её]\w*|на ?хуй|по ?ху�
           r"(?:за|у|на|вы|до|от|раз|под|пере)[ъь]?[её]б\w*|бля\w*|сук[аиу]\b|сучк\w*|мудак\w*|мудил\w*|говн\w*|"
           r"жоп\w*|гандон\w*|долбо[её]б\w*|залуп\w*|шлюх\w*|чмо\w*)")
 TONE_PATTERNS = {
+    # всегда грубость (обзывательства и мат)
     "insult": [
-        r"\bдур[аеоы]\w*", r"\bтуп(?:ая|ой|ица|ые|орыл)", r"\bидиот\w*", r"\bглуп(?:ая|ый)\b", r"\bбестолков\w*",
-        r"\bбесполезн\w*", r"\bзаткнись\b", r"\bзамолчи\b", r"\bотвали\b", r"\bотстань\b", r"\bненавижу\b",
-        r"\bужасн(?:ая|ый)\b", r"\bотстой\w*", r"\bжелезяк\w*", r"\bведро с болтами\b", r"\bкусок железа\b",
-        r"\bбесишь\b", r"\bдостала\b", r"\bнадоела\b", r"\bкорыто\b", r"\bлузер\w*", r"\bдебил\w*",
-        r"\bкретин\w*", r"\bтормоз\b", r"\bничтожеств\w*", r"\bуродин\w*", r"\bкривая\b", _SWEAR,
+        r"\bдур[аеоы]\w*", r"\bтуп(?:ая|ой|ица|ые|орыл)", r"\bидиот\w*", r"\bбестолков\w*", r"\bзаткнись\b",
+        r"\bотвали\b", r"\bжелезяк\w*", r"\bведро с болтами\b", r"\bкусок железа\b", r"\bбесишь\b",
+        r"\bлузер\w*", r"\bдебил\w*", r"\bкретин\w*", r"\bничтожеств\w*", r"\bуродин\w*", _SWEAR,
+    ],
+    # грубость, только если сказано Стелле: «ты ужасная», «ты меня достала», просто «надоела!»,
+    # но не «какая ужасная погода», «мне надоела эта песня», «я достала молоко»
+    "insult_if_addressed": [
+        r"\bглуп(?:ая|ый)\b", r"\bбесполезн\w*", r"\bотстань\b", r"\bненавижу\b", r"\bужасн(?:ая|ый)\b",
+        r"\bотстой\w*", r"\bдостала\b", r"\bнадоела\b", r"\bкорыто\b", r"\bтормоз\b", r"\bкривая\b",
     ],
     "apology": [r"\bизвини\w*", r"\bпрости\w*", r"\bизвиняюсь\b", r"\bсорри\b", r"\bне обижайся\b",
-                r"\bне злись\b", r"\bмир\b", r"\bя не хотел\w*", r"\bпрошу прощения\b", r"\bвиноват\w*"],
+                r"\bне злись\b", r"^(?:ну |давай )?мир(?: дружба)?$", r"\bя не хотел\w*", r"\bпрошу прощения\b",
+                r"\bвиноват\w*"],
     "compliment": [r"\bумниц\w*", r"\bмолодец\b", r"\bкрасив\w*", r"\bклассн\w*", r"\bлучш(?:ая|ий)\b",
                    r"\bсупер\b", r"\bпрелесть\b", r"\bчудо\b", r"\bгениальн\w*", r"\bумная\b", r"\bхорошая\b",
                    r"\bмилая\b", r"\bсолнышко\b", r"\bзайка\b", r"\bкрасотка\b"],
@@ -56,6 +62,7 @@ TONE_PATTERNS = {
               r"\bрадост\w*", r"\bсчастлив\w*", r"\bпобедил\w*", r"\bполучилось\b", r"\bпраздник\b"],
 }
 _COMPILED = {k: [re.compile(p) for p in v] for k, v in TONE_PATTERNS.items()}
+_ADDRESSED_WORDS = [re.compile(p.replace("\\b", "")) for p in TONE_PATTERNS["insult_if_addressed"]]
 
 # реакции лица на тон собеседника
 TONE_EMOTION = {
@@ -65,12 +72,28 @@ TONE_EMOTION = {
 }
 
 
+# слова, которые могут стоять рядом с «надоела» и т.п., не превращая фразу в разговор о чём-то другом
+_FILLER = {"ну", "ты", "же", "просто", "совсем", "очень", "какая", "какой", "такая", "такой", "вообще", "как", "ой",
+           "блин", "уже", "меня", "мне", "так", "все", "всё", "реально", "прям", "прямо", "а", "и", "стелла"}
+_ADDRESSED = re.compile(r"\b(?:ты|тебя|тебе|тобой|стелла)\b")
+# короткие команды управления: повторять их — нормально («дальше», «громче»), это не надоедание
+_CONTROL = re.compile(r"^(?:ну |еще |ещё |сделай |а )?(?:дальше|далее|еще|ещё|громче|тише|погромче|потише|следующ\w*|"
+                      r"предыдущ\w*|назад|вперед|стоп|пауза|продолжи\w*|да|нет|ага|угу|повтори|включи|выключи|"
+                      r"перемотай|пропусти|\d+)(?: \w+)?$")
+
+
 def detect_tone(text: str) -> list[str]:
     t = clean(text)
     found = []
     for tone, pats in _COMPILED.items():
         if any(p.search(t) for p in pats):
             found.append(tone)
+    if "insult_if_addressed" in found:
+        found.remove("insult_if_addressed")
+        hits = {w for w in t.split() if any(p.fullmatch(w) for p in _ADDRESSED_WORDS)}
+        if _ADDRESSED.search(t) or all(w in _FILLER or w in hits for w in t.split()):
+            if "insult" not in found:
+                found.append("insult")
     # «не дура» / «ты не глупая» — это не оскорбление
     if "insult" in found and re.search(r"\bне (?:дура|глупая|тупая|бесполезная)\b", t):
         found.remove("insult")
@@ -107,7 +130,8 @@ class EmotionEngine:
         self.prev_irritation = self.irritation
         self._last_tick = time.time()
         self._last_mood = None
-        bus.on("touch", lambda **kw: self.on_touch())
+        # касания экрана (on_touch) и сброс лица (refresh) сюда передаёт ассистент:
+        # если касанием выключили будильник, это не «щекотно»
 
     # ------------------------------------------------------------ уровни --
     @property
@@ -140,10 +164,10 @@ class EmotionEngine:
             self.wake()
         tones = detect_tone(text)
         t = clean(text)
-        # одно и то же много раз подряд — раздражает
+        # одно и то же много раз подряд — раздражает (кроме команд вроде «дальше» и «громче»)
         same = sum(1 for (ts, x) in self.recent if x == t and now - ts < 90)
         self.recent.append((now, t))
-        if same >= 2 and len(t) > 3:
+        if same >= 2 and len(t) > 3 and not _CONTROL.match(t):
             self._change(irritation=0.8)
         if "insult" in tones:
             self._change(irritation=2.5 + (1.0 if re.search(_SWEAR, t) else 0.0), affection=-1.0)
@@ -203,6 +227,13 @@ class EmotionEngine:
     def sleep(self):
         self.sleeping = True
         bus.emit("state", state="sleep")
+
+    def refresh(self):
+        """Заново показать настроение (после демонстрации эмоций лицо сбрасывается)."""
+        self._last_mood = None
+        if self.sleeping:
+            bus.emit("state", state="sleep")
+        self._apply_mood()
 
     # --------------------------------------------------------------- тик --
     def tick(self):

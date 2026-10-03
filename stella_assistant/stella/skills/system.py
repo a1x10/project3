@@ -41,8 +41,7 @@ class System(Skill):
         if a.ringing:
             a.ringing.stop()
             return Reply("", speak=False, emotion="neutral")
-        if a.speaker.speaking:
-            a.speaker.stop()
+        a.interrupt_speech()  # и текущую фразу, и всё, что ждёт очереди
         if a.player.is_playing():
             a.player.pause()
         a.end_session()

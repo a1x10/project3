@@ -101,13 +101,21 @@ class MPV:
                         log.exception("ошибка обработчика события mpv")
 
     def command(self, *args, timeout: float = 3.0):
+        return self._send(list(args), timeout)
+
+    def command_named(self, name: str, timeout: float = 3.0, **kwargs):
+        """Команда с именованными аргументами: позиции аргументов у mpv меняются между версиями
+        (в 0.38 у loadfile появился index перед options), имена — нет."""
+        return self._send({"name": name, **kwargs}, timeout)
+
+    def _send(self, command, timeout: float):
         with self._lock:
             self._req += 1
             rid = self._req
             ev = threading.Event()
             self._pending[rid] = [ev]
             try:
-                self.sock.sendall((json.dumps({"command": list(args), "request_id": rid}) + "\n").encode())
+                self.sock.sendall((json.dumps({"command": command, "request_id": rid}) + "\n").encode())
             except OSError as e:
                 self._pending.pop(rid, None)
                 raise RuntimeError(f"mpv недоступен: {e}")
@@ -221,9 +229,8 @@ class MusicPlayer:
             self.index = i
             self._stopped = False
             m = self._ensure()
-            opts = f"start={track.start}" if track.start else ""
-            if opts:
-                m.command("loadfile", url, "replace", opts)
+            if track.start:  # аудиокнига с того места, где остановились
+                m.command_named("loadfile", url=url, flags="replace", options={"start": str(track.start)})
             else:
                 m.command("loadfile", url, "replace")
             m.set("pause", False)

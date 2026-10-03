@@ -6,6 +6,7 @@
 assistant:
   name: Стелла
   wake_words: [стелла, стела, стелло, stella]   # слово-активатор
+  wake_aliases: []                             # как ещё распознаватель слышит имя (смотрите «Услышала:» в журнале)
   city: Москва                                 # город для погоды и карт
   latitude: 55.7558
   longitude: 37.6173
@@ -96,6 +97,7 @@ smarthome:
   home_assistant:
     url: ""                      # например http://homeassistant.local:8123
     token: ""                    # долгоживущий токен Home Assistant
+  room: ""                       # комната, где стоит Стелла: «выключи свет» выключит свет здесь, а не во всём доме
   poll_seconds: 15               # как часто проверять датчики для сценариев
   scenarios_file: scenarios.yaml
 
@@ -126,7 +128,7 @@ news:
 
 telegram:
   token: ""                      # токен бота от @BotFather (или TELEGRAM_BOT_TOKEN)
-  allowed_users: []              # ваши числовые ID (бот подскажет ID в ответ на /start)
+  allowed_users: []              # ваши числовые ID (бот подскажет ID в ответ на /start) или имена: "@masha"
   voice_replies: true            # на голосовое отвечать голосовым
 
 notify:

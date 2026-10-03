@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
@@ -116,14 +117,24 @@ class Skill:
 
 
 class SessionHandler:
-    """Активная «сессия» навыка (игра, рецепт, внешний навык): получает реплики первой."""
+    """Активная «сессия» навыка (игра, рецепт, внешний навык): получает реплики первой.
+    Заканчивается сама, если с ней не разговаривали дольше timeout секунд."""
 
     def __init__(self, skill: Skill, handler: Callable[[Context], Reply | str | None], name: str,
-                 exit_words=("хватит", "стоп", "выход", "выйди", "закончи", "закончим", "надоело")):
+                 exit_words=("хватит", "стоп", "выход", "выйди", "закончи", "закончим", "надоело"),
+                 timeout: float = 180):
         self.skill = skill
         self.handler = handler
         self.name = name
         self.exit_words = exit_words
+        self.timeout = timeout
+        self.last_used = time.time()
+
+    def touch(self):
+        self.last_used = time.time()
+
+    def expired(self) -> bool:
+        return time.time() - self.last_used > self.timeout
 
 
 def as_reply(r) -> Reply | None:

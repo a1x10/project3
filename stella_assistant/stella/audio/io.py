@@ -51,29 +51,54 @@ class MicHub:
         self.ring = deque(maxlen=int(15 * RATE / BLOCK))  # последние 15 секунд
         self.stream = None
         self.native_rate = RATE
+        self.channels = 1
         self.level = 0.0
         self.ok = False
 
-    def start(self):
+    def start(self) -> bool:
+        """-> False, если микрофона нет: Стелла продолжит работать без голоса (веб, Telegram, экран)."""
         sd = _sd()
         if sd is None:
             log.error("Микрофон недоступен: установите libportaudio2 и sounddevice")
             return False
         try:
-            self.stream = sd.RawInputStream(samplerate=RATE, blocksize=BLOCK, device=self.device,
-                                            channels=1, dtype="int16", callback=self._callback)
-            self.native_rate = RATE
+            self.stream = self._open(sd)
+            self.stream.start()
         except Exception as e:
-            info = sd.query_devices(self.device, "input")
-            self.native_rate = int(info["default_samplerate"])
-            log.info("Микрофон не умеет 16 кГц (%s) — пишу %s Гц и пересэмплирую", e, self.native_rate)
-            self.stream = sd.RawInputStream(samplerate=self.native_rate, blocksize=self.native_rate // 10,
-                                            device=self.device, channels=1, dtype="int16",
-                                            callback=self._callback)
-        self.stream.start()
+            log.error("Микрофон недоступен (%s). Голосовое управление выключено. Проверьте audio.input_device "
+                      "(список устройств: python3 -m sounddevice)", e)
+            self.stream = None
+            return False
         self.ok = True
-        log.info("Микрофон: %s", self.stream.device)
+        log.info("Микрофон: %s (%s Гц, каналов: %s)", self.stream.device, self.native_rate, self.channels)
         return True
+
+    def _open(self, sd):
+        """16 кГц моно, а если устройство так не умеет — его родная частота и число каналов
+        (у ReSpeaker и многих USB-микрофонов без PipeWire только стерео 48 кГц)."""
+        try:
+            return self._stream(sd, RATE, 1)
+        except Exception as e:
+            first = e
+        info = sd.query_devices(self.device, "input")  # нет такого устройства — исключение уйдёт в start()
+        native = int(info["default_samplerate"])
+        chans = max(1, min(2, int(info.get("max_input_channels") or 1)))
+        for rate, ch in ((native, 1), (RATE, chans), (native, chans)):
+            if (rate, ch) == (RATE, 1):
+                continue
+            try:
+                stream = self._stream(sd, rate, ch)
+                log.info("Микрофон не умеет 16 кГц моно (%s) — пишу %s Гц, каналов: %s", first, rate, ch)
+                return stream
+            except Exception:
+                continue
+        raise first
+
+    def _stream(self, sd, rate: int, channels: int):
+        stream = sd.RawInputStream(samplerate=rate, blocksize=rate // 10, device=self.device,
+                                   channels=channels, dtype="int16", callback=self._callback)
+        self.native_rate, self.channels = rate, channels
+        return stream
 
     def stop(self):
         if self.stream:
@@ -82,7 +107,11 @@ class MicHub:
             self.stream = None
 
     def _callback(self, indata, frames, time_info, status):
-        data = np.frombuffer(indata, dtype=np.int16).copy()
+        data = np.frombuffer(indata, dtype=np.int16)
+        if self.channels > 1:
+            data = data.reshape(-1, self.channels).mean(axis=1).astype(np.int16)
+        else:
+            data = data.copy()
         if self.native_rate != RATE:
             data = dsp.resample(data, self.native_rate, RATE)
         self.feed(data)

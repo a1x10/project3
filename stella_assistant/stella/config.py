@@ -108,6 +108,7 @@ DEFAULTS: dict = {
     "smarthome": {
         "yandex_token": "",
         "home_assistant": {"url": "", "token": ""},
+        "room": "",
         "poll_seconds": 15,
         "scenarios_file": "scenarios.yaml",
     },

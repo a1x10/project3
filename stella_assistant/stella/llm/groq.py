@@ -69,24 +69,38 @@ class GroqLLM:
         return body
 
     def complete(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None,
-                 model: str | None = None, timeout: float = 40) -> str:
-        """messages: [{"role": "system"|"user"|"assistant", "text": "..."}] — как у YandexGPT."""
+                 model: str | None = None, timeout: float = 25, budget: float = 30) -> str:
+        """messages: [{"role": "system"|"user"|"assistant", "text": "..."}] — как у YandexGPT.
+        budget — сколько всего секунд можно потратить на повторы и запасные модели: пока ждём Groq,
+        Стелла не отвечает на другие команды, а при сбое ещё можно спросить YandexGPT."""
         if not self.available:
             raise LLMError("Groq не настроен: укажите groq.api_key")
         temp = float(self.cfg.get("groq.temperature", 0.7) if temperature is None else temperature)
         mt = int(max_tokens or self.cfg.get("groq.max_tokens", 800))
+        deadline = time.monotonic() + budget
         last_err: Exception | None = None
+        net_errors = 0
         for name in ([model] if model else self.models()):
             for attempt in range(3):
+                left = deadline - time.monotonic()
+                if left < 2:
+                    raise last_err or LLMError("Groq не ответил вовремя")
                 try:
                     r = self.session.post(f"{BASE}/chat/completions", json=self._body(name, messages, temp, mt),
-                                          headers=self._headers(), timeout=timeout)
+                                          headers=self._headers(), timeout=(3.05, min(timeout, left)))
                 except requests.RequestException as e:
                     last_err = LLMError(f"нет связи с Groq: {e}")
-                    time.sleep(1 + attempt)
+                    net_errors += 1
+                    if net_errors >= 2:  # сеть, DNS или прокси: другие модели на том же сервере не помогут
+                        raise last_err
+                    time.sleep(1)
                     continue
                 if r.status_code == 429 or r.status_code >= 500:
-                    wait = min(10.0, float(r.headers.get("retry-after", 2 * (attempt + 1)) or 2))
+                    try:
+                        wait = float(r.headers.get("retry-after") or 2 * (attempt + 1))
+                    except ValueError:
+                        wait = 2.0
+                    wait = max(0.0, min(10.0, wait, deadline - time.monotonic() - 2))
                     last_err = LLMError(f"Groq {r.status_code}: {r.text[:200]}")
                     log.info("Groq %s, жду %.0f с", r.status_code, wait)
                     time.sleep(wait)
@@ -112,7 +126,7 @@ class GroqLLM:
         raise last_err or LLMError("Groq недоступен")
 
     # ------------------------------------------------------------- Whisper --
-    def transcribe(self, wav: bytes, language: str = "ru", timeout: float = 20) -> str | None:
+    def transcribe(self, wav: bytes, language: str = "ru", timeout: float | tuple = (3.05, 8)) -> str | None:
         """Распознавание речи Whisper (WAV/OGG/MP3/WebM…). -> текст или None."""
         if not self.available:
             return None

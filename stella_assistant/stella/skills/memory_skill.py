@@ -38,6 +38,8 @@ class MemorySkill(Skill):
     @intent(r"\bзапомни(?:,)?(?: пожалуйста)?(?: что)? (.+)$", priority=75)
     def remember(self, ctx):
         fact = ctx.group(1)
+        if re.match(r"^(?:эту|этот|это) (?:песню|трек|композицию|мелодию)$", fact):
+            return None  # «запомни эту песню» — лайк, если музыка играет
         key, value = extract_fact(fact)
         if key == "имя":
             value = value.split()[0].capitalize()
@@ -78,7 +80,7 @@ class MemorySkill(Skill):
         self.a.memory.clear_facts()
         return Reply("Хорошо, я всё забыла. Немного грустно…", emotion="sadness", intensity=0.5)
 
-    @intent(r"\bзабудь(?: что)? (.+)$", priority=73)
+    @intent(r"(?<!\bне )\bзабудь(?: что)? (.+)$", priority=73)
     def forget(self, ctx):
         key = self.a.memory.forget_fact(ctx.group(1))
         if key:

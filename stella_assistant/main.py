@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import signal
@@ -99,21 +100,11 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
-    assistant.start()
-    if cfg.get("web.enabled", True):
-        from stella.web.server import WebServer
-        WebServer(assistant).start()
-    if cfg.get("telegram.token"):
-        from stella.integrations.telegram_bot import TelegramBot
-        TelegramBot(assistant).start()
-    if cfg.get("vision.enabled"):
-        from stella.integrations.vision import Vision
-        Vision(assistant).start()
-
-    if args.text:
-        threading.Thread(target=console, args=(assistant,), daemon=True, name="console").start()
-
     try:
+        assistant.start()
+        start_integrations(cfg, assistant)
+        if args.text:
+            threading.Thread(target=console, args=(assistant,), daemon=True, name="console").start()
         if face is not None:
             face.run(stop)  # SDL требует главный поток
         else:
@@ -123,6 +114,23 @@ def main():
         stop.set()
         assistant.shutdown()
         logging.getLogger("stella").info("Пока!")
+
+
+def start_integrations(cfg, assistant):
+    """Веб-панель, Telegram, камера. Сбой одной из них не должен останавливать остальное."""
+    log = logging.getLogger("stella")
+    parts = []
+    if cfg.get("web.enabled", True):
+        parts.append(("веб-панель", "stella.web.server", "WebServer"))
+    if cfg.get("telegram.token"):
+        parts.append(("Telegram", "stella.integrations.telegram_bot", "TelegramBot"))
+    if cfg.get("vision.enabled"):
+        parts.append(("камера", "stella.integrations.vision", "Vision"))
+    for title, module, cls in parts:
+        try:
+            getattr(importlib.import_module(module), cls)(assistant).start()
+        except Exception:
+            log.exception("Не запустилась %s — работаю без неё", title)
 
 
 def console(assistant):
