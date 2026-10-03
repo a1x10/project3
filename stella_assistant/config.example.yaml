@@ -65,8 +65,8 @@ llm:
 
 groq:                            # ИИ-«мозг» Стеллы: быстрые открытые модели, есть бесплатный тариф
   api_key: ""                    # ключ с console.groq.com → API Keys (или переменная GROQ_API_KEY)
-  model: llama-3.3-70b-versatile # хорошо говорит по-русски и отвечает быстро
-  fallback_models: [openai/gpt-oss-120b, llama-3.1-8b-instant]   # если основная модель недоступна
+  model: openai/gpt-oss-120b     # лучше всех держит характер и эмоции, отвечает ~за 1 секунду
+  fallback_models: [qwen/qwen3.8-27b, openai/gpt-oss-20b]   # если основная модель недоступна
   stt_model: whisper-large-v3-turbo   # распознавание команд (точнее офлайн-Vosk)
   temperature: 0.7
   max_tokens: 800

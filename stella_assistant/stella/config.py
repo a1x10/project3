@@ -81,8 +81,8 @@ DEFAULTS: dict = {
     "llm": {"provider": "auto"},
     "groq": {
         "api_key": "",
-        "model": "llama-3.3-70b-versatile",
-        "fallback_models": ["openai/gpt-oss-120b", "llama-3.1-8b-instant"],
+        "model": "openai/gpt-oss-120b",
+        "fallback_models": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
         "stt_model": "whisper-large-v3-turbo",
         "temperature": 0.7,
         "max_tokens": 800,

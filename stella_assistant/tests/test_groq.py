@@ -41,10 +41,10 @@ def test_groq_request_format(monkeypatch):
     assert url == "https://api.groq.com/openai/v1/chat/completions"
     assert kw["headers"]["Authorization"] == "Bearer gsk_test"
     body = kw["json"]
-    assert body["model"] == "llama-3.3-70b-versatile"
+    assert body["model"] == "openai/gpt-oss-120b"
     assert body["messages"][1] == {"role": "user", "content": "привет"}
     assert body["max_completion_tokens"] == 800
-    assert "reasoning_effort" not in body
+    assert body["reasoning_effort"] == "low" and body["include_reasoning"] is False
 
 
 def test_groq_skips_decommissioned_model(monkeypatch):
@@ -53,16 +53,16 @@ def test_groq_skips_decommissioned_model(monkeypatch):
 
     def post(url, json=None, **kw):
         calls.append(json["model"])
-        if json["model"] == "llama-3.3-70b-versatile":
-            return Resp(400, text='{"error":{"code":"model_decommissioned"}}')
-        assert json["reasoning_effort"] == "low" and json["include_reasoning"] is False
-        return chat_ok("[neutral] ок")
+        if json["model"] == "openai/gpt-oss-120b":   # так Groq отвечает про недоступную модель
+            return Resp(404, text='{"error":{"code":"model_not_found"}}')
+        assert json["reasoning_effort"] == "none"    # Qwen — без режима размышлений
+        return chat_ok("<think>хм</think>[neutral] ок")
     monkeypatch.setattr(g.session, "post", post)
     assert g.complete([{"role": "user", "text": "тест"}]) == "[neutral] ок"
-    assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+    assert calls == ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
     calls.clear()
     g.complete([{"role": "user", "text": "ещё"}])
-    assert calls == ["openai/gpt-oss-120b"]          # отключённую модель больше не пробуем
+    assert calls == ["qwen/qwen3.8-27b"]             # недоступную модель больше не пробуем
 
 
 def test_groq_bad_key(monkeypatch):
