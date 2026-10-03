@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Стелла
+Comment=Голосовой ассистент с живыми глазами
+Exec=sh -c "sleep 5; cd @DIR@ && exec @DIR@/.venv/bin/python @DIR@/main.py >> @DIR@/data/stella.log 2>&1"
+X-GNOME-Autostart-enabled=true
+Terminal=false

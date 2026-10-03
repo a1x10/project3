@@ -1,0 +1,166 @@
+# Настройки Стеллы. Скопируйте в config.yaml и заполните нужное:
+#   cp config.example.yaml config.yaml
+# Ключи можно не писать в файл, а передать переменными окружения (см. deploy/stella.env.example).
+# Всё, что не указано, берётся по умолчанию (stella/config.py).
+
+assistant:
+  name: Стелла
+  wake_words: [стелла, стела, стелло, stella]   # слово-активатор
+  city: Москва                                 # город для погоды и карт
+  latitude: 55.7558
+  longitude: 37.6173
+  user_name: ""                                # как к вам обращаться (можно сказать «меня зовут …»)
+  follow_up_seconds: 6                         # сколько ждать ответа без «Стелла» после вопроса
+  quiet_hours: ["23:00", "07:00"]              # ночью Стелла говорит тише и сонная
+  bored_after_minutes: 5                       # через сколько минут тишины начинает скучать
+  sleep_after_minutes: 30                      # … и засыпает
+
+personality:
+  style: весёлая, добрая, любопытная, с чувством юмора, иногда немного дерзкая
+  can_get_angry: true            # обижается и злится на грубость
+  can_refuse_when_angry: true    # в ярости может отказаться развлекать, пока не извинишься
+  anger_decay_seconds: 45        # за сколько секунд «остывает» на 1 пункт из 10
+
+display:
+  enabled: true
+  fullscreen: true
+  width: 800                     # логическое разрешение (официальный 7" экран — 800x480)
+  height: 480
+  fps: 30
+  supersample: 1                 # 2 — красивее, но нагрузка на Pi 4 вдвое выше
+  eye_color: [70, 190, 255]      # цвет радужки (RGB)
+  background: [0, 0, 0]
+  show_mouth: true
+  show_brows: true
+  subtitles: true                # подписи: что услышала и что ответила
+  backend: pygame                # pygame (HDMI/DSI-экран) или luma (маленький SPI-дисплей)
+  luma: {driver: st7789, width: 320, height: 240, rotate: 0}
+
+audio:
+  input_device: null             # null — по умолчанию; можно номер или часть имени: "USB", "ReSpeaker"
+  output_device: null
+  volume_control: auto           # auto | wpctl | pactl | amixer
+  mixer_control: Master          # для amixer (иногда PCM)
+  beep: true                     # сигнал после «Стелла»
+  duck_volume: 25                # насколько приглушать музыку, когда Стелла слушает
+
+stt:
+  engine: vosk                   # vosk (офлайн) | off
+  vosk_model: models/vosk-model-small-ru-0.22
+  whisper_detect: true           # заметить шёпот и ответить шёпотом
+  yandex_stt: false              # true — команды распознаёт SpeechKit (точнее, нужен ключ Yandex Cloud)
+
+tts:
+  engine: auto                   # auto | yandex | piper | rhvoice | espeak
+  speed: 1.0
+  yandex_voice: marina           # marina умеет шептать (роль whisper); jane/omazh умеют «злиться» (evil)
+  yandex_role: friendly
+  piper_model: models/piper/ru_RU-irina-medium.onnx
+  rhvoice_voice: anna
+  volume: 1.0
+
+yandex:                          # Yandex Cloud: YandexGPT, SpeechKit, Переводчик
+  api_key: ""                    # API-ключ сервисного аккаунта (или YANDEX_API_KEY)
+  folder_id: ""                  # ID каталога (или YANDEX_FOLDER_ID)
+  gpt_model: yandexgpt-5-lite    # yandexgpt-5-lite | yandexgpt-5-pro | yandexgpt-5.1 | aliceai-llm
+  temperature: 0.6
+  max_tokens: 800
+  history_turns: 12              # сколько реплик диалога помнить
+
+yandex_music:
+  token: ""                      # OAuth-токен Яндекс Музыки (или YANDEX_MUSIC_TOKEN)
+
+music:
+  music_dir: ~/Music             # своя музыка
+  audiobooks_dir: ~/Audiobooks   # аудиокниги: по папке на книгу (например, MP3 из Литрес)
+  podcasts:                      # свои подкасты (название: RSS). Остальные ищутся автоматически
+    Радио-Т: https://radio-t.com/podcast.rss
+  radio: {}                      # свои радиостанции (название: ссылка). Остальные — через radio-browser.info
+  audd_token: ""                 # запасное распознавание песен (AudD)
+
+smarthome:
+  yandex_token: ""               # OAuth-токен с правами iot:view и iot:control (или YANDEX_IOT_TOKEN)
+  home_assistant:
+    url: ""                      # например http://homeassistant.local:8123
+    token: ""                    # долгоживущий токен Home Assistant
+  poll_seconds: 15               # как часто проверять датчики для сценариев
+  scenarios_file: scenarios.yaml
+
+tv:
+  cec: true                      # управление ТВ по HDMI-CEC (кабель от Pi к ТВ)
+  cec_device: /dev/cec0
+  adb_host: ""                   # IP Android TV / Яндекс ТВ (отладка по сети) — поиск фильмов, пульт
+  iot_name: ""                   # имя телевизора в умном доме Яндекса
+
+traffic:
+  tomtom_key: ""                 # бесплатный ключ developer.tomtom.com — пробки в баллах и время в пути
+  points: []                     # точки на крупных дорогах [[lat, lon], …] для оценки пробок
+  home: null                     # [lat, lon] дома
+  work: null                     # [lat, lon] работы — «сколько ехать до работы»
+
+places:
+  yandex_geosearch_key: ""       # «API Поиска по организациям» (иначе — OpenStreetMap)
+  yandex_geocoder_key: ""        # «API Геокодера» (иначе — Nominatim)
+  dgis_key: ""                   # 2ГИС — рейтинги и отзывы
+  radius: 1500
+
+news:
+  feeds:
+    главное: https://lenta.ru/rss/news
+    технологии: https://habr.com/ru/rss/articles/?fl=ru
+    наука: https://nplus1.ru/rss
+  count: 5
+
+telegram:
+  token: ""                      # токен бота от @BotFather (или TELEGRAM_BOT_TOKEN)
+  allowed_users: []              # ваши числовые ID (бот подскажет ID в ответ на /start)
+  voice_replies: true            # на голосовое отвечать голосовым
+
+notify:
+  ntfy_topic: ""                 # тема ntfy.sh для громких push-уведомлений (придумайте длинное имя)
+
+web:
+  enabled: true
+  host: 0.0.0.0
+  port: 8765
+  https: false                   # true — самоподписанный сертификат (нужно для микрофона в браузере)
+  password: ""                   # обязательно задайте, если открываете панель не только дома
+
+peers: {}                        # другие Стеллы в доме: {кухня: "http://192.168.1.51:8765", детская: "…"}
+
+multiroom:
+  enabled: false                 # синхронная музыка во всех комнатах через Snapcast
+  snapcast_host: 127.0.0.1
+  fifo: /tmp/snapfifo
+
+presence:
+  phone_ip: ""                   # IP телефона в домашнем Wi-Fi: напоминания «когда приду домой»
+  interval: 60
+
+calendar:
+  caldav_url: https://caldav.yandex.ru
+  username: ""                   # логин Яндекса
+  password: ""                   # пароль приложения (id.yandex.ru → Безопасность → Пароли приложений)
+
+find_phone:
+  phone_number: ""               # ваш номер для «найди мой телефон»
+  sip_account: ""                # SIP-аккаунт для звонка (например 12345@sip.zadarma.com)
+  sip_password: ""
+  ring_seconds: 40
+
+baby_monitor:
+  alert_level_db: -30            # порог громкости (dBFS) для тревоги
+  alert_seconds: 4
+
+vision:
+  enabled: false                 # камера: глаза следят за лицом (нужен python3-opencv)
+  camera: 0
+
+skills:
+  plugins_dir: plugins           # свои навыки на Python
+  webhooks: []                   # навыки по протоколу Яндекс Диалогов:
+  #  - name: мой навык
+  #    activation: ["запусти мой навык"]
+  #    url: https://example.com/alice-webhook
+
+log_level: INFO

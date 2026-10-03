@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+/models/
+/data/
+/config.yaml
+/scenarios.yaml
+/deploy/stella.env
+*.log

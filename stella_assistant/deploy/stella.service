@@ -1,0 +1,17 @@
+# Пользовательская служба (Raspberry Pi OS Lite): systemctl --user status stella
+[Unit]
+Description=Стелла — голосовой ассистент
+After=network-online.target sound.target pipewire.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=@DIR@
+EnvironmentFile=-@DIR@/deploy/stella.env
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=PYGAME_HIDE_SUPPORT_PROMPT=1
+ExecStart=@DIR@/.venv/bin/python @DIR@/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

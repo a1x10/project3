@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Радионяня — Стелла</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header><img class="logo" src="/static/favicon.svg" alt=""><h1>👶 Радионяня</h1><a href="/" class="badge">← назад</a></header>
+<main>
+  <div class="card center">
+    <div class="level" id="level"></div>
+    <p class="muted" id="status">Нажмите кнопку, чтобы слушать детскую.</p>
+    <button class="btn big-btn" id="listen">▶ Слушать</button>
+  </div>
+  <div class="card muted">Радионяню включают голосом у Стеллы в детской: «Стелла, включи радионяню».
+    Когда ребёнок долго плачет, Стелла пришлёт уведомление в Telegram или ntfy.</div>
+</main>
+<script>
+const bars = []; const lvl = document.getElementById("level");
+for (let i = 0; i < 16; i++) { const b = document.createElement("i"); b.style.height = "4px"; lvl.appendChild(b); bars.push(b); }
+let ctx = null, ws = null, playTime = 0;
+function stop() { if (ws) ws.close(); ws = null; document.getElementById("listen").textContent = "▶ Слушать"; }
+document.getElementById("listen").onclick = () => {
+  if (ws) return stop();
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume();
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/baby");
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { document.getElementById("status").textContent = "Слушаю детскую…";
+    document.getElementById("listen").textContent = "⏹ Стоп"; };
+  ws.onerror = ws.onclose = () => { document.getElementById("status").textContent =
+    "Нет связи. Радионяня включена? Скажите Стелле: «включи радионяню»."; stop(); };
+  ws.onmessage = (e) => {
+    const pcm = new Int16Array(e.data); const buf = ctx.createBuffer(1, pcm.length, 16000);
+    const ch = buf.getChannelData(0); let peak = 0;
+    for (let i = 0; i < pcm.length; i++) { ch[i] = pcm[i] / 32768; peak = Math.max(peak, Math.abs(ch[i])); }
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    playTime = Math.max(playTime, ctx.currentTime + 0.15); src.start(playTime); playTime += buf.duration;
+    bars.forEach((b, i) => b.style.height = (4 + Math.min(110, peak * 400 * (0.5 + Math.random()))) + "px");
+  };
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход — Стелла</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main style="max-width:380px;padding-top:15vh">
+  <div class="card center">
+    <img src="/static/favicon.svg" width="72" alt="">
+    <h2 style="margin:12px 0">Панель Стеллы</h2>
+    <div class="row"><input type="password" id="pw" placeholder="Пароль" autofocus>
+      <button class="btn" id="go">Войти</button></div>
+    <div class="muted" id="err" style="margin-top:8px"></div>
+  </div>
+</main>
+<script>
+async function go() {
+  const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({password: document.getElementById("pw").value})});
+  if (r.ok) location.href = "/"; else document.getElementById("err").textContent = "Неверный пароль";
+}
+document.getElementById("go").onclick = go;
+document.getElementById("pw").onkeydown = (e) => { if (e.key === "Enter") go(); };
+</script>
+</body>
+</html>
