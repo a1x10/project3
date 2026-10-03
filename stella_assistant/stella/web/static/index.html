@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e14">
+<title>Стелла</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <img class="logo" src="/static/favicon.svg" alt="">
+  <h1 id="title">Стелла</h1>
+  <span class="badge" id="mood">…</span>
+</header>
+<nav id="tabs">
+  <button data-tab="chat" class="active">💬 Чат</button>
+  <button data-tab="face">👀 Лицо</button>
+  <button data-tab="lists">🛒 Списки</button>
+  <button data-tab="time">⏰ Время</button>
+  <button data-tab="music">🎵 Музыка</button>
+  <button data-tab="home">🏠 Дом</button>
+  <button data-tab="more">⋯ Ещё</button>
+</nav>
+<main>
+  <section id="chat" class="active">
+    <div id="chatlog"></div>
+    <div class="card muted" id="chat-hint">Пишите команды как Стелле голосом: «включи музыку», «какая погода
+      завтра», «поставь таймер на 5 минут», «напиши стих про осень». Кнопка 🎤 — голосом (в браузере нужен HTTPS
+      или localhost).</div>
+  </section>
+
+  <section id="face">
+    <div class="card"><img class="face" id="faceimg" alt="лицо Стеллы"></div>
+    <div class="card"><h2>Показать эмоцию</h2><div class="chips" id="emochips"></div></div>
+  </section>
+
+  <section id="lists">
+    <div class="card"><h2>Покупки</h2>
+      <ul class="items" id="list-покупки"></ul>
+      <div class="row" style="margin-top:8px"><input id="add-покупки" placeholder="Добавить…">
+        <button class="btn" data-add="покупки">+</button></div>
+    </div>
+    <div class="card"><h2>Дела</h2>
+      <ul class="items" id="list-дела"></ul>
+      <div class="row" style="margin-top:8px"><input id="add-дела" placeholder="Добавить…">
+        <button class="btn" data-add="дела">+</button></div>
+    </div>
+    <div id="other-lists"></div>
+    <div class="card"><h2>Заметки</h2>
+      <ul class="items" id="notes"></ul>
+      <div class="row" style="margin-top:8px"><input id="add-note" placeholder="Новая заметка…">
+        <button class="btn" id="add-note-btn">+</button></div>
+    </div>
+  </section>
+
+  <section id="time">
+    <div class="card"><h2>Будильники, таймеры и напоминания</h2><ul class="items" id="alarms"></ul></div>
+    <div class="card"><h2>Добавить</h2>
+      <div class="row"><input id="alarm-cmd" placeholder="разбуди меня в 7:30 по будням / напомни завтра в 10 …">
+        <button class="btn" id="alarm-send">OK</button></div>
+    </div>
+  </section>
+
+  <section id="music">
+    <div class="card center">
+      <div class="muted" id="pl-source">Сейчас ничего не играет</div>
+      <div class="player-title" id="pl-title">—</div>
+      <div class="row" style="justify-content:center">
+        <button class="btn secondary round" data-pl="prev">⏮</button>
+        <button class="btn round" data-pl="toggle" id="pl-toggle">▶</button>
+        <button class="btn secondary round" data-pl="next">⏭</button>
+        <button class="btn secondary round" data-pl="stop">⏹</button>
+      </div>
+      <input type="range" min="0" max="120" id="pl-volume" style="width:100%;margin-top:14px">
+    </div>
+    <div class="card"><h2>Быстрый запуск</h2><div class="chips">
+      <button class="chip" data-cmd="включи мою волну">🌊 Моя волна</button>
+      <button class="chip" data-cmd="включи мои лайки">❤️ Мне нравится</button>
+      <button class="chip" data-cmd="включи радио европа плюс">📻 Радио</button>
+      <button class="chip" data-cmd="продолжи аудиокнигу">📖 Аудиокнига</button>
+      <button class="chip" data-cmd="включи подкаст медуза">🎙 Подкаст</button>
+      <button class="chip" data-cmd="что сейчас играет">❓ Что играет</button>
+      <button class="chip" data-cmd="лайк">👍 Лайк</button>
+      <button class="chip" data-cmd="дизлайк">👎 Дизлайк</button>
+    </div></div>
+  </section>
+
+  <section id="home">
+    <div class="card"><h2>Устройства</h2><div id="devices" class="muted">Загрузка…</div></div>
+    <div class="card"><h2>Сценарии (YAML)</h2>
+      <textarea id="scenarios" spellcheck="false"></textarea>
+      <div class="row" style="margin-top:8px"><span class="muted" id="sc-status" style="flex:1"></span>
+        <button class="btn" id="sc-save">Сохранить</button></div>
+    </div>
+  </section>
+
+  <section id="more">
+    <div class="card"><h2>Настроение Стеллы</h2>
+      <div class="muted" id="mood-text"></div>
+      <div class="meter" style="margin-top:8px"><div id="irritation"></div></div>
+      <div class="muted" style="margin-top:6px">Раздражение растёт от грубости и тыканья в экран, проходит само
+        или после «извини».</div>
+    </div>
+    <div class="card"><h2>Связь</h2><div class="chips">
+      <a class="chip" href="/baby">👶 Радионяня — слушать</a>
+      <a class="chip" href="/call">📞 Позвонить Стелле</a>
+    </div></div>
+    <div class="card"><h2>Состояние</h2><div class="muted" id="status"></div></div>
+  </section>
+</main>
+<div class="composer" id="composer">
+  <div class="row">
+    <input id="text" placeholder="Сообщение Стелле…" autocomplete="off">
+    <button class="btn round secondary" id="mic" title="Голосом">🎤</button>
+    <button class="btn round" id="send" title="Отправить">➤</button>
+  </div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const EMO_ICON = {joy:"😊", sadness:"😢", anger:"😠", fear:"😨", surprise:"😮", love:"🥰", interest:"🤔",
+  contempt:"😒", confidence:"😎", boredom:"🥱", neutral:"🙂", listening:"👂", thinking:"💭", sleep:"😴"};
+let state = null, tab = "chat";
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
+  if (r.status === 401) { location.href = "/login"; throw new Error("auth"); }
+  return r.json();
+}
+function post(path, body) { return api(path, {method: "POST", body: JSON.stringify(body || {})}); }
+
+function addMsg(text, who, emotion, card) {
+  if (!text && !card) return;
+  const d = document.createElement("div");
+  d.className = "msg " + who;
+  d.textContent = card && card.length > (text || "").length ? card : text;
+  if (emotion && who === "her") {
+    const e = document.createElement("span"); e.className = "emo";
+    e.textContent = (EMO_ICON[emotion] || "") + " " + emotion;
+    const play = document.createElement("a"); play.href = "#"; play.textContent = "  🔊";
+    play.onclick = (ev) => { ev.preventDefault(); new Audio("/api/tts?text=" + encodeURIComponent(text) + "&emotion=" + emotion).play(); };
+    e.appendChild(play); d.appendChild(e);
+  }
+  $("#chatlog").appendChild(d);
+  $("#chat-hint").style.display = "none";
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+async function send(text) {
+  text = (text || $("#text").value).trim();
+  if (!text) return;
+  $("#text").value = "";
+  addMsg(text, "me");
+  try {
+    const r = await post("/api/command", {text});
+    addMsg(r.text, "her", r.emotion, r.card);
+  } catch (e) { addMsg("Ошибка связи со Стеллой", "sys"); }
+  refresh();
+}
+
+// ---------- голос из браузера ----------
+let rec = null, chunks = [];
+async function toggleMic() {
+  if (rec) { rec.stop(); return; }
+  if (!navigator.mediaDevices) { addMsg("Микрофон в браузере работает только по HTTPS (web.https: true) или на localhost.", "sys"); return; }
+  const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  rec = new MediaRecorder(stream); chunks = [];
+  rec.ondataavailable = (e) => chunks.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    $("#mic").classList.remove("rec"); rec = null;
+    const fd = new FormData(); fd.append("audio", new Blob(chunks), "voice.webm");
+    addMsg("…", "sys");
+    const r = await (await fetch("/api/voice", {method: "POST", body: fd})).json();
+    $("#chatlog").lastChild.remove();
+    if (r.heard) addMsg(r.heard, "me");
+    addMsg(r.text, "her", r.emotion, r.card);
+    if (r.audio) new Audio("data:audio/wav;base64," + r.audio).play();
+  };
+  rec.start(); $("#mic").classList.add("rec");
+  setTimeout(() => rec && rec.state === "recording" && rec.stop(), 12000);
+}
+
+// ---------- вкладки ----------
+function showTab(name) {
+  tab = name;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("main section").forEach(s => s.classList.toggle("active", s.id === name));
+  $("#composer").style.display = name === "chat" ? "" : "none";
+  $("#faceimg").src = name === "face" && state && state.face ? "/api/face.mjpg?" + Date.now() : "";
+  if (name === "home") loadHome();
+}
+
+function renderList(name, items) {
+  const ul = document.getElementById("list-" + name);
+  if (!ul) return;
+  ul.innerHTML = "";
+  if (!items.length) { ul.innerHTML = '<li class="muted">пусто</li>'; return; }
+  for (const it of items) {
+    const li = document.createElement("li"); if (it.done) li.className = "done";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!it.done;
+    cb.onchange = () => post("/api/items/" + it.id, {done: cb.checked ? 1 : 0}).then(refresh);
+    const sp = document.createElement("span"); sp.textContent = it.text;
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "×";
+    del.onclick = () => api("/api/items/" + it.id, {method: "DELETE"}).then(refresh);
+    li.append(cb, sp, del); ul.appendChild(li);
+  }
+}
+
+function fmtDue(a) {
+  if (a.kind === "presence") return a.extra && a.extra.presence === "arrive" ? "когда придёшь домой" : "когда будешь уходить";
+  const d = new Date(a.due * 1000);
+  return d.toLocaleString("ru-RU", {weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"});
+}
+
+function render() {
+  if (!state) return;
+  $("#title").textContent = state.name;
+  document.title = state.name;
+  const m = state.mood;
+  const moodName = {calm: "спокойна", annoyed: "обижена", angry: "злится", furious: "в ярости"}[m.level] || m.level;
+  const mb = $("#mood");
+  mb.textContent = (EMO_ICON[state.emotion] || "🙂") + " " + (m.sleeping ? "спит" : moodName);
+  mb.className = "badge" + (m.level !== "calm" ? " angry" : m.affection >= 6 ? " love" : "");
+  $("#mood-text").textContent = `Раздражение ${m.irritation}/10, симпатия ${m.affection}/10` + (state.whisper ? ", говорит шёпотом" : "");
+  $("#irritation").style.width = (m.irritation * 10) + "%";
+  renderList("покупки", state.lists["покупки"] || []);
+  renderList("дела", state.lists["дела"] || []);
+  const other = $("#other-lists"); other.innerHTML = "";
+  for (const [name, items] of Object.entries(state.lists)) {
+    if (name === "покупки" || name === "дела" || !items.length) continue;
+    const c = document.createElement("div"); c.className = "card";
+    c.innerHTML = `<h2>${name}</h2><ul class="items" id="list-${name}"></ul>`; other.appendChild(c);
+    renderList(name, items);
+  }
+  const notes = $("#notes"); notes.innerHTML = "";
+  for (const n of state.notes) {
+    const li = document.createElement("li");
+    const sp = document.createElement("span"); sp.textContent = n.text;
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "×";
+    del.onclick = () => api("/api/notes/" + n.id, {method: "DELETE"}).then(refresh);
+    li.append(sp, del); notes.appendChild(li);
+  }
+  if (!state.notes.length) notes.innerHTML = '<li class="muted">заметок нет</li>';
+  const al = $("#alarms"); al.innerHTML = "";
+  const kinds = {alarm: "⏰ Будильник", timer: "⏱ Таймер", reminder: "🔔 Напоминание", presence: "📍 Напоминание"};
+  for (const a of state.alarms) {
+    const li = document.createElement("li");
+    const sp = document.createElement("span");
+    sp.textContent = `${kinds[a.kind] || a.kind}: ${fmtDue(a)}${a.label ? " — " + a.label : ""}${a.repeat ? " (повтор)" : ""}`;
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "×";
+    del.onclick = () => api("/api/alarms/" + a.id, {method: "DELETE"}).then(refresh);
+    li.append(sp, del); al.appendChild(li);
+  }
+  if (!state.alarms.length) al.innerHTML = '<li class="muted">ничего не запланировано</li>';
+  const p = state.player;
+  $("#pl-title").textContent = p.title || "—";
+  $("#pl-source").textContent = p.active ? ({yandex: "Яндекс Музыка", radio: "Радио", podcast: "Подкаст",
+    audiobook: "Аудиокнига", local: "С диска"}[p.source] || "") + (p.playing ? " · играет" : " · пауза") : "Сейчас ничего не играет";
+  $("#pl-toggle").textContent = p.playing ? "⏸" : "▶";
+  if (document.activeElement !== $("#pl-volume")) $("#pl-volume").value = p.volume;
+  $("#status").innerHTML = `Голосовое управление: ${state.voice ? "✅" : "❌ (нет микрофона или модели Vosk)"}<br>
+    YandexGPT: ${state.llm ? "✅" : "❌ (нет ключа — работают только встроенные навыки)"}<br>
+    Радионяня: ${state.baby ? "включена" : "выключена"}<br>
+    Другие Стеллы: ${state.peers.length ? state.peers.join(", ") : "нет"}`;
+  const chips = $("#emochips");
+  if (!chips.childElementCount) {
+    for (const [k, v] of Object.entries(state.emotions)) {
+      const b = document.createElement("button"); b.className = "chip"; b.textContent = (EMO_ICON[k] || "") + " " + v;
+      b.onclick = () => post("/api/emotion", {name: k}); chips.appendChild(b);
+    }
+    const d = document.createElement("button"); d.className = "chip"; d.textContent = "🎬 Демо всех эмоций";
+    d.onclick = () => post("/api/emotion", {name: "demo"}); chips.appendChild(d);
+  }
+}
+
+async function refresh() { try { state = await api("/api/state"); render(); } catch (e) {} }
+
+async function loadHome() {
+  const d = await api("/api/devices");
+  const box = $("#devices");
+  if (!d.configured) { box.innerHTML = "Умный дом не подключён: добавьте токен умного дома Яндекса или Home Assistant в config.yaml."; }
+  else {
+    box.innerHTML = "";
+    for (const dev of d.devices) {
+      const row = document.createElement("div"); row.className = "dev";
+      row.innerHTML = `<div>${dev.name}<small>${dev.room || ""} ${dev.type.replace("devices.types.", "")}</small></div>`;
+      if (dev.on !== null) {
+        const sw = document.createElement("button"); sw.className = "switch" + (dev.on ? " on" : "");
+        sw.onclick = async () => { const on = !sw.classList.contains("on"); sw.classList.toggle("on", on);
+          await post("/api/devices/" + encodeURIComponent(dev.id), {on}); };
+        row.appendChild(sw);
+      }
+      box.appendChild(row);
+    }
+    if (!d.devices.length) box.textContent = "Устройств нет.";
+  }
+  const sc = await api("/api/scenarios");
+  $("#scenarios").value = sc.yaml;
+}
+
+// ---------- события ----------
+function connectEvents() {
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/events");
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.topic === "heard" && ev.source !== "web") addMsg("🎙 " + ev.text, "me");
+    if (ev.topic === "reply" && ev.source !== "web" && ev.text) addMsg(ev.text, "her", ev.emotion, ev.card);
+    if (ev.topic === "notify") addMsg("🔔 " + (ev.title ? ev.title + ": " : "") + ev.text, "sys");
+    if (["emotion", "mood", "state"].includes(ev.topic)) setTimeout(refresh, 300);
+  };
+  ws.onclose = () => setTimeout(connectEvents, 3000);
+}
+
+// ---------- обработчики ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+$("#send").onclick = () => send();
+$("#text").onkeydown = (e) => { if (e.key === "Enter") send(); };
+$("#mic").onclick = toggleMic;
+document.querySelectorAll("[data-add]").forEach(b => b.onclick = () => {
+  const name = b.dataset.add, inp = document.getElementById("add-" + name);
+  if (inp.value.trim()) post("/api/lists/" + name, {text: inp.value.trim()}).then(() => { inp.value = ""; refresh(); });
+});
+$("#add-note-btn").onclick = () => { const v = $("#add-note").value.trim(); if (v) post("/api/notes", {text: v}).then(() => { $("#add-note").value = ""; refresh(); }); };
+$("#alarm-send").onclick = async () => { const v = $("#alarm-cmd").value.trim(); if (!v) return;
+  const r = await post("/api/command", {text: v}); $("#alarm-cmd").value = ""; alert(r.text); refresh(); };
+document.querySelectorAll("[data-pl]").forEach(b => b.onclick = () => {
+  let a = b.dataset.pl; if (a === "toggle") a = state && state.player.playing ? "pause" : "resume";
+  post("/api/player", {action: a}).then(() => setTimeout(refresh, 600));
+});
+$("#pl-volume").onchange = (e) => post("/api/player", {action: "volume", value: +e.target.value});
+document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = async () => {
+  const r = await post("/api/command", {text: b.dataset.cmd}); if (r.text) alert(r.text); setTimeout(refresh, 800); });
+$("#sc-save").onclick = async () => {
+  const r = await post("/api/scenarios", {yaml: $("#scenarios").value});
+  $("#sc-status").textContent = r.ok ? `Сохранено: ${r.count} сценариев` : "Ошибка: " + r.error;
+};
+refresh(); connectEvents(); setInterval(refresh, 15000);
+</script>
+</body>
+</html>

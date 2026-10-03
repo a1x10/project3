@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Звонок — Стелла</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header><img class="logo" src="/static/favicon.svg" alt=""><h1>📞 Звонок Стелле</h1><a href="/" class="badge">← назад</a></header>
+<main>
+  <div class="card center">
+    <div class="level" id="level"></div>
+    <p class="muted" id="status">Звонок на колонку дома: вас услышат в комнате, где стоит Стелла.</p>
+    <button class="btn big-btn" id="call">📞 Позвонить</button>
+  </div>
+  <div class="card muted">Для микрофона браузеру нужен HTTPS: включите <code>web.https: true</code> в настройках
+    и откройте панель по адресу https://… (сертификат самоподписанный — подтвердите исключение).</div>
+</main>
+<script>
+const bars = []; const lvl = document.getElementById("level");
+for (let i = 0; i < 16; i++) { const b = document.createElement("i"); b.style.height = "4px"; lvl.appendChild(b); bars.push(b); }
+let ctx, ws, stream, proc, playTime = 0;
+function hang() {
+  if (ws) ws.close(); ws = null;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (proc) proc.disconnect();
+  document.getElementById("call").textContent = "📞 Позвонить";
+  document.getElementById("status").textContent = "Звонок завершён.";
+}
+document.getElementById("call").onclick = async () => {
+  if (ws) return hang();
+  if (!navigator.mediaDevices) { document.getElementById("status").textContent = "Нужен HTTPS для микрофона."; return; }
+  stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}});
+  ctx = new (window.AudioContext || window.webkitAudioContext)(); await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(4096, 1, 1);
+  const ratio = ctx.sampleRate / 16000;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/call?from=" +
+                     encodeURIComponent("телефон"));
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { document.getElementById("status").textContent = "Соединено. Говорите!";
+    document.getElementById("call").textContent = "✖ Завершить"; };
+  ws.onclose = () => hang();
+  proc.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== 1) return;
+    const inp = e.inputBuffer.getChannelData(0); const n = Math.floor(inp.length / ratio);
+    const out = new Int16Array(n); let peak = 0;
+    for (let i = 0; i < n; i++) { const v = inp[Math.floor(i * ratio)]; peak = Math.max(peak, Math.abs(v));
+      out[i] = Math.max(-1, Math.min(1, v)) * 32767; }
+    ws.send(out.buffer);
+    bars.forEach(b => b.style.height = (4 + Math.min(110, peak * 300 * (0.5 + Math.random()))) + "px");
+  };
+  src.connect(proc); proc.connect(ctx.destination);
+  ws.onmessage = (e) => {
+    const pcm = new Int16Array(e.data); const buf = ctx.createBuffer(1, pcm.length, 16000);
+    const ch = buf.getChannelData(0); for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination);
+    playTime = Math.max(playTime, ctx.currentTime + 0.1); s.start(playTime); playTime += buf.duration;
+  };
+};
+</script>
+</body>
+</html>

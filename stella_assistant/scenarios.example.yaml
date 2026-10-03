@@ -1,0 +1,58 @@
+# Сценарии Стеллы. Скопируйте в scenarios.yaml (или редактируйте в веб-панели → «Дом»).
+# Триггеры: phrase (фраза), time + days (по времени), sensor (датчик), presence (arrive/leave — пришёл/ушёл).
+# Действия: say (сказать), command (любая команда, как голосом), emotion, delay (секунды), notify,
+#           yandex_scenario (сценарий из приложения Яндекса), ha_service (служба Home Assistant).
+# Голосом: «Стелла, создай сценарий: когда я говорю „я дома“, включи свет и включи музыку».
+
+scenarios:
+  - name: Спокойной ночи
+    triggers:
+      - phrase: спокойной ночи
+    reply: Спокойной ночи! Выключаю свет и ставлю будильник.
+    emotion: love
+    actions:
+      - command: выключи свет везде
+      - command: поставь будильник на 7:30
+      - delay: 5
+      - emotion: sleep
+
+  - name: Утро
+    triggers:
+      - time: "07:30"
+        days: [пн, вт, ср, чт, пт]
+    actions:
+      - command: включи свет на кухне
+      - say: Доброе утро! Сейчас расскажу погоду.
+      - command: какая погода
+        speak: true
+
+  - name: Я дома
+    triggers:
+      - phrase: я дома
+      - presence: arrive
+    reply: С возвращением!
+    emotion: joy
+    actions:
+      - command: включи свет в прихожей
+      - command: включи мою волну
+
+  - name: Свет ночью при движении
+    triggers:
+      - sensor: Датчик движения в коридоре
+        property: motion
+        value: detected
+    conditions:
+      - time_between: ["22:00", "07:00"]
+    actions:
+      - command: включи свет в коридоре
+      - delay: 120
+      - command: выключи свет в коридоре
+
+  - name: Жарко
+    triggers:
+      - sensor: Термометр в спальне
+        property: temperature
+        above: 26
+    actions:
+      - command: включи кондиционер на 22 градуса
+      - notify: В спальне жарко, включила кондиционер.
