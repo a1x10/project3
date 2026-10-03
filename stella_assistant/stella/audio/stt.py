@@ -65,6 +65,11 @@ class WakeMatcher:
                 rest = words[:i] + words[i + 1:]
                 # «Стелла, стоп» / «включи музыку, Стелла»
                 return True, " ".join(rest).strip()
+            # Vosk иногда слышит «Стелла» как два слова: «с тела», «с телом»
+            if w == "с" and i + 1 < len(words) and "стела" in self.words and \
+                    re.fullmatch(r"тел+[аоуеы]?м?", words[i + 1]):
+                rest = words[:i] + words[i + 2:]
+                return True, " ".join(rest).strip()
         return False, text
 
 
