@@ -215,9 +215,25 @@ class Listener(threading.Thread):
             better = cloud_recognize(self.cfg, audio)
             if better:
                 found, cmd = self.wake.find(_plain(better))
-                text = cmd or text
+                cand = cmd or _plain(better)
+                if _plausible(cand, text):
+                    text = cand
+                else:
+                    log.info("Облако услышало %r — похоже на ошибку, оставляю %r", cand, text)
         log.info("Услышала: %r%s", text, " (шёпотом)" if whisper else "")
         self.on_command(text, whisper)
+
+
+def _plausible(cloud: str, local: str) -> bool:
+    """Whisper на шуме иногда «слышит» короткое «Спасибо.». Если облако выдало одно-два слова,
+    совсем не похожих на то, что услышал Vosk, верим Vosk."""
+    cw, lw = cloud.split(), local.split()
+    if not cw:
+        return False
+    if len(cw) >= 3 or not lw:
+        return True
+    from ..nlp.text import stem
+    return bool({stem(w) for w in cw} & {stem(w) for w in lw}) or len(lw) <= len(cw)
 
 
 def _plain(text: str) -> str:

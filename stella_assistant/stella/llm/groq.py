@@ -1,4 +1,4 @@
-"""Groq: быстрые открытые модели (Llama 3.3 70B, GPT-OSS) и распознавание речи Whisper.
+"""Groq: быстрые открытые модели (GPT-OSS 120B, Qwen) и распознавание речи Whisper.
 
 API совместим с OpenAI: https://api.groq.com/openai/v1. Ключ — на console.groq.com (есть бесплатный тариф).
 Если Groq недоступен из вашей сети, укажите прокси: groq.proxy: "http://…" или "socks5://…"
@@ -17,8 +17,10 @@ from .yandexgpt import LLMError
 log = logging.getLogger("stella.groq")
 
 BASE = "https://api.groq.com/openai/v1"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_FALLBACKS = ["openai/gpt-oss-120b", "llama-3.1-8b-instant"]
+# Проверено на живом API (октябрь 2026): лучше всех держит формат Стеллы (теги эмоций, «КОМАНДА:», «ПОИСК:»)
+# и отвечает за ~1 с — gpt-oss-120b. Список моделей аккаунта: GET /openai/v1/models.
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_FALLBACKS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
 GONE = ("model_decommissioned", "model_not_found", "model_not_active")
 _HALLUCINATION = re.compile(r"(?i)субтитр|продолжение следует|спасибо за просмотр|подписывайтесь|dimatorzok|"
                             r"редактор субтитров|корректор|^\W*$")
@@ -62,6 +64,8 @@ class GroqLLM:
             # «думающие» модели: для голосового ассистента важнее скорость
             body["reasoning_effort"] = "low"
             body["include_reasoning"] = False
+        elif model.startswith("qwen/"):
+            body["reasoning_effort"] = "none"  # Qwen3: без режима размышлений
         return body
 
     def complete(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None,
@@ -103,7 +107,8 @@ class GroqLLM:
                     msg = r.json()["choices"][0]["message"]
                 except (KeyError, IndexError, ValueError):
                     raise LLMError(f"Непонятный ответ Groq: {r.text[:300]}")
-                return (msg.get("content") or "").strip()
+                text = re.sub(r"<think>.*?</think>", "", msg.get("content") or "", flags=re.S)
+                return text.strip()
         raise last_err or LLMError("Groq недоступен")
 
     # ------------------------------------------------------------- Whisper --
@@ -112,11 +117,14 @@ class GroqLLM:
         if not self.available:
             return None
         model = self.cfg.get("groq.stt_model") or "whisper-large-v3-turbo"
+        name = self.cfg.get("assistant.name", "Стелла")
+        # подсказка для Whisper: без неё имя слышится как «Села» или «С тела»
+        prompt = f"{name} — голосовой помощник. {name}, включи музыку. {name}, какая погода?"
         try:
             r = self.session.post(f"{BASE}/audio/transcriptions", headers=self._headers(), timeout=timeout,
                                   files={"file": ("speech.wav", wav, "audio/wav")},
                                   data={"model": model, "language": language, "response_format": "json",
-                                        "temperature": "0"})
+                                        "temperature": "0", "prompt": prompt})
         except requests.RequestException as e:
             log.warning("Groq Whisper: нет связи (%s)", e)
             return None
