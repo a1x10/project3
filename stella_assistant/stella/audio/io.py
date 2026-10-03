@@ -184,6 +184,16 @@ class Speaker:
                 bus.emit("speech_level", level=0.0)
 
     def _play_sd(self, samples, sr, animate):
+        try:
+            return self._play_sd_rate(samples, sr, animate)
+        except Exception as e:
+            # голое ALSA-устройство без PipeWire может не уметь 22 кГц — пересэмплируем в 48 кГц
+            if sr == 48000 or "sample rate" not in str(e).lower():
+                raise
+            log.info("Динамик не поддерживает %s Гц, играю в 48 кГц", sr)
+            return self._play_sd_rate(dsp.resample(samples, sr, 48000), 48000, animate)
+
+    def _play_sd_rate(self, samples, sr, animate):
         sd = self._sd
         env = dsp.envelope(samples, sr, 30) if animate else None
         block = max(256, sr // 30)
