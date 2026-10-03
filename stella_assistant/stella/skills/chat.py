@@ -1,4 +1,4 @@
-"""Генерация текстов YandexGPT: стихи, сказки, сценарии, письма, поздравления, идеи."""
+"""Генерация текстов через ИИ (Groq / YandexGPT): стихи, сказки, сценарии, письма, поздравления, идеи."""
 from __future__ import annotations
 
 import re
@@ -19,8 +19,8 @@ class Chat(Skill):
     def generate(self, ctx):
         brain = self.a.brain
         if not brain.available:
-            return Reply("Чтобы сочинять тексты, мне нужен YandexGPT. Добавь ключ Yandex Cloud в настройки.",
-                         emotion="sadness")
+            return Reply("Чтобы сочинять тексты, мне нужен ИИ: добавь ключ Groq (groq.api_key) "
+                         "или YandexGPT в настройки.", emotion="sadness")
         if ctx.source == "voice":
             ctx.say("Сейчас придумаю…", emotion="thinking")
         th = brain.think(ctx.text, long_form=True,

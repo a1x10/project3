@@ -1,4 +1,4 @@
-"""Справка и поиск: Википедия, поиск в интернете (DuckDuckGo) с пересказом через YandexGPT, переводчик."""
+"""Справка и поиск: Википедия, поиск в интернете (DuckDuckGo) с пересказом через ИИ, переводчик."""
 from __future__ import annotations
 
 import re
@@ -152,7 +152,7 @@ class Search(Skill):
         text = text.strip(" «»\"")
         result = self.translate(text, code)
         if not result:
-            return Reply("Не получилось перевести — нужен ключ Yandex Cloud или YandexGPT.", emotion="sadness")
+            return Reply("Не получилось перевести — нужен ключ Groq или Yandex Cloud.", emotion="sadness")
         lang = LANG_NAMES.get(code, "")
         prefix = f"По-{lang[:-2]}и" if lang.endswith("ий") else "Перевод"
         r = Reply(f"{prefix}: {result}", card=result, emotion="interest", intensity=0.5)

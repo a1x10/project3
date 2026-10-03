@@ -262,7 +262,7 @@ function render() {
   $("#pl-toggle").textContent = p.playing ? "⏸" : "▶";
   if (document.activeElement !== $("#pl-volume")) $("#pl-volume").value = p.volume;
   $("#status").innerHTML = `Голосовое управление: ${state.voice ? "✅" : "❌ (нет микрофона или модели Vosk)"}<br>
-    YandexGPT: ${state.llm ? "✅" : "❌ (нет ключа — работают только встроенные навыки)"}<br>
+    ИИ (Groq / YandexGPT): ${state.llm ? "✅ " + (state.llm_name || "") : "❌ (нет ключа — работают только встроенные навыки)"}<br>
     Радионяня: ${state.baby ? "включена" : "выключена"}<br>
     Другие Стеллы: ${state.peers.length ? state.peers.join(", ") : "нет"}`;
   const chips = $("#emochips");

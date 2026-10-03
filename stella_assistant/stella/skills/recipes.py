@@ -89,7 +89,7 @@ class Recipes(Skill):
                 ctx.say("Сейчас найду рецепт…", emotion="interest")
             recipe = self._from_llm(dish)
         if recipe is None:
-            return Reply(f"Не знаю рецепт «{dish}». Я умею: {', '.join(BUILTIN)}. А с YandexGPT — что угодно.",
+            return Reply(f"Не знаю рецепт «{dish}». Я умею: {', '.join(BUILTIN)}. А с ИИ — что угодно.",
                          emotion="sadness")
         self.r, self.i = recipe, -1
         self.a.start_session(self, self._session, "рецепт",

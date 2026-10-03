@@ -211,13 +211,46 @@ class Listener(threading.Thread):
                 self._deliver(command, whisper, audio)
 
     def _deliver(self, text: str, whisper: bool, audio: np.ndarray):
-        if self.cfg.get("stt.yandex_stt") and len(audio) > RATE // 3:
-            better = yandex_recognize(self.cfg, audio)
+        if len(audio) > RATE // 3:  # уточняем команду облачным распознаванием (Groq Whisper / SpeechKit)
+            better = cloud_recognize(self.cfg, audio)
             if better:
-                found, cmd = self.wake.find(better.lower())
+                found, cmd = self.wake.find(_plain(better))
                 text = cmd or text
         log.info("Услышала: %r%s", text, " (шёпотом)" if whisper else "")
         self.on_command(text, whisper)
+
+
+def _plain(text: str) -> str:
+    """«Стелла, какая погода?» -> «стелла какая погода» (как выдаёт Vosk)."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s-]", " ", text.lower().replace("ё", "е"))).strip()
+
+
+_GROQ = None
+
+
+def cloud_recognize(cfg, audio: np.ndarray, sr: int = RATE) -> str | None:
+    """Облачное распознавание фразы. stt.cloud: auto (Groq Whisper, если есть ключ; SpeechKit, если
+    stt.yandex_stt: true) | groq | yandex | off. Слово-активатор всегда ищется офлайн."""
+    global _GROQ
+    mode = str(cfg.get("stt.cloud", "auto")).lower()
+    if mode in ("off", "none", "false", "vosk"):
+        return None
+    engines = []
+    if mode in ("auto", "groq") and cfg.get("groq.api_key"):
+        engines.append("groq")
+    if mode == "yandex" or (mode == "auto" and cfg.get("stt.yandex_stt")):
+        engines.append("yandex")
+    for eng in engines:
+        if eng == "groq":
+            if _GROQ is None:
+                from ..llm.groq import GroqLLM
+                _GROQ = GroqLLM(cfg)
+            text = _GROQ.transcribe(dsp.wav_bytes(audio, sr))
+        else:
+            text = yandex_recognize(cfg, audio, sr)
+        if text:
+            return text
+    return None
 
 
 def yandex_recognize(cfg, audio: np.ndarray, sr: int = RATE) -> str | None:
@@ -260,13 +293,12 @@ def get_model(cfg):
 
 
 def recognize_pcm(cfg, pcm: np.ndarray, sr: int = RATE) -> str:
-    """Текст из записи (PCM int16). Сначала облако SpeechKit (если настроено), потом Vosk."""
+    """Текст из записи (PCM int16): облако (Groq Whisper / SpeechKit), если настроено, иначе Vosk."""
     if sr != RATE:
         pcm = dsp.resample(pcm, sr, RATE)
-    if cfg.get("yandex.api_key") or cfg.get("yandex.iam_token"):
-        text = yandex_recognize(cfg, pcm)
-        if text:
-            return text
+    text = cloud_recognize(cfg, pcm)
+    if text:
+        return _plain(text)
     try:
         from vosk import KaldiRecognizer
         rec = KaldiRecognizer(get_model(cfg), RATE)
