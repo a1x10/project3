@@ -1,0 +1,24 @@
+# systemd-юнит для бота. Установка:
+#   sudo cp deploy/self-healing-bot.service /etc/systemd/system/
+#   (поправь User и пути ниже)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now self-healing-bot
+#   journalctl -u self-healing-bot -f      # логи бота
+
+[Unit]
+Description=Self-Healing Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/self_healing_bot
+ExecStart=/opt/self_healing_bot/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+# В режиме APP_START_CMD приложение — дочерний процесс бота. KillMode=process оставляет его
+# работать при перезапуске самого бота, а новый экземпляр бота подхватит его по PID-файлу.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
