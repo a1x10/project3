@@ -45,7 +45,8 @@ class FakeGroq {
 }
 
 function setup(env = {}) {
-  const config = testConfig({ ADMIN_NUMBERS: '77015556677', WA_GROUP_IDS: GROUP, ...env });
+  // по умолчанию в тестах — текстовый режим (проверять содержимое проще); фото проверяются отдельно
+  const config = testConfig({ ADMIN_NUMBERS: '77015556677', WA_GROUP_IDS: GROUP, HOMEWORK_AS_IMAGE: 'false', ...env });
   const store = memoryStore();
   const wa = new FakeWA();
   wa.groups[GROUP] = { id: GROUP, subject: '7А класс', participants: [{ id: STUDENT }, { id: ADMIN, admin: 'admin' }] };
@@ -54,14 +55,15 @@ function setup(env = {}) {
   const homework = new HomeworkService({ client, store, config, now: TUESDAY_10AM });
   homework.today = () => '2025-10-14';
   const groq = new FakeGroq();
-  const logger = { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } };
+  const warnings = [];
+  const logger = { info() {}, warn(...args) { warnings.push(args); }, error() {}, debug() {}, child() { return this; } };
   const core = new BotCore({ config, store, wa, logger });
   core.today = () => '2025-10-14';
   const assistant = new Assistant({ groq, homework, config, logger });
   const scheduler = new Scheduler({ config, store, homework, wa, core, logger });
   const commands = new Commands({ core, homework, wa, scheduler, config, logger });
   const handler = new MessageHandler({ config, core, wa, homework, assistant, commands, logger });
-  return { config, store, wa, client, homework, groq, core, assistant, scheduler, commands, handler };
+  return { config, store, wa, client, homework, groq, core, assistant, scheduler, commands, handler, warnings };
 }
 
 describe('распознавание команд', () => {
@@ -420,5 +422,91 @@ describe('планировщик', () => {
     t.client.fail = new Error('ECONNRESET');
     for (let i = 0; i < 3; i += 1) await t.scheduler.runPoll();
     assert.ok(t.wa.sent.some((s) => s.jid === ADMIN && /BilimClass не отвечает/.test(s.content.text)));
+  });
+});
+
+describe('ДЗ фотографией', () => {
+  const at = (iso, hh, mm = 0) => ({ iso, minutes: hh * 60 + mm, weekday: ((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7) + 1 });
+  const photo = (t) => setup({ HOMEWORK_AS_IMAGE: 'true', ...t });
+  const isJpeg = (buf) => Buffer.isBuffer(buf) && buf[0] === 0xff && buf[1] === 0xd8;
+  const captions = (wa) => wa.sent.map((s) => s.content.caption || s.content.text);
+
+  it('!дз завтра — фото с подписью «Домашнее задание на завтра»', async () => {
+    const t = photo();
+    await t.handler.handle(incoming({ chat: GROUP, text: '!дз завтра' }));
+    const [msg] = t.wa.sent;
+    assert.ok(isJpeg(msg.content.image));
+    assert.equal(msg.content.caption, '📚 Домашнее задание на завтра');
+    assert.ok(msg.options.quoted, 'ответ на сообщение с командой');
+  });
+
+  it('день без ДЗ — короткий текст вместо пустой картинки', async () => {
+    const t = photo();
+    await t.handler.handle(incoming({ chat: GROUP, text: '!дз чт' }));
+    assert.equal(t.wa.texts()[0], '📚 Домашнего задания на четверг, 16.10 в дневнике нет 🎉');
+  });
+
+  it('первая рассылка — по фото на каждый день с ДЗ', async () => {
+    const t = photo();
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.deepEqual(captions(t.wa), [
+      '📚 Домашнее задание на завтра',
+      '📚 Домашнее задание на пятницу, 17.10',
+      '📚 Домашнее задание на понедельник, 20.10',
+    ]);
+    assert.ok(t.wa.sent.every((s) => isJpeg(s.content.image)));
+  });
+
+  it('дальше: фото на завтра + фото дней, где появилось новое ДЗ', async () => {
+    const t = photo();
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    t.wa.sent = [];
+    // ничего нового — только напоминание на завтра
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.deepEqual(captions(t.wa), ['📚 Домашнее задание на завтра']);
+    t.wa.sent = [];
+    // учитель выставил ДЗ на четверг и изменил на пятницу
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5';
+    t.client.weeks['2025-10-13'].days[4].subjects[0].homeworkBody = 'Читать стр. 40-60';
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.deepEqual(captions(t.wa), [
+      '📚 Домашнее задание на завтра',
+      '🆕 Новое домашнее задание на четверг, 16.10',
+      '✏️ Изменилось домашнее задание на пятницу, 17.10',
+    ]);
+  });
+
+  it('без напоминания на завтра и без нового — короткий текст', async () => {
+    const t = photo({ DIGEST_REMIND_TOMORROW: 'false' });
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    t.wa.sent = [];
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.deepEqual(captions(t.wa), ['✅ Проверил дневник после уроков — новых домашних заданий нет.']);
+  });
+
+  it('новое ДЗ вечером — фото дня с подписью «Новое домашнее задание»', async () => {
+    const t = photo();
+    t.scheduler.clock = () => at('2025-10-14', 15);
+    await t.scheduler.digestPlan(at('2025-10-14', 15));
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    t.scheduler.jobDone('digest', '2025-10-14');
+    await t.scheduler.runPoll();
+    t.wa.sent = [];
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5';
+    await t.scheduler.runPoll();
+    assert.deepEqual(captions(t.wa), ['🆕 Новое домашнее задание на четверг, 16.10']);
+    assert.ok(isJpeg(t.wa.sent[0].content.image));
+  });
+
+  it('вопрос ответом на фото с ДЗ от бота — картинку не скачиваем, ИИ берёт ДЗ из дневника', async () => {
+    const t = photo();
+    await t.handler.handle(incoming({
+      chat: GROUP, text: 'как решить алгебру?',
+      contextInfo: { stanzaId: 'BOTPHOTO', participant: '77000000000@s.whatsapp.net', quotedMessage: { imageMessage: { caption: '📚 Домашнее задание на завтра', mimetype: 'image/jpeg' } } },
+    }));
+    assert.equal(t.groq.calls.length, 1);
+    assert.equal(typeof t.groq.calls[0].messages[1].content, 'string', 'без картинки — текстовый запрос');
+    assert.match(t.groq.calls[0].messages[1].content, /Домашнее задание на завтра/);
+    assert.ok(!t.warnings.some((w) => String(w[1]).includes('фото')), 'попытки скачать фото не было');
   });
 });

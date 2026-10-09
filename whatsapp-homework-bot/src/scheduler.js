@@ -2,6 +2,7 @@
 // Работает «тиками» раз в 30 секунд — если бот был выключен в момент рассылки, он догонит её после запуска.
 import { BilimAuthError } from './bilimclass/client.js';
 import { formatChanges, formatDay, formatNewHomework, formatSchedule, formatWeek, formatWeekAhead } from './homework/format.js';
+import { dayMessage } from './homework/message.js';
 import { entryHash } from './homework/service.js';
 import { errText } from './logger.js';
 import { addDays, diffDays, formatClock, mondayOf, nowParts, onDay } from './utils/dates.js';
@@ -215,26 +216,69 @@ export class Scheduler {
     const fresh = this.classify(data.entries);
     const now = this.clock();
 
-    let text;
-    if (firstTime) {
-      text = formatWeekAhead(data);
-    } else {
-      if (!fresh.length && this.config.schedule.skipEmptyDigest && !force) {
-        this.logger.info('Новых ДЗ нет — рассылку пропускаю (SKIP_EMPTY_DIGEST)');
-        return;
-      }
-      text = formatNewHomework({ fresh, data, remindTomorrow: this.config.schedule.remindTomorrow, checkedAt: now.minutes });
-    }
+    const messages = this.config.features.homeworkImage
+      ? await this.digestPhotos({ data, fresh, firstTime, now, force })
+      : this.digestText({ data, fresh, firstTime, now, force });
+    if (!messages) return;
+
     for (const jid of targets) {
-      for (const part of splitMessage(text, 6000)) this.wa.sendText(jid, part, { persist: true }).catch(() => {});
+      for (const content of messages) this.wa.send(jid, content, {}, { persist: true }).catch(() => {});
     }
     // «Уже отправлено» запоминаем, только если рассылка ушла во все группы (а не !рассылка в одной из нескольких)
     if (this.digestTargets().every((jid) => targets.includes(jid))) this.markAnnounced(data.entries);
-    this.logger.info({ groups: targets.length, new: fresh.length, total: data.entries.length, firstTime }, 'Рассылка ДЗ отправлена в очередь');
+    this.logger.info(
+      { groups: targets.length, messages: messages.length, new: fresh.length, total: data.entries.length, firstTime },
+      'Рассылка ДЗ отправлена в очередь',
+    );
     if (this.config.features.sendFiles) {
       const withFiles = (firstTime ? data.entries : fresh).filter((e) => e.hasFiles);
       await this.sendFiles(withFiles, targets);
     }
+  }
+
+  // Текстовый вариант рассылки (HOMEWORK_AS_IMAGE=false)
+  digestText({ data, fresh, firstTime, now, force }) {
+    if (firstTime) return [{ text: formatWeekAhead(data) }];
+    if (!fresh.length && this.config.schedule.skipEmptyDigest && !force) {
+      this.logger.info('Новых ДЗ нет — рассылку пропускаю (SKIP_EMPTY_DIGEST)');
+      return null;
+    }
+    const text = formatNewHomework({ fresh, data, remindTomorrow: this.config.schedule.remindTomorrow, checkedAt: now.minutes });
+    return splitMessage(text, 6000).map((part) => ({ text: part }));
+  }
+
+  // Рассылка фотографиями: «Домашнее задание на завтра» + отдельное фото на каждый день, где появилось новое ДЗ.
+  // Новые и изменённые задания на картинке помечены «НОВОЕ» / «ИЗМЕНЕНО».
+  async digestPhotos({ data, fresh, firstTime, now, force }) {
+    const marks = firstTime ? new Map() : new Map(fresh.map((e) => [announceKey(e), e.kind]));
+    const remind = this.config.schedule.remindTomorrow;
+    const days = data.days.filter((day) => {
+      if (day.date === data.next && (remind || firstTime)) return true;
+      if (firstTime) return day.entries.length > 0;
+      return day.entries.some((e) => marks.has(announceKey(e)));
+    });
+    if (!days.length) {
+      if (this.config.schedule.skipEmptyDigest && !force) {
+        this.logger.info('Новых ДЗ нет — рассылку пропускаю (SKIP_EMPTY_DIGEST)');
+        return null;
+      }
+      return [{ text: '✅ Проверил дневник после уроков — новых домашних заданий нет.' }];
+    }
+    const messages = [];
+    for (const day of days) {
+      const dayMarks = day.entries.map((e) => marks.get(announceKey(e))).filter(Boolean);
+      let kind = 'digest';
+      if (day.date !== data.next && dayMarks.length) kind = dayMarks.every((m) => m === 'changed') ? 'changed' : 'new';
+      messages.push(await dayMessage(day, data.today, {
+        kind,
+        marks,
+        markKey: announceKey,
+        className: this.homework.client.session?.className,
+        checkedAt: formatClock(now.minutes),
+        logger: this.logger,
+      }));
+    }
+    return messages;
   }
 
   async morning(now) {
@@ -290,12 +334,38 @@ export class Scheduler {
     if (!toAdd.length && !toChange.length) return total;
 
     const targets = this.digestTargets();
-    const text = formatChanges({ added: toAdd, changed: toChange }, today);
     this.logger.info({ added: toAdd.length, changed: toChange.length }, 'Найдены изменения в дневнике — отправляю');
-    for (const jid of targets) this.wa.sendText(jid, text, { persist: true, maxAgeMs: 12 * 3600 * 1000 }).catch(() => {});
+    for (const content of await this.changeMessages(toAdd, toChange, today, now)) {
+      for (const jid of targets) this.wa.send(jid, content, {}, { persist: true, maxAgeMs: 12 * 3600 * 1000 }).catch(() => {});
+    }
     this.markAnnounced([...toAdd, ...toChange], { ready: false });
     if (this.config.features.sendFiles) await this.sendFiles([...toAdd, ...toChange].filter((e) => e.hasFiles), targets);
     return total;
+  }
+
+  // Сообщения о новых/изменённых ДЗ: фото дня (с пометками) или текст
+  async changeMessages(added, changed, today, now) {
+    if (!this.config.features.homeworkImage) return [{ text: formatChanges({ added, changed }, today) }];
+    const marks = new Map([...added.map((e) => [announceKey(e), 'new']), ...changed.map((e) => [announceKey(e), 'changed'])]);
+    const all = [...added, ...changed];
+    const dates = [...new Set(all.map((e) => e.dueDate).filter(Boolean))].sort();
+    const messages = [];
+    for (const date of dates) {
+      const view = await this.homework.dayView(date);
+      const kinds = all.filter((e) => e.dueDate === date).map((e) => marks.get(announceKey(e)));
+      messages.push(await dayMessage(view, today, {
+        kind: kinds.every((k) => k === 'changed') ? 'changed' : 'new',
+        marks,
+        markKey: announceKey,
+        className: this.homework.client.session?.className,
+        checkedAt: formatClock(now.minutes),
+        logger: this.logger,
+      }));
+    }
+    // задания без известной даты сдачи — текстом
+    const undated = (list) => list.filter((e) => !e.dueDate);
+    if (undated(all).length) messages.push({ text: formatChanges({ added: undated(added), changed: undated(changed) }, today) });
+    return messages;
   }
 
   // Скачать и отправить файлы к ДЗ. Каждый файл отправляется в группу один раз (если не force).

@@ -139,6 +139,8 @@ export function buildConfig(env = process.env) {
       // due — ДЗ записано в дневнике на день, к которому его нужно сделать (так показывает BilimClass);
       // assigned — ДЗ записано на урок, где его задали, срок — следующий урок по предмету
       homeworkAttachedTo: oneOf(env, 'HOMEWORK_ATTACHED_TO', 'due', ['due', 'assigned']),
+      // присылать ДЗ картинкой (фото с карточкой) вместо текста
+      homeworkImage: bool(env, 'HOMEWORK_AS_IMAGE', true),
       sendFiles: bool(env, 'SEND_FILES', true),
       maxFileMb: int(env, 'MAX_FILE_MB', 30, { min: 1, max: 100 }),
       commandPrefix: str(env, 'COMMAND_PREFIX', '!'),

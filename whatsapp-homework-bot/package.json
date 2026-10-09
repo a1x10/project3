@@ -14,6 +14,7 @@
     "test": "node --test --test-reporter=spec \"tests/**/*.test.js\""
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.10",
     "baileys": "7.0.0-rc14",
     "pino": "^9.14.0",
     "pino-pretty": "^13.2.0",
