@@ -2,6 +2,7 @@
 // очередь отправки (сообщения не теряются при обрывах связи), кэш данных групп.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import path from 'node:path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -21,6 +22,7 @@ export class WhatsAppConnection extends EventEmitter {
   constructor({ config, store, logger, socketOptions = {} }) {
     super();
     this.socketOptions = socketOptions; // доп. параметры Baileys (например, agent для прокси)
+    this.outboxDir = path.join(config.dataDir, 'outbox');
     this.setMaxListeners(50);
     this.config = config;
     this.store = store;
@@ -47,10 +49,7 @@ export class WhatsAppConnection extends EventEmitter {
 
   async start() {
     fs.mkdirSync(this.config.whatsapp.authDir, { recursive: true });
-    // Восстанавливаем неотправленные важные сообщения (например, рассылку перед перезапуском)
-    for (const item of this.store.data.outbox) {
-      this.queue.push({ ...item, content: { text: item.text }, options: {}, resolve: () => {}, reject: () => {}, attempts: 0 });
-    }
+    this.restoreOutbox();
     try {
       const { version } = await Promise.race([fetchLatestBaileysVersion(), sleep(10000).then(() => ({}))]);
       this.version = version || null;
@@ -59,6 +58,31 @@ export class WhatsAppConnection extends EventEmitter {
     }
     await this.connect();
     this.pump();
+  }
+
+  // Восстанавливаем неотправленные важные сообщения (рассылку перед перезапуском), в том числе фото
+  restoreOutbox() {
+    fs.mkdirSync(this.outboxDir, { recursive: true });
+    const keepFiles = new Set();
+    for (const item of this.store.data.outbox) {
+      let content;
+      if (item.imageFile) {
+        try {
+          content = { image: fs.readFileSync(item.imageFile), caption: item.caption, mimetype: item.mimetype || 'image/jpeg' };
+          keepFiles.add(item.imageFile);
+        } catch {
+          continue; // картинка потерялась — пропускаем
+        }
+      } else {
+        content = { text: item.text };
+      }
+      this.queue.push({ ...item, content, options: {}, resolve: () => {}, reject: () => {}, attempts: 0 });
+    }
+    // удаляем картинки, которые уже никому не нужны
+    for (const name of fs.readdirSync(this.outboxDir)) {
+      const file = path.join(this.outboxDir, name);
+      if (!keepFiles.has(file)) fs.rmSync(file, { force: true });
+    }
   }
 
   async connect() {
@@ -215,6 +239,18 @@ export class WhatsAppConnection extends EventEmitter {
       if (persist && typeof content.text === 'string') {
         item.persisted = true;
         this.store.update((s) => s.outbox.push({ id: item.id, jid, text: content.text, createdAt: item.createdAt, maxAgeMs }));
+      } else if (persist && Buffer.isBuffer(content.image)) {
+        // фото тоже переживает перезапуск: кладём файл на диск до отправки
+        try {
+          item.imageFile = path.join(this.outboxDir, `${item.id}.jpg`);
+          fs.writeFileSync(item.imageFile, content.image);
+          item.persisted = true;
+          this.store.update((s) => s.outbox.push({
+            id: item.id, jid, imageFile: item.imageFile, caption: content.caption || '', mimetype: content.mimetype, createdAt: item.createdAt, maxAgeMs,
+          }));
+        } catch (error) {
+          this.logger.warn({ err: error.message }, 'Не удалось сохранить фото в очередь на диске');
+        }
       }
       this.queue.push(item);
       this.pump();
@@ -226,6 +262,7 @@ export class WhatsAppConnection extends EventEmitter {
   }
 
   dropFromOutbox(item) {
+    if (item.imageFile) fs.rmSync(item.imageFile, { force: true });
     if (!item.persisted && !this.store.data.outbox.some((o) => o.id === item.id)) return;
     this.store.update((s) => {
       s.outbox = s.outbox.filter((o) => o.id !== item.id);

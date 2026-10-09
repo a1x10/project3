@@ -152,7 +152,9 @@ export class MessageHandler {
 
     // Фото: своё или в сообщении, на которое отвечают
     let image = null;
-    const wantsImage = this.config.ai.images && (ctx.hasImage || (ctx.quoted?.hasImage && explicit));
+    // ответ на фото с ДЗ от самого бота — картинку не скачиваем: всё ДЗ у ИИ и так есть из дневника
+    const quotedFromBot = Boolean(ctx.quoted && (isBotJid(ctx.quoted.participant, this.wa.me) || this.botMessageIds.has(ctx.quoted.id)));
+    const wantsImage = this.config.ai.images && (ctx.hasImage || (ctx.quoted?.hasImage && explicit && !quotedFromBot));
     if (!explicit && auto) {
       if (!question) return; // фото без подписи в группе — не наше дело
       if (this.core.usage('classifier') >= this.config.ai.dailyLimit * 3) return;

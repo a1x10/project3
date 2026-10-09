@@ -1,5 +1,6 @@
 // Команды бота: !дз, !расписание, !помощь, админ-команды.
 import { formatDay, formatSchedule, formatSubject, formatWeek } from '../homework/format.js';
+import { dayMessage } from '../homework/message.js';
 import { BilimAuthError } from '../bilimclass/client.js';
 import { addDays, mondayOf, nowParts, onDay, parseDayArg, formatClock } from '../utils/dates.js';
 import { truncate } from '../utils/text.js';
@@ -196,6 +197,11 @@ export class Commands {
     }
     day = day || addDays(today, 1);
     const view = await this.homework.dayView(day);
+    if (this.config.features.homeworkImage) {
+      const content = await dayMessage(view, today, { className: this.homework.client.session?.className, logger: this.logger });
+      await this.wa.send(ctx.chat, content, { quoted: ctx.raw }, { maxAgeMs: 10 * 60 * 1000 });
+      return true;
+    }
     await this.reply(ctx, formatDay(view, today, { footer: false }));
     return true;
   }
