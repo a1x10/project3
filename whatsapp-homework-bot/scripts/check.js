@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.js';
 import { formatDay, formatWeek } from '../src/homework/format.js';
 import { HomeworkService } from '../src/homework/service.js';
 import { Store } from '../src/store.js';
-import { mondayOf, toDMY } from '../src/utils/dates.js';
+import { formatClock, mondayOf, toDMY } from '../src/utils/dates.js';
 
 const ok = (s) => console.log(`✅ ${s}`);
 const bad = (s) => console.log(`❌ ${s}`);
@@ -25,6 +25,12 @@ try {
   ok(`Вход выполнен: ${session.fullName || 'ученик'}, класс ${session.className || '?'}, ${session.schoolName || ''}`);
   info(`schoolId=${session.schoolId} groupId=${session.groupId} учебный год=${session.eduYear}`);
   const today = homework.today();
+  const end = await homework.lessonsEnd(today, { fresh: true });
+  if (config.schedule.digestMode === 'after_lessons') {
+    info(end != null
+      ? `Сегодня уроки до ${formatClock(end)} → рассылка новых ДЗ в ${formatClock(Math.min(end + config.schedule.digestDelayMinutes, 1439))}`
+      : `Сегодня уроков нет → рассылка (если завтра учебный день) в ${formatClock(config.schedule.digestTime)}`);
+  }
   const next = await homework.nextSchoolDay(today);
   if (next) {
     ok(`Ближайший учебный день: ${toDMY(next)}`);

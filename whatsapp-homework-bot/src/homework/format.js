@@ -1,5 +1,5 @@
 // Оформление сообщений для WhatsApp (*жирный*, _курсив_).
-import { addDays, humanDay, onDay, toDM, WEEKDAYS_SHORT, weekdayOf } from '../utils/dates.js';
+import { addDays, formatClock, humanDay, onDay, toDM, WEEKDAYS_SHORT, weekdayOf } from '../utils/dates.js';
 import { truncate } from '../utils/text.js';
 
 const lessonWord = (n) => {
@@ -118,3 +118,65 @@ export function formatSubject(result, query, todayIso) {
   }
   return lines.join('\n');
 }
+
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+const QUESTION_HINT = '💬 Есть вопрос по заданию? Напишите в чат — помогу разобраться.';
+
+function dayTitle(iso, todayIso) {
+  return capital(humanDay(iso, todayIso));
+}
+
+// Ежедневное сообщение после уроков: только новые/изменённые задания + короткое напоминание на завтра
+// fresh: [{ ...entry, kind: 'new' | 'changed' }], data: результат HomeworkService.digestData()
+export function formatNewHomework({ fresh, data, remindTomorrow = true, checkedAt }) {
+  const { today } = data;
+  const lines = [`📚 *Домашнее задание · ${WEEKDAYS_SHORT[weekdayOf(today) - 1]} ${toDM(today)}*`];
+  lines.push(`_Проверил дневник BilimClass${checkedAt != null ? ` в ${formatClock(checkedAt)}` : ''} — данные свежие_`);
+
+  if (fresh.length) {
+    const anyChanged = fresh.some((e) => e.kind === 'changed');
+    const title = anyChanged ? 'Новые и изменённые задания' : fresh.length === 1 ? 'Новое задание' : 'Новые задания';
+    lines.push('', `🆕 *${title}${fresh.length > 1 ? ` (${fresh.length})` : ''}:*`);
+    for (const e of fresh) {
+      const note = e.kind === 'changed' ? ' ✏️ _изменено_' : '';
+      lines.push('', `*${e.subject}* — ${onDay(e.dueDate, today)}${note}`, entryBody(e, 1500));
+    }
+  } else {
+    lines.push('', '✅ Новых заданий в дневнике с прошлой проверки нет.');
+  }
+
+  if (remindTomorrow && data.next) {
+    const nextDay = data.days.find((d) => d.date === data.next);
+    const freshKeys = new Set(fresh.map((e) => `${e.lessonDate}|${e.key}`));
+    const rest = (nextDay?.entries || []).filter((e) => !freshKeys.has(`${e.lessonDate}|${e.key}`));
+    if (rest.length) {
+      lines.push('', `📌 *Не забудьте ${onDay(data.next, today)}:*`);
+      for (const e of rest) {
+        const short = (e.text || e.books[0] || 'см. BilimClass').replace(/\s*\n+\s*/g, '; ');
+        lines.push(`• *${e.subject}:* ${truncate(short, 160)}${e.hasFiles ? ' 📎' : ''}`);
+      }
+    } else if (nextDay && !nextDay.entries.length) {
+      lines.push('', `📌 ${capital(onDay(data.next, today))} — ДЗ в дневнике нет 🎉`);
+    }
+  }
+  lines.push('', QUESTION_HINT);
+  return lines.join('\n');
+}
+
+// Самая первая рассылка: полная картина на неделю вперёд (дальше — только новое)
+export function formatWeekAhead(data) {
+  const { today } = data;
+  const lines = ['📚 *Домашнее задание на неделю вперёд*', '_Дальше буду присылать после уроков только новые задания._'];
+  for (const day of data.days) {
+    lines.push('', `━━ *${dayTitle(day.date, today)}* ━━`);
+    if (!day.entries.length) {
+      lines.push('ДЗ пока нет');
+      continue;
+    }
+    day.entries.forEach((e, i) => lines.push(`*${i + 1}. ${e.subject}*`, entryBody(e, 800)));
+  }
+  if (!data.days.length) lines.push('', 'В ближайшие дни уроков в дневнике нет.');
+  lines.push('', QUESTION_HINT);
+  return lines.join('\n');
+}
+

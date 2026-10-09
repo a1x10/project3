@@ -100,6 +100,27 @@ describe('HomeworkService', () => {
     assert.equal(client.calls.filter((m) => m === '2025-10-13').length, 1);
   });
 
+  it('свежие данные: при ошибке BilimClass старые данные не подставляются', async () => {
+    const { service, client } = makeService({ weeks: { '2025-10-13': WEEK1 } });
+    await service.dayView('2025-10-15');
+    client.fail = new Error('BilimClass down');
+    await assert.rejects(() => service.dayView('2025-10-15', { fresh: true }), /down/);
+    await assert.rejects(() => service.dayView('2025-10-15'), /down/, 'после ошибки кэш сброшен');
+  });
+
+  it('CACHE_SECONDS=0 — каждый запрос идёт в дневник', async () => {
+    const { service, client } = makeService({ weeks: { '2025-10-13': WEEK1 }, env: { CACHE_SECONDS: '0' } });
+    await service.dayView('2025-10-15');
+    await service.dayView('2025-10-15');
+    assert.ok(client.calls.length >= 2);
+  });
+
+  it('время окончания уроков', async () => {
+    const { service } = makeService({ weeks: { '2025-10-13': WEEK1 } });
+    assert.equal(await service.lessonsEnd('2025-10-15'), 9 * 60 + 45);
+    assert.equal(await service.lessonsEnd('2025-10-18'), null);
+  });
+
   it('режим assigned: срок ДЗ — следующий урок по предмету', async () => {
     const { service } = makeService({ weeks: { '2025-10-13': WEEK1, '2025-10-20': WEEK2 }, env: { HOMEWORK_ATTACHED_TO: 'assigned' } });
     // ДЗ по алгебре с урока в среду 15.10 нужно сдать к пятнице 17.10

@@ -111,6 +111,14 @@ export function buildConfig(env = process.env) {
     },
 
     schedule: {
+      // after_lessons — рассылка, когда закончился последний урок (по расписанию из дневника);
+      // fixed — каждый день в DIGEST_TIME; off — без ежедневной рассылки
+      digestMode: oneOf(env, 'DIGEST_MODE', 'after_lessons', ['after_lessons', 'fixed', 'off']),
+      // через сколько минут после последнего урока отправлять (учителя успевают заполнить дневник)
+      digestDelayMinutes: int(env, 'DIGEST_DELAY_MINUTES', 15, { min: 0, max: 6 * 60 }),
+      // на сколько дней вперёд показывать ДЗ в рассылке (7 = на каждый день недели, 1 = только на завтра)
+      digestDaysAhead: int(env, 'DIGEST_DAYS_AHEAD', 7, { min: 1, max: 14 }),
+      // в режиме fixed — время рассылки; в режиме after_lessons — время для дней без уроков (вечер воскресенья)
       digestTime: parseClock(str(env, 'DIGEST_TIME', '18:00'), 'DIGEST_TIME'),
       morningTime: parseClock(str(env, 'MORNING_TIME', ''), 'MORNING_TIME'),
       weeklyTime: parseClock(str(env, 'WEEKLY_TIME', ''), 'WEEKLY_TIME'),
@@ -120,6 +128,11 @@ export function buildConfig(env = process.env) {
       catchUpMinutes: int(env, 'CATCH_UP_MINUTES', 180, { min: 0, max: 24 * 60 }),
       notifyChanges: bool(env, 'NOTIFY_CHANGES', true),
       skipEmptyDigest: bool(env, 'SKIP_EMPTY_DIGEST', false),
+      // в рассылке коротко напомнить, что задано на завтра (кроме уже показанного как новое)
+      remindTomorrow: bool(env, 'DIGEST_REMIND_TOMORROW', true),
+      // сколько секунд можно переиспользовать ответ дневника для команд и ИИ (0 = всегда спрашивать заново).
+      // Рассылка и проверка изменений всегда берут данные напрямую из BilimClass.
+      cacheSeconds: int(env, 'CACHE_SECONDS', 60, { min: 0, max: 3600 }),
     },
 
     features: {

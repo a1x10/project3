@@ -5,8 +5,6 @@ import { addDays, mondayOf, nowParts, toDM, toDMY, WEEKDAYS, WEEKDAYS_SHORT, wee
 import { normalize, truncate } from '../utils/text.js';
 import { findSubjects } from './subjects.js';
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
-
 const MIME = {
   pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -19,6 +17,13 @@ const MIME = {
 export function entryHash(entry) {
   const raw = `${normalize(entry.text)}|${entry.books.map(normalize).join(';')}|${entry.hasFiles ? 1 : 0}`;
   return createHash('sha1').update(raw).digest('hex').slice(0, 12);
+}
+
+const isSchool = (day) => Boolean(day && !day.isHoliday && day.lessons.length > 0);
+
+function toMinutes(clock) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(clock || '');
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
 export class HomeworkService {
@@ -38,9 +43,13 @@ export class HomeworkService {
     return nowParts(this.config.timezone, this.now()).iso;
   }
 
+  // Неделя дневника. fresh — обязательно свежие данные из BilimClass.
+  // Иначе можно переиспользовать ответ не старше CACHE_SECONDS (чтобы один вопрос к ИИ не делал 5 одинаковых запросов).
+  // Старые данные при недоступности BilimClass НЕ подставляются — лучше честная ошибка, чем устаревшее ДЗ.
   async week(mondayIso, { fresh = false } = {}) {
+    const ttlMs = fresh ? 0 : this.config.schedule.cacheSeconds * 1000;
     const cached = this.cache.get(mondayIso);
-    if (!fresh && cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.days;
+    if (cached && Date.now() - cached.at < ttlMs) return cached.days;
     if (this.inflight.has(mondayIso)) return this.inflight.get(mondayIso);
     const promise = (async () => {
       try {
@@ -52,11 +61,7 @@ export class HomeworkService {
         return days;
       } catch (error) {
         this.lastError = error;
-        // если сервер недоступен, лучше показать чуть устаревшие данные, чем ничего
-        if (cached && !fresh) {
-          this.logger?.warn({ err: error.message }, 'BilimClass недоступен — использую кэш');
-          return cached.days;
-        }
+        this.cache.delete(mondayIso);
         throw error;
       } finally {
         this.inflight.delete(mondayIso);
@@ -121,9 +126,41 @@ export class HomeworkService {
     return { ...day, entries };
   }
 
-  async isSchoolDay(iso) {
-    const [day] = await this.days(iso, iso);
-    return !day.isHoliday && day.lessons.length > 0;
+  async isSchoolDay(iso, opts = {}) {
+    const [day] = await this.days(iso, iso, opts);
+    return isSchool(day);
+  }
+
+  // Во сколько (минуты от полуночи) заканчивается последний урок дня; null — уроков нет или время неизвестно
+  async lessonsEnd(iso, opts = {}) {
+    const [day] = await this.days(iso, iso, opts);
+    if (!isSchool(day)) return null;
+    const ends = day.lessons.map((l) => toMinutes(l.end) ?? (toMinutes(l.start) != null ? toMinutes(l.start) + 45 : null)).filter((m) => m != null);
+    return ends.length ? Math.max(...ends) : null;
+  }
+
+  // Данные для ежедневной рассылки: один свежий запрос к BilimClass и ДЗ на каждый учебный день вперёд
+  async digestData({ daysAhead = this.config.schedule.digestDaysAhead, fresh = true } = {}) {
+    const today = this.today();
+    const lookBack = this.config.features.homeworkAttachedTo === 'assigned' ? 14 : 0;
+    // 3 недели вперёд — чтобы найти следующий учебный день даже после каникул
+    const all = await this.days(addDays(today, -lookBack), addDays(today, 21), { fresh });
+    const todayDay = all.find((d) => d.date === today);
+    const next = all.find((d) => d.date > today && isSchool(d))?.date || null;
+    if (!next) return { today, todaySchool: isSchool(todayDay), next: null, days: [], entries: [] };
+
+    // окно: каждый день недели вперёд (и обязательно ближайший учебный день, даже после каникул)
+    const windowEnd = addDays(today, daysAhead);
+    const last = windowEnd > next ? windowEnd : next;
+    const byStart = (a, b) => a.dueDate.localeCompare(b.dueDate) || (a.start || '99').localeCompare(b.start || '99');
+    const entries = [...this.withDueDates(all), ...this.manualEntries(addDays(today, 1), last)]
+      .filter((e) => e.dueDate && e.dueDate > today && e.dueDate <= last)
+      .sort(byStart);
+    const days = all
+      .filter((d) => d.date >= next && d.date <= last)
+      .map((d) => ({ ...d, entries: entries.filter((e) => e.dueDate === d.date) }))
+      .filter((d) => isSchool(d) || d.entries.length);
+    return { today, todaySchool: isSchool(todayDay), next, days, entries };
   }
 
   // Ближайший день после afterIso, когда есть уроки (пропускает выходные и каникулы)
