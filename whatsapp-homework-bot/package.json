@@ -1,0 +1,22 @@
+{
+  "name": "whatsapp-homework-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp-бот: домашнее задание из BilimClass в группу класса + ИИ-помощник на Groq",
+  "type": "module",
+  "main": "src/index.js",
+  "private": true,
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node scripts/check.js",
+    "test": "node --test --test-reporter=spec \"tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "pino": "^9.14.0",
+    "pino-pretty": "^13.2.0",
+    "qrcode": "^1.5.4"
+  }
+}

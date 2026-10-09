@@ -1,0 +1,29 @@
+{
+  "date": "13.10.2025",
+  "days": [
+    {
+      "date": "13 октября",
+      "day": "Понедельник",
+      "isHoliday": false,
+      "subjects": [
+        { "label": "Алгебра", "timeslot": "08:00 - 08:45", "cabinet": "204", "teacherFio": "Иванова А. Б.", "theme": "Квадратные уравнения", "homeworkBody": "<p>№ 245, 247</p><p>Повторить &laquo;формулы&raquo;</p>", "hasFiles": false, "homeworkBooks": [], "homeworkUuid": "hw-1" },
+        { "label": "Русский язык", "timeslot": "08:55 - 09:40", "cabinet": "301", "homeworkBody": "Упр. 112", "hasFiles": true, "homeworkUuid": "hw-2" },
+        { "label": "Физическая культура", "timeslot": "09:50 - 10:35", "homeworkBody": null, "hasFiles": false }
+      ]
+    },
+    {
+      "date": "14 октября",
+      "isHoliday": false,
+      "subjects": [
+        { "label": "Физика", "timeslot": "08:00 - 08:45", "homeworkBody": "§ 12, вопросы 1-3", "homeworkUuid": "hw-3" },
+        { "label": "Английский язык", "timeslot": "08:55 - 09:40", "homeworkBody": "", "homeworkBooks": [{ "name": "Excel 7", "pages": "34", "exercises": "2, 3" }] },
+        { "label": "Английский язык", "timeslot": "09:50 - 10:35", "homeworkBody": "", "homeworkBooks": [{ "name": "Excel 7", "pages": "34", "exercises": "2, 3" }] }
+      ]
+    },
+    { "date": "15 октября", "isHoliday": false, "subjects": [ { "label": "Алгебра", "timeslot": "08:00 - 08:45", "homeworkBody": "№ 250" } ] },
+    { "date": "16 октября", "isHoliday": false, "subjects": [] },
+    { "date": "17 октября", "isHoliday": true, "subjects": [] },
+    { "date": "18 октября", "isHoliday": false, "subjects": [] },
+    { "date": "19 октября", "isHoliday": false, "subjects": [] }
+  ]
+}
