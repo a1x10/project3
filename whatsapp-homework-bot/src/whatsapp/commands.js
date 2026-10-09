@@ -85,7 +85,7 @@ export class Commands {
         `${p}привязать / ${p}отвязать — присылать ДЗ в эту группу`,
         `${p}автоответ вкл|выкл — ИИ отвечает сам на вопросы в группе`,
         `${p}авторассылка вкл|выкл — ежедневная рассылка ДЗ в эту группу`,
-        `${p}рассылка — отправить ДЗ сейчас`,
+        `${p}рассылка — проверить дневник и прислать новые ДЗ сейчас`,
         `${p}обновить — проверить дневник на изменения`,
         `${p}добавить завтра Алгебра: №250 — добавить ДЗ вручную`,
         `${p}удалить N — удалить добавленное вручную`,
@@ -253,11 +253,10 @@ export class Commands {
       /* без названия */
     }
     this.core.bindGroup(ctx.chat, name);
-    const digest = this.config.schedule.digestTime;
     await this.reply(
       ctx,
       `✅ Готово! Группа «${name || 'эта'}» привязана.\n\n` +
-        (digest != null ? `• Каждый день в ${formatClock(digest)} пришлю ДЗ на следующий учебный день.\n` : '') +
+        (this.digestDescription() ? `• ${this.digestDescription()}\n` : '') +
         (this.config.schedule.notifyChanges ? '• Сообщу, когда в дневнике появится новое ДЗ или его изменят.\n' : '') +
         (this.config.ai.mode !== 'off' ? '• Отвечу на вопросы по домашке — пишите в чат.\n' : '') +
         '\nВсе команды: !помощь',
@@ -341,6 +340,31 @@ export class Commands {
     return true;
   }
 
+  digestDescription() {
+    const { digestMode, digestDelayMinutes, digestTime } = this.config.schedule;
+    if (digestMode === 'off') return '';
+    const when = digestMode === 'after_lessons'
+      ? `после уроков (через ${digestDelayMinutes} мин после последнего урока)`
+      : `в ${formatClock(digestTime)}`;
+    return `Каждый учебный день ${when} проверю дневник и пришлю новые ДЗ — только то, что ещё не присылал.`;
+  }
+
+  digestStatus() {
+    if (this.config.schedule.digestMode === 'off') return '🕕 Рассылка выключена';
+    const plan = this.scheduler.plan;
+    const today = this.homework.today();
+    const last = this.core.store.data.jobs.digest;
+    let todayText = '';
+    if (last === today) todayText = 'сегодня уже отправлена';
+    else if (plan?.date === today && plan.at != null) {
+      todayText = plan.source === 'lessons'
+        ? `сегодня в ${formatClock(plan.at)} (уроки до ${formatClock(plan.lessonsEnd)})`
+        : `сегодня в ${formatClock(plan.at)}`;
+    }
+    return `🕕 Рассылка: ${this.config.schedule.digestMode === 'after_lessons' ? 'после уроков' : formatClock(this.config.schedule.digestTime)}` +
+      `${todayText ? `, ${todayText}` : ''}${last && last !== today ? `, последняя: ${last}` : ''}`;
+  }
+
   async statusText() {
     const s = this.homework.status();
     const session = s.session || {};
@@ -355,7 +379,7 @@ export class Commands {
       `👥 Группы для ДЗ: ${targets.length ? targets.join(', ') : 'нет — напишите !привязать в группе'}`,
       `🧠 ИИ: ${this.config.ai.mode === 'off' ? 'выключен' : `${this.config.ai.mode}, ответов сегодня: ${this.core.usage('ai')}/${this.config.ai.dailyLimit}`}`,
       `📬 В очереди сообщений: ${this.wa.queue.length}`,
-      this.config.schedule.digestTime != null ? `🕕 Рассылка: ${formatClock(this.config.schedule.digestTime)}, последняя: ${this.core.store.data.jobs.digest || '—'}` : '🕕 Рассылка выключена',
+      this.digestStatus(),
     ].filter(Boolean).join('\n');
   }
 }

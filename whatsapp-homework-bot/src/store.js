@@ -9,6 +9,8 @@ const DEFAULT_STATE = () => ({
   snapshots: {}, // 'YYYY-MM-DD' -> { itemKey: hash } — для поиска новых/изменённых ДЗ
   baselineReady: false,
   jobs: {}, // имя задачи -> дата последнего запуска 'YYYY-MM-DD' или timestamp
+  announced: {}, // 'дата|задание' -> hash — какие ДЗ уже отправлены в группу (чтобы не повторять)
+  announcedReady: false,
   sentFiles: {}, // ключ файла -> timestamp отправки
   manual: [], // ДЗ, добавленные вручную командой
   outbox: [], // неотправленные сообщения (переживают перезапуск)
@@ -83,6 +85,9 @@ export class Store {
     this.update((s) => {
       for (const date of Object.keys(s.snapshots)) {
         if (Date.parse(`${date}T00:00:00Z`) < today - 14 * DAY) delete s.snapshots[date];
+      }
+      for (const key of Object.keys(s.announced)) {
+        if (Date.parse(`${key.slice(0, 10)}T00:00:00Z`) < today - 21 * DAY) delete s.announced[key];
       }
       for (const [key, ts] of Object.entries(s.sentFiles)) {
         if (ts < Date.now() - 30 * DAY) delete s.sentFiles[key];

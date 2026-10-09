@@ -50,7 +50,7 @@ function setup(env = {}) {
   const wa = new FakeWA();
   wa.groups[GROUP] = { id: GROUP, subject: '7А класс', participants: [{ id: STUDENT }, { id: ADMIN, admin: 'admin' }] };
   wa.groups[OTHER_GROUP] = { id: OTHER_GROUP, subject: 'Футбол', participants: [{ id: STUDENT }] };
-  const client = new FakeBilimClient(WEEKS);
+  const client = new FakeBilimClient(structuredClone(WEEKS)); // копия: тесты меняют дневник
   const homework = new HomeworkService({ client, store, config, now: TUESDAY_10AM });
   homework.today = () => '2025-10-14';
   const groq = new FakeGroq();
@@ -240,43 +240,179 @@ describe('обработка сообщений', () => {
 });
 
 describe('планировщик', () => {
-  it('рассылка в будний вечер — ДЗ на следующий учебный день', async () => {
+  // «сейчас» для планировщика
+  const at = (iso, hh, mm = 0) => ({ iso, minutes: hh * 60 + mm, weekday: ((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7) + 1 });
+
+  it('время рассылки — через 15 минут после последнего урока', async () => {
     const t = setup();
-    await t.scheduler.dailyDigest({ iso: '2025-10-14', minutes: 18 * 60, weekday: 2 });
-    assert.equal(t.wa.sent.length, 1);
-    assert.equal(t.wa.sent[0].jid, GROUP);
-    assert.match(t.wa.texts()[0], /ДЗ на завтра, среду, 15\.10/);
+    // вторник: один урок 08:00–08:45 → рассылка в 09:00
+    let plan = await t.scheduler.digestPlan(at('2025-10-14', 7));
+    assert.equal(plan.source, 'lessons');
+    assert.equal(plan.lessonsEnd, 8 * 60 + 45);
+    assert.equal(plan.at, 9 * 60);
+    // среда: два урока, последний до 09:45 → 10:00
+    plan = await t.scheduler.digestPlan(at('2025-10-15', 7));
+    assert.equal(plan.at, 10 * 60);
+    // воскресенье: уроков нет → DIGEST_TIME (18:00)
+    plan = await t.scheduler.digestPlan(at('2025-10-19', 7));
+    assert.equal(plan.source, 'fallback');
+    assert.equal(plan.at, 18 * 60);
   });
 
-  it('в пятницу — ДЗ на понедельник, в субботу — тишина', async () => {
+  it('режим fixed и своя задержка после уроков', async () => {
+    let t = setup({ DIGEST_MODE: 'fixed', DIGEST_TIME: '19:30' });
+    assert.equal((await t.scheduler.digestPlan(at('2025-10-14', 7))).at, 19 * 60 + 30);
+    t = setup({ DIGEST_DELAY_MINUTES: '0' });
+    assert.equal((await t.scheduler.digestPlan(at('2025-10-14', 7))).at, 8 * 60 + 45);
+  });
+
+  it('BilimClass недоступен — рассылка по запасному времени, план пересчитается позже', async () => {
     const t = setup();
+    t.client.fail = new Error('down');
+    const plan = await t.scheduler.digestPlan(at('2025-10-14', 7));
+    assert.equal(plan.source, 'error');
+    assert.equal(plan.at, 18 * 60);
+  });
+
+  it('первая рассылка — ДЗ на каждый день недели вперёд', async () => {
+    const t = setup();
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    const text = t.wa.texts()[0];
+    assert.match(text, /Домашнее задание на неделю вперёд/);
+    assert.match(text, /Завтра \(среда, 15\.10\)[\s\S]*№ 250[\s\S]*Упр\. 5/);
+    assert.match(text, /Послезавтра \(четверг, 16\.10\)\* ━━\nДЗ пока нет/);
+    assert.match(text, /Пятница, 17\.10[\s\S]*Читать стр\. 40-55/);
+    assert.match(text, /Понедельник, 20\.10[\s\S]*№ 300/);
+    assert.ok(!/№ 1\b/.test(text), 'прошедшие дни не показываются');
+  });
+
+  it('дальше — только новые ДЗ, без повторов старых + напоминание на завтра', async () => {
+    const t = setup();
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+
+    // ничего не поменялось
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    let text = t.wa.texts()[1];
+    assert.match(text, /Новых заданий в дневнике с прошлой проверки нет/);
+    assert.match(text, /📌 \*Не забудьте на завтра, среду, 15\.10:\*\n• \*Алгебра:\* № 250\n• \*Русский язык:\* Упр\. 5/);
+
+    // учитель выставил ДЗ по истории и изменил русский
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5';
+    t.client.weeks['2025-10-13'].days[2].subjects[1].homeworkBody = 'Упр. 6';
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    text = t.wa.texts()[2];
+    assert.match(text, /🆕 \*Новые и изменённые задания \(2\):\*/);
+    assert.match(text, /\*Русский язык\* — на завтра, среду, 15\.10 ✏️ _изменено_\nУпр\. 6/);
+    assert.match(text, /\*История\* — на четверг, 16\.10\nПараграф 5/);
+    assert.match(text, /Не забудьте на завтра, среду, 15\.10:\*\n• \*Алгебра:\* № 250\n\n/);
+    assert.ok(!text.includes('Читать стр. 40-55'), 'старое ДЗ не повторяется');
+  });
+
+  it('данные для рассылки всегда берутся заново из BilimClass', async () => {
+    const t = setup();
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    const calls = t.client.calls.length;
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.ok(t.client.calls.length > calls, 'второй раз тоже идёт запрос в дневник');
+    t.client.fail = new Error('BilimClass down');
+    await assert.rejects(() => t.scheduler.sendDigest({ targets: [GROUP] }), /down/);
+    assert.equal(t.wa.sent.length, 2, 'при ошибке устаревшие данные не отправляются');
+  });
+
+  it('в учебный день — после уроков, в субботу — тишина, в воскресенье — на понедельник', async () => {
+    const t = setup();
+    t.store.data.announcedReady = true;
     t.homework.today = () => '2025-10-17';
-    await t.scheduler.dailyDigest({ iso: '2025-10-17', minutes: 18 * 60, weekday: 5 });
+    await t.scheduler.dailyDigest(at('2025-10-17', 13));
     assert.match(t.wa.texts()[0], /на понедельник, 20\.10/);
     t.wa.sent = [];
-    await t.scheduler.dailyDigest({ iso: '2025-10-18', minutes: 18 * 60, weekday: 6 });
+    await t.scheduler.dailyDigest(at('2025-10-18', 18));
     assert.equal(t.wa.sent.length, 0);
+    t.homework.today = () => '2025-10-19';
+    await t.scheduler.dailyDigest(at('2025-10-19', 18));
+    assert.equal(t.wa.sent.length, 1);
+  });
+
+  it('полный цикл: до конца уроков молчит, после — сам присылает ДЗ один раз', async () => {
+    const t = setup();
+    t.scheduler.clock = () => at('2025-10-14', 8, 30); // уроки до 08:45 → рассылка в 09:00
+    await t.scheduler.tick();
+    assert.equal(t.wa.sent.length, 0);
+    t.scheduler.clock = () => at('2025-10-14', 9, 1);
+    await t.scheduler.tick();
+    assert.equal(t.wa.sent.length, 1);
+    assert.match(t.wa.texts()[0], /Домашнее задание на неделю вперёд/);
+    assert.equal(t.store.data.jobs.digest, '2025-10-14');
+    t.scheduler.clock = () => at('2025-10-14', 9, 30);
+    await t.scheduler.tick();
+    assert.equal(t.wa.sent.length, 1, 'второй раз в тот же день не шлёт');
+  });
+
+  it('бот запустили днём, когда уроки давно закончились — рассылка всё равно уходит (до 22:00)', async () => {
+    const t = setup();
+    t.scheduler.clock = () => at('2025-10-14', 16); // уроки закончились в 08:45
+    await t.scheduler.tick();
+    assert.equal(t.wa.sent.length, 1);
+    const late = setup();
+    late.scheduler.clock = () => at('2025-10-14', 22, 30);
+    await late.scheduler.tick();
+    assert.equal(late.wa.sent.length, 0, 'ночью не шлём');
   });
 
   it('догоняет пропущенную рассылку, но не дважды', () => {
     const t = setup();
-    const now = { iso: '2025-10-14', minutes: 18 * 60 + 40, weekday: 2 };
+    const now = at('2025-10-14', 18, 40);
     assert.equal(t.scheduler.isDue('digest', 18 * 60, now), true);
     t.scheduler.jobDone('digest', '2025-10-14');
     assert.equal(t.scheduler.isDue('digest', 18 * 60, now), false);
-    assert.equal(t.scheduler.isDue('digest', 18 * 60, { ...now, iso: '2025-10-15', minutes: 17 * 60 }), false);
-    assert.equal(t.scheduler.isDue('digest', 18 * 60, { ...now, iso: '2025-10-15', minutes: 23 * 60 }), false, 'за окном догонялки');
+    assert.equal(t.scheduler.isDue('digest', 18 * 60, at('2025-10-15', 17)), false);
+    assert.equal(t.scheduler.isDue('digest', 18 * 60, at('2025-10-15', 23)), false, 'за окном догонялки');
   });
 
-  it('новое ДЗ в дневнике → уведомление в группу', async () => {
+  it('днём новые ДЗ копятся до рассылки после уроков, срочные (на сегодня) — сразу', async () => {
     const t = setup();
+    t.store.data.announcedReady = true;
+    t.scheduler.clock = () => at('2025-10-14', 8, 30);
+    await t.scheduler.digestPlan(at('2025-10-14', 8, 30)); // рассылка в 09:00
+    await t.scheduler.runPoll(); // первая проверка — запоминает
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5'; // на четверг
+    t.client.weeks['2025-10-13'].days[1].subjects[0].homeworkBody = '§ 12, 13'; // на сегодня
     await t.scheduler.runPoll();
-    assert.equal(t.wa.sent.length, 0, 'первая проверка молчит');
+    assert.equal(t.wa.sent.length, 1);
+    assert.match(t.wa.texts()[0], /Физика/);
+    assert.ok(!t.wa.texts()[0].includes('История'), 'не срочное ждёт рассылки');
+
+    // рассылка после уроков содержит накопленное
+    t.scheduler.clock = () => at('2025-10-14', 9, 5);
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    t.scheduler.jobDone('digest', '2025-10-14');
+    assert.match(t.wa.texts()[1], /🆕[\s\S]*\*История\* — на четверг, 16\.10\nПараграф 5/);
+  });
+
+  it('после рассылки новое ДЗ приходит сразу и не повторяется в следующей рассылке', async () => {
+    const t = setup();
+    t.scheduler.clock = () => at('2025-10-14', 15);
+    await t.scheduler.digestPlan(at('2025-10-14', 15));
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    t.scheduler.jobDone('digest', '2025-10-14');
+    await t.scheduler.runPoll(); // базовый снимок
     t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5';
-    t.homework.cache.clear();
     const result = await t.scheduler.runPoll();
     assert.deepEqual(result, { added: 1, changed: 0 });
-    assert.match(t.wa.texts()[0], /🆕 \*История\* — на четверг, 16\.10\nПараграф 5/);
+    assert.match(t.wa.texts()[1], /🆕 \*История\* — на четверг, 16\.10\nПараграф 5/);
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.match(t.wa.texts()[2], /Новых заданий в дневнике с прошлой проверки нет/);
+  });
+
+  it('!обновить сообщает изменения сразу, даже до рассылки', async () => {
+    const t = setup();
+    t.scheduler.clock = () => at('2025-10-14', 8);
+    await t.scheduler.digestPlan(at('2025-10-14', 8));
+    await t.scheduler.runPoll();
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5';
+    const result = await t.scheduler.runPoll({ manual: true });
+    assert.deepEqual(result, { added: 1, changed: 0 });
+    assert.match(t.wa.texts()[0], /История/);
   });
 
   it('ошибки BilimClass: уведомление админу после нескольких сбоев', async () => {

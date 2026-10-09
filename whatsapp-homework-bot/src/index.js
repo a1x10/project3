@@ -54,7 +54,12 @@ async function main() {
 
   logger.info(
     {
-      digest: config.schedule.digestTime != null ? formatClock(config.schedule.digestTime) : 'выкл',
+      digest: {
+        after_lessons: `после уроков (+${config.schedule.digestDelayMinutes} мин), в выходные — ${formatClock(config.schedule.digestTime)}`,
+        fixed: formatClock(config.schedule.digestTime),
+        off: 'выкл',
+      }[config.schedule.digestMode],
+      daysAhead: config.schedule.digestDaysAhead,
       poll: `каждые ${config.schedule.pollIntervalMinutes} мин`,
       ai: config.ai.mode,
       timezone: config.timezone,

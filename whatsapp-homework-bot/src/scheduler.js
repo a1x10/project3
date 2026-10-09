@@ -1,16 +1,23 @@
-// Планировщик: ежедневная рассылка ДЗ, утреннее напоминание, сводка недели, проверка дневника на изменения.
+// Планировщик: рассылка ДЗ после уроков, утреннее напоминание, сводка недели, проверка дневника на изменения.
 // Работает «тиками» раз в 30 секунд — если бот был выключен в момент рассылки, он догонит её после запуска.
 import { BilimAuthError } from './bilimclass/client.js';
-import { formatChanges, formatDay, formatSchedule, formatWeek } from './homework/format.js';
+import { formatChanges, formatDay, formatNewHomework, formatSchedule, formatWeek, formatWeekAhead } from './homework/format.js';
+import { entryHash } from './homework/service.js';
 import { errText } from './logger.js';
-import { addDays, diffDays, mondayOf, nowParts, onDay } from './utils/dates.js';
+import { addDays, diffDays, formatClock, mondayOf, nowParts, onDay } from './utils/dates.js';
+import { splitMessage } from './utils/text.js';
 
 const TICK_MS = 30 * 1000;
 const RETRY_MS = 10 * 60 * 1000;
+const PLAN_REFRESH_MS = 30 * 60 * 1000;
+
+// Ключ задания для учёта «уже отправляли в группу»
+const announceKey = (e) => `${e.lessonDate}|${e.key}`;
 
 export class Scheduler {
-  constructor({ config, store, homework, wa, core, logger }) {
+  constructor({ config, store, homework, wa, core, logger, clock }) {
     this.config = config;
+    this.clock = clock || (() => nowParts(config.timezone)); // текущие дата/время школы (подменяется в тестах)
     this.store = store;
     this.homework = homework;
     this.wa = wa;
@@ -20,6 +27,7 @@ export class Scheduler {
     this.busy = false;
     this.failures = 0;
     this.lastAttempt = {};
+    this.plan = null; // { date, at, lessonsEnd, todaySchool, source, computedAt }
   }
 
   start() {
@@ -39,11 +47,19 @@ export class Scheduler {
   }
 
   // Пора ли запускать ежедневную задачу: время наступило, сегодня ещё не запускали, не вышли за окно догонялки
-  isDue(name, at, now) {
+  isDue(name, at, now, until = at == null ? null : at + this.config.schedule.catchUpMinutes) {
     if (at == null) return false;
     if (this.store.data.jobs[name] === now.iso) return false;
-    if (now.minutes < at || now.minutes > at + this.config.schedule.catchUpMinutes) return false;
+    if (now.minutes < at || now.minutes > until) return false;
     return Date.now() - (this.lastAttempt[name] || 0) > RETRY_MS;
+  }
+
+  // До какого времени ещё можно отправить сегодняшнюю рассылку (если бот был выключен):
+  // CATCH_UP_MINUTES после плана, но не раньше конца ACTIVE_HOURS (по умолчанию 22:00)
+  digestDeadline(plan) {
+    const { catchUpMinutes, activeHours } = this.config.schedule;
+    const base = plan.at + catchUpMinutes;
+    return activeHours.from <= activeHours.to ? Math.max(base, activeHours.to) : base;
   }
 
   inActiveHours(minutes) {
@@ -55,14 +71,17 @@ export class Scheduler {
     if (this.busy || !this.wa.isOpen) return;
     this.busy = true;
     try {
-      const now = nowParts(this.config.timezone);
+      const now = this.clock();
       const { schedule } = this.config;
 
       if (this.store.data.jobs.prune !== now.iso) {
         this.store.prune(now.iso);
         this.jobDone('prune', now.iso);
       }
-      if (this.isDue('digest', schedule.digestTime, now)) await this.guard('digest', now, () => this.dailyDigest(now));
+      if (schedule.digestMode !== 'off' && this.store.data.jobs.digest !== now.iso) {
+        const plan = await this.digestPlan(now);
+        if (plan && this.isDue('digest', plan.at, now, this.digestDeadline(plan))) await this.guard('digest', now, () => this.dailyDigest(now));
+      }
       if (this.isDue('morning', schedule.morningTime, now)) await this.guard('morning', now, () => this.morning(now));
       if (now.weekday === schedule.weeklyDay && this.isDue('weekly', schedule.weeklyTime, now)) {
         await this.guard('weekly', now, () => this.weekly(now));
@@ -111,36 +130,111 @@ export class Scheduler {
     return this.core.targets().filter((jid) => this.core.groupSettings(jid).digest !== false);
   }
 
+  // Когда сегодня рассылка: через DIGEST_DELAY_MINUTES после последнего урока (по свежему расписанию из дневника).
+  // В дни без уроков (вечер воскресенья) и если время уроков неизвестно — в DIGEST_TIME.
+  async digestPlan(now) {
+    const { schedule } = this.config;
+    if (schedule.digestMode === 'off') return null;
+    const plan = this.plan?.date === now.iso ? this.plan : null;
+    const maxAge = plan?.source === 'error' ? RETRY_MS : PLAN_REFRESH_MS;
+    if (plan && Date.now() - plan.computedAt < maxAge) return plan;
+
+    let lessonsEnd = null;
+    let source = 'fallback';
+    try {
+      lessonsEnd = await this.homework.lessonsEnd(now.iso, { fresh: true });
+      if (schedule.digestMode === 'fixed') source = 'fixed';
+      else if (lessonsEnd != null) source = 'lessons';
+    } catch (error) {
+      if (plan) return plan; // BilimClass временно недоступен — оставляем прежний план
+      source = 'error';
+    }
+    const at = source === 'lessons' ? Math.min(lessonsEnd + schedule.digestDelayMinutes, 23 * 60 + 59) : schedule.digestTime;
+    const changed = !plan || plan.at !== at;
+    this.plan = { date: now.iso, at, lessonsEnd, todaySchool: lessonsEnd != null, source, computedAt: Date.now() };
+    if (changed && at != null) {
+      this.logger.info(
+        { at: formatClock(at), lessonsEnd: lessonsEnd != null ? formatClock(lessonsEnd) : null, source },
+        source === 'lessons' ? 'Рассылка ДЗ сегодня — после уроков' : 'Рассылка ДЗ сегодня — по времени DIGEST_TIME',
+      );
+    }
+    return this.plan;
+  }
+
+  // Ждём ли сегодня рассылку после уроков: тогда новые ДЗ копим для неё, а не шлём по одному
+  digestPending(now) {
+    const plan = this.plan;
+    if (!plan || plan.date !== now.iso || !plan.todaySchool || plan.at == null) return false;
+    if (this.store.data.jobs.digest === now.iso) return false;
+    return now.minutes <= this.digestDeadline(plan);
+  }
+
   async dailyDigest(now) {
     const targets = this.digestTargets();
     if (!targets.length) return;
-    // Рассылаем, если сегодня учебный день или завтра учебный (вечер воскресенья). В каникулы молчим.
+    // В учебный день — после уроков. В выходной — только если завтра учимся (вечер воскресенья). В каникулы молчим.
     const next = await this.homework.nextSchoolDay(now.iso);
-    if (!next) {
+    const todaySchool = await this.homework.isSchoolDay(now.iso);
+    if (!next && !todaySchool) {
       this.logger.info('Рассылка пропущена: в ближайшие недели нет уроков (каникулы?)');
       return;
     }
-    const todaySchool = await this.homework.isSchoolDay(now.iso);
     if (!todaySchool && diffDays(next, now.iso) > 1) {
       this.logger.info({ next }, 'Рассылка пропущена: сегодня выходной, завтра не учимся');
       return;
     }
-    await this.sendDigest({ targets, day: next });
+    await this.sendDigest({ targets });
   }
 
-  // Отправить ДЗ на день (по умолчанию — ближайший учебный) в указанные группы
-  async sendDigest({ targets, day, force = false }) {
-    const today = this.homework.today();
-    const date = day || (await this.homework.nextSchoolDay(today)) || addDays(today, 1);
-    const view = await this.homework.dayView(date, { fresh: true });
-    if (!view.entries.length && this.config.schedule.skipEmptyDigest && !force) {
-      this.logger.info({ date }, 'ДЗ нет — пустую рассылку пропускаю (SKIP_EMPTY_DIGEST)');
-      return;
+  // Разделить задания на новые / изменённые / уже отправленные в группу
+  classify(entries) {
+    const announced = this.store.data.announced;
+    return entries
+      .map((e) => {
+        const key = announceKey(e);
+        if (!(key in announced)) return { ...e, kind: 'new' };
+        if (announced[key] !== entryHash(e)) return { ...e, kind: 'changed' };
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  // ready — после полной рассылки; одиночные уведомления не считаются «первой рассылкой»
+  markAnnounced(entries, { ready = true } = {}) {
+    if (!entries.length && !ready) return;
+    this.store.update((s) => {
+      for (const e of entries) s.announced[announceKey(e)] = entryHash(e);
+      if (ready) s.announcedReady = true;
+    });
+  }
+
+  // Рассылка: свежие данные из BilimClass на каждый день недели вперёд → только то, что ещё не присылали
+  async sendDigest({ targets, force = false }) {
+    const data = await this.homework.digestData({ fresh: true });
+    const firstTime = !this.store.data.announcedReady;
+    const fresh = this.classify(data.entries);
+    const now = this.clock();
+
+    let text;
+    if (firstTime) {
+      text = formatWeekAhead(data);
+    } else {
+      if (!fresh.length && this.config.schedule.skipEmptyDigest && !force) {
+        this.logger.info('Новых ДЗ нет — рассылку пропускаю (SKIP_EMPTY_DIGEST)');
+        return;
+      }
+      text = formatNewHomework({ fresh, data, remindTomorrow: this.config.schedule.remindTomorrow, checkedAt: now.minutes });
     }
-    const text = formatDay(view, today);
-    for (const jid of targets) this.wa.sendText(jid, text, { persist: true }).catch(() => {});
-    this.logger.info({ date, groups: targets.length, homework: view.entries.length }, 'Рассылка ДЗ отправлена в очередь');
-    if (this.config.features.sendFiles) await this.sendFiles(view.entries.filter((e) => e.hasFiles), targets);
+    for (const jid of targets) {
+      for (const part of splitMessage(text, 6000)) this.wa.sendText(jid, part, { persist: true }).catch(() => {});
+    }
+    // «Уже отправлено» запоминаем, только если рассылка ушла во все группы (а не !рассылка в одной из нескольких)
+    if (this.digestTargets().every((jid) => targets.includes(jid))) this.markAnnounced(data.entries);
+    this.logger.info({ groups: targets.length, new: fresh.length, total: data.entries.length, firstTime }, 'Рассылка ДЗ отправлена в очередь');
+    if (this.config.features.sendFiles) {
+      const withFiles = (firstTime ? data.entries : fresh).filter((e) => e.hasFiles);
+      await this.sendFiles(withFiles, targets);
+    }
   }
 
   async morning(now) {
@@ -182,12 +276,26 @@ export class Scheduler {
     if (!this.config.schedule.notifyChanges || (!added.length && !changed.length)) return { added: added.length, changed: changed.length };
 
     const today = this.homework.today();
+    const now = this.clock();
+    // Днём, пока не прошла рассылка после уроков, копим новые ДЗ для неё (кроме заданий на сегодня — они срочные).
+    // После рассылки (вечером) и в выходные — сообщаем сразу. Уже отправленное в группу второй раз не шлём.
+    const hold = !manual && this.digestPending(now);
+    const pick = (list) => this.classify(list).filter((e) => !hold || (e.dueDate && e.dueDate <= today));
+    const toAdd = pick(added);
+    const toChange = pick(changed);
+    const total = { added: added.length, changed: changed.length };
+    if (hold && toAdd.length + toChange.length < added.length + changed.length) {
+      this.logger.info(total, 'Новые ДЗ найдены — пришлю их в рассылке после уроков');
+    }
+    if (!toAdd.length && !toChange.length) return total;
+
     const targets = this.digestTargets();
-    const text = formatChanges({ added, changed }, today);
-    this.logger.info({ added: added.length, changed: changed.length }, 'Найдены изменения в дневнике');
+    const text = formatChanges({ added: toAdd, changed: toChange }, today);
+    this.logger.info({ added: toAdd.length, changed: toChange.length }, 'Найдены изменения в дневнике — отправляю');
     for (const jid of targets) this.wa.sendText(jid, text, { persist: true, maxAgeMs: 12 * 3600 * 1000 }).catch(() => {});
-    if (this.config.features.sendFiles) await this.sendFiles([...added, ...changed].filter((e) => e.hasFiles), targets);
-    return { added: added.length, changed: changed.length };
+    this.markAnnounced([...toAdd, ...toChange], { ready: false });
+    if (this.config.features.sendFiles) await this.sendFiles([...toAdd, ...toChange].filter((e) => e.hasFiles), targets);
+    return total;
   }
 
   // Скачать и отправить файлы к ДЗ. Каждый файл отправляется в группу один раз (если не force).
