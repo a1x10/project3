@@ -1,0 +1,26 @@
+# systemd-сервис. Установка (пример для каталога /opt/whatsapp-homework-bot и пользователя bot):
+#   sudo cp deploy/homework-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now homework-bot
+#   journalctl -u homework-bot -f        # логи (тут же QR-код / код привязки)
+[Unit]
+Description=WhatsApp homework bot (BilimClass + Groq)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/opt/whatsapp-homework-bot
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+# Защита: сервис может писать только в свою папку data
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/whatsapp-homework-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

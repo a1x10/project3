@@ -1,0 +1,24 @@
+services:
+  bot:
+    build: .
+    container_name: homework-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 3000
+    volumes:
+      - bot-data:/app/data
+    # Страница состояния и QR доступны только с самого сервера (через SSH-туннель).
+    # Чтобы открыть QR из интернета, замените на "3000:3000" и обязательно задайте HTTP_TOKEN.
+    ports:
+      - "127.0.0.1:3000:3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  bot-data:
