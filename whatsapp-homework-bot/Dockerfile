@@ -5,9 +5,17 @@ ENV NODE_ENV=production \
     HTTP_HOST=0.0.0.0 \
     HTTP_PORT=3000
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Зависимости + Chromium для скриншотов дневника BilimClass (ровно та версия, что нужна playwright-core,
+# вместе с системными библиотеками) + шрифты, чтобы на скриншоте были видны русские и казахские буквы
+RUN npm ci --omit=dev \
+  && npx playwright-core install --with-deps chromium \
+  && apt-get install -y --no-install-recommends fonts-noto-core fonts-noto-color-emoji \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm cache clean --force
 
 COPY src ./src
 COPY scripts ./scripts

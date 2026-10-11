@@ -7,7 +7,9 @@ import { BilimAuthError, BilimClassClient } from './bilimclass/client.js';
 import { ConfigError, loadConfig, validateForStart } from './config.js';
 import { BotCore } from './core.js';
 import { startHealthServer } from './health.js';
+import { HomeworkPhotos } from './homework/message.js';
 import { HomeworkService } from './homework/service.js';
+import { DiaryScreenshotter } from './bilimclass/screenshot.js';
 import { createLogger, errText } from './logger.js';
 import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
@@ -48,7 +50,20 @@ async function main() {
   const assistant = new Assistant({ groq, homework, config, logger: logger.child({ module: 'ai' }) });
   const wa = new WhatsAppConnection({ config, store, logger: logger.child({ module: 'wa' }) });
   const core = new BotCore({ config, store, wa, logger });
-  const scheduler = new Scheduler({ config, store, homework, wa, core, logger: logger.child({ module: 'scheduler' }) });
+  let screenshotter = null;
+  if (config.features.homeworkPhoto === 'screenshot') {
+    screenshotter = new DiaryScreenshotter({ config, logger: logger.child({ module: 'screenshot' }), eduYear: () => bilim.session?.eduYear });
+    if (screenshotter.available) logger.info({ chromium: screenshotter.executable }, 'ДЗ будет приходить скриншотом дневника BilimClass');
+    else logger.warn('Chromium не найден — вместо скриншотов дневника будут нарисованные карточки. Установите chromium или задайте CHROMIUM_PATH');
+  }
+  const photos = new HomeworkPhotos({
+    config,
+    screenshotter,
+    logger: logger.child({ module: 'photos' }),
+    className: () => bilim.session?.className,
+    notify: (key, text, throttle) => core.notifyAdmins(key, text, throttle),
+  });
+  const scheduler = new Scheduler({ config, store, homework, wa, core, photos, logger: logger.child({ module: 'scheduler' }) });
   const commands = new Commands({ core, homework, wa, scheduler, config, logger: logger.child({ module: 'commands' }) });
   const handler = new MessageHandler({ config, core, wa, homework, assistant, commands, logger: logger.child({ module: 'handler' }) });
 

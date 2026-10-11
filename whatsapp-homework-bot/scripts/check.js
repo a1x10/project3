@@ -8,6 +8,8 @@ import { formatDay, formatWeek } from '../src/homework/format.js';
 import { HomeworkService } from '../src/homework/service.js';
 import { Store } from '../src/store.js';
 import { formatClock, mondayOf, toDMY } from '../src/utils/dates.js';
+import { DiaryScreenshotter } from '../src/bilimclass/screenshot.js';
+import fs from 'node:fs';
 
 const ok = (s) => console.log(`✅ ${s}`);
 const bad = (s) => console.log(`❌ ${s}`);
@@ -39,6 +41,31 @@ try {
     bad('В ближайшие 3 недели нет уроков в дневнике (каникулы?)');
   }
   console.log(formatWeek(await homework.weekView(mondayOf(today)), today));
+
+  if (config.features.homeworkPhoto === 'screenshot' && next) {
+    console.log('\n— Скриншот дневника —');
+    const shooter = new DiaryScreenshotter({ config, eduYear: () => session.eduYear });
+    if (!shooter.available) {
+      bad('Chromium не найден: установите chromium или задайте CHROMIUM_PATH (иначе будут нарисованные карточки)');
+    } else {
+      const view = await homework.dayView(next);
+      if (!view.entries.length) {
+        info('На ближайший день ДЗ нет — скриншот проверю, когда задания появятся');
+      } else {
+        try {
+          const shots = await shooter.captureDays([{ date: next, subjects: [...new Set(view.entries.map((e) => e.subject))] }]);
+          if (!shots.size) throw new Error('страница дня не совпала с данными дневника');
+          const file = path.join(config.dataDir, 'screenshot-check.jpg');
+          fs.mkdirSync(config.dataDir, { recursive: true });
+          fs.writeFileSync(file, shots.get(next));
+          ok(`Скриншот готов: ${file} — откройте и проверьте`);
+        } catch (error) {
+          failed = true;
+          bad(`Скриншот не получился: ${error.message}. Бот будет отправлять нарисованные карточки`);
+        }
+      }
+    }
+  }
   console.log(
     '\n   Проверьте: ДЗ показано на тот день, к которому его нужно сделать?\n' +
       '   Если задания стоят на уроке, где их задали, а не на дне сдачи — поставьте HOMEWORK_ATTACHED_TO=assigned',
