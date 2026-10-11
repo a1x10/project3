@@ -2,7 +2,7 @@
 // Работает «тиками» раз в 30 секунд — если бот был выключен в момент рассылки, он догонит её после запуска.
 import { BilimAuthError } from './bilimclass/client.js';
 import { formatChanges, formatDay, formatNewHomework, formatSchedule, formatWeek, formatWeekAhead } from './homework/format.js';
-import { dayMessage } from './homework/message.js';
+import { HomeworkPhotos } from './homework/message.js';
 import { entryHash } from './homework/service.js';
 import { errText } from './logger.js';
 import { addDays, diffDays, formatClock, mondayOf, nowParts, onDay } from './utils/dates.js';
@@ -16,8 +16,10 @@ const PLAN_REFRESH_MS = 30 * 60 * 1000;
 const announceKey = (e) => `${e.lessonDate}|${e.key}`;
 
 export class Scheduler {
-  constructor({ config, store, homework, wa, core, logger, clock }) {
+  constructor({ config, store, homework, wa, core, logger, clock, photos }) {
     this.config = config;
+    // фото с ДЗ: скриншот дневника / нарисованная карточка / текст
+    this.photos = photos || new HomeworkPhotos({ config, logger, className: () => homework.client.session?.className });
     this.clock = clock || (() => nowParts(config.timezone)); // текущие дата/время школы (подменяется в тестах)
     this.store = store;
     this.homework = homework;
@@ -264,21 +266,12 @@ export class Scheduler {
       }
       return [{ text: '✅ Проверил дневник после уроков — новых домашних заданий нет.' }];
     }
-    const messages = [];
+    const kinds = new Map();
     for (const day of days) {
       const dayMarks = day.entries.map((e) => marks.get(announceKey(e))).filter(Boolean);
-      let kind = 'digest';
-      if (day.date !== data.next && dayMarks.length) kind = dayMarks.every((m) => m === 'changed') ? 'changed' : 'new';
-      messages.push(await dayMessage(day, data.today, {
-        kind,
-        marks,
-        markKey: announceKey,
-        className: this.homework.client.session?.className,
-        checkedAt: formatClock(now.minutes),
-        logger: this.logger,
-      }));
+      if (day.date !== data.next && dayMarks.length) kinds.set(day.date, dayMarks.every((m) => m === 'changed') ? 'changed' : 'new');
     }
-    return messages;
+    return this.photos.messages(days, data.today, { kinds, marks, markKey: announceKey, checkedAt: formatClock(now.minutes) });
   }
 
   async morning(now) {
@@ -349,19 +342,14 @@ export class Scheduler {
     const marks = new Map([...added.map((e) => [announceKey(e), 'new']), ...changed.map((e) => [announceKey(e), 'changed'])]);
     const all = [...added, ...changed];
     const dates = [...new Set(all.map((e) => e.dueDate).filter(Boolean))].sort();
-    const messages = [];
+    const views = [];
+    const kinds = new Map();
     for (const date of dates) {
-      const view = await this.homework.dayView(date);
-      const kinds = all.filter((e) => e.dueDate === date).map((e) => marks.get(announceKey(e)));
-      messages.push(await dayMessage(view, today, {
-        kind: kinds.every((k) => k === 'changed') ? 'changed' : 'new',
-        marks,
-        markKey: announceKey,
-        className: this.homework.client.session?.className,
-        checkedAt: formatClock(now.minutes),
-        logger: this.logger,
-      }));
+      views.push(await this.homework.dayView(date));
+      const dayKinds = all.filter((e) => e.dueDate === date).map((e) => marks.get(announceKey(e)));
+      kinds.set(date, dayKinds.every((k) => k === 'changed') ? 'changed' : 'new');
     }
+    const messages = await this.photos.messages(views, today, { kinds, marks, markKey: announceKey, checkedAt: formatClock(now.minutes) });
     // задания без известной даты сдачи — текстом
     const undated = (list) => list.filter((e) => !e.dueDate);
     if (undated(all).length) messages.push({ text: formatChanges({ added: undated(added), changed: undated(changed) }, today) });

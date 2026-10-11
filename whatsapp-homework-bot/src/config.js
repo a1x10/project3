@@ -139,8 +139,9 @@ export function buildConfig(env = process.env) {
       // due — ДЗ записано в дневнике на день, к которому его нужно сделать (так показывает BilimClass);
       // assigned — ДЗ записано на урок, где его задали, срок — следующий урок по предмету
       homeworkAttachedTo: oneOf(env, 'HOMEWORK_ATTACHED_TO', 'due', ['due', 'assigned']),
-      // присылать ДЗ картинкой (фото с карточкой) вместо текста
-      homeworkImage: bool(env, 'HOMEWORK_AS_IMAGE', true),
+      // как присылать ДЗ: screenshot — настоящий скриншот дневника BilimClass (нужен Chromium),
+      // card — нарисованная карточка, text — обычный текст. Если скриншот не получился — отправится карточка.
+      homeworkPhoto: oneOf(env, 'HOMEWORK_PHOTO', bool(env, 'HOMEWORK_AS_IMAGE', true) ? 'screenshot' : 'text', ['screenshot', 'card', 'text']),
       sendFiles: bool(env, 'SEND_FILES', true),
       maxFileMb: int(env, 'MAX_FILE_MB', 30, { min: 1, max: 100 }),
       commandPrefix: str(env, 'COMMAND_PREFIX', '!'),
@@ -161,6 +162,13 @@ export function buildConfig(env = process.env) {
       maxAnswerChars: int(env, 'AI_MAX_ANSWER_CHARS', 1800, { min: 300, max: 20000 }),
     },
 
+    screenshot: {
+      chromiumPath: str(env, 'CHROMIUM_PATH'),
+      proxy: str(env, 'BROWSER_PROXY'),
+      timeoutMs: int(env, 'SCREENSHOT_TIMEOUT_SECONDS', 45, { min: 10, max: 300 }) * 1000,
+      cacheSeconds: int(env, 'SCREENSHOT_CACHE_SECONDS', 180, { min: 0, max: 3600 }),
+    },
+
     http: {
       port: int(env, 'HTTP_PORT', 3000, { min: 0, max: 65535 }),
       host: str(env, 'HTTP_HOST', '127.0.0.1'),
@@ -169,6 +177,7 @@ export function buildConfig(env = process.env) {
   };
 
   config.whatsapp.authDir = path.join(config.dataDir, 'wa-auth');
+  config.features.homeworkImage = config.features.homeworkPhoto !== 'text';
   if (config.ai.mode !== 'off' && !config.groq.apiKey) config.ai.mode = 'off';
   return config;
 }
