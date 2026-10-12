@@ -27,10 +27,46 @@ export class BilimClassClient {
     this.fetch = fetchImpl || globalThis.fetch;
 
     this.token = null;
+    this.refreshToken = null;
+    this.expiresAt = 0; // когда истекает токен (если сервер сообщил), мс
     this.session = null; // { schoolId, groupId, eduYear, userId, fullName, className, schoolName }
     this.loginPromise = null;
+    this.refreshPromise = null;
     this.authFailedAt = 0;
     this.authFailMessage = '';
+  }
+
+  // Новые логин/пароль (из панели управления): сбрасываем сессию и паузу после неудачного входа
+  setCredentials({ login, password }) {
+    this.credentials = { login: login ?? this.credentials.login, password: password ?? this.credentials.password };
+    this.token = null;
+    this.refreshToken = null;
+    this.expiresAt = 0;
+    this.authFailedAt = 0;
+    this.authFailMessage = '';
+  }
+
+  // Время жизни токена: сервер присылает exp_time; формат точно не известен — разбираем осторожно
+  static parseExpiry(value, now = Date.now()) {
+    if (value == null || value === '') return 0;
+    let ms = 0;
+    if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+      const n = Number(value);
+      if (n > 1e12) ms = n; // миллисекунды
+      else if (n > 1e9) ms = n * 1000; // секунды unix
+      else ms = now + n * 1000; // «через N секунд»
+    } else {
+      ms = Date.parse(String(value).replace(' ', 'T'));
+    }
+    // неправдоподобные значения игнорируем — тогда полагаемся на ответ 426 от сервера
+    if (!Number.isFinite(ms) || ms < now + 60_000 || ms > now + 90 * 86400_000) return 0;
+    return ms;
+  }
+
+  applyTokens(body) {
+    this.token = body.access_token;
+    if (body.refresh_token) this.refreshToken = body.refresh_token;
+    this.expiresAt = BilimClassClient.parseExpiry(body.exp_time ?? body.expires_in);
   }
 
   headers(extra = {}) {
@@ -106,13 +142,58 @@ export class BilimClassClient {
     }
 
     this.authFailedAt = 0;
-    this.token = body.access_token;
+    this.applyTokens(body);
     this.session = this.extractSession(body.user_info || {});
     this.logger?.info(
       { school: this.session.schoolName, class: this.session.className, eduYear: this.session.eduYear },
       'Вход в BilimClass выполнен',
     );
     return this.session;
+  }
+
+  // Продление входа без пароля — так же делает сам сайт BilimClass, когда сервер отвечает 426
+  async refresh() {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.doRefresh().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  async doRefresh() {
+    if (!this.refreshToken) return false;
+    try {
+      const { status, body } = await this.rawRequest(`${this.apiUrl}/api/v2/os/refresh_token`, {
+        method: 'POST',
+        headers: this.headers(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        body: JSON.stringify({ refreshToken: this.refreshToken }),
+      });
+      if (status === 200 && body?.access_token) {
+        this.applyTokens(body);
+        this.logger?.info('Вход в BilimClass продлён');
+        return true;
+      }
+      this.logger?.info({ status }, 'Продлить вход не удалось — войду заново');
+    } catch (error) {
+      this.logger?.warn({ err: error.message }, 'Продлить вход не удалось — войду заново');
+    }
+    this.refreshToken = null;
+    return false;
+  }
+
+  // Свежий токен: продлеваем заранее, если знаем срок; не получилось — входим заново
+  async ensureFreshToken() {
+    if (!this.loggedIn) {
+      await this.login();
+      return;
+    }
+    if (this.expiresAt && Date.now() > this.expiresAt - 60_000) {
+      if (!(await this.refresh())) {
+        this.token = null;
+        await this.login();
+      }
+    }
   }
 
   extractSession(info) {
@@ -139,10 +220,13 @@ export class BilimClassClient {
     return session;
   }
 
-  // GET с авторизацией: при 401 — один повторный вход, при сбоях сервера — повтор с паузой
+  // GET с авторизацией.
+  // 426 — токен устарел: продлеваем его (как сайт), не вышло — входим заново по паролю.
+  // 401/403 — сессия недействительна: входим заново. 5xx/429/обрыв — повтор с паузой.
   async get(path, params = {}, { retries = 2 } = {}) {
-    if (!this.loggedIn) await this.login();
+    await this.ensureFreshToken();
     let relogged = false;
+    let refreshed = false;
     for (let attempt = 0; ; attempt += 1) {
       const query = new URLSearchParams(
         Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => [k, String(v)]),
@@ -164,7 +248,16 @@ export class BilimClassClient {
 
       const { status, body } = result;
       if (status === 200) return body?.data ?? body;
-      if ((status === 401 || status === 403) && !relogged) {
+      if (status === 426 && !refreshed) {
+        refreshed = true;
+        if (!(await this.refresh())) {
+          relogged = true;
+          this.token = null;
+          await this.login();
+        }
+        continue;
+      }
+      if ((status === 401 || status === 403 || status === 426) && !relogged) {
         relogged = true;
         this.token = null;
         await this.login();
@@ -175,7 +268,7 @@ export class BilimClassClient {
         continue;
       }
       if (status === 426) {
-        throw new BilimApiError('BilimClass требует обновить клиент (HTTP 426) — возможно, изменился API. Обновите бота', status);
+        throw new BilimApiError('BilimClass не принимает вход даже после повторного входа (HTTP 426)', status);
       }
       throw new BilimApiError(`BilimClass: ${body?.message || `HTTP ${status}`} (${path})`, status);
     }
@@ -183,7 +276,7 @@ export class BilimClassClient {
 
   // Дневник на неделю. mondayIso — понедельник недели 'YYYY-MM-DD'
   async getWeek(mondayIso) {
-    if (!this.loggedIn) await this.login();
+    await this.ensureFreshToken();
     const { schoolId, eduYear, groupId } = this.session;
     const data = await this.get('/api/v4/os/clientoffice/diary', { schoolId, eduYear, date: toDMY(mondayIso), groupId });
     return data || {};
@@ -192,7 +285,7 @@ export class BilimClassClient {
   // Метаданные файлов, прикреплённых к ДЗ (ссылки короткоживущие)
   async getHomeworkFiles(homeworkUuid) {
     if (!homeworkUuid) return [];
-    if (!this.loggedIn) await this.login();
+    await this.ensureFreshToken();
     const { schoolId, eduYear } = this.session;
     const data = await this.get('/api/v4/os/clientoffice/homeworks/simple-homework/info', { homeworkUuid, schoolId, eduYear });
     return Array.isArray(data?.files) ? data.files : [];

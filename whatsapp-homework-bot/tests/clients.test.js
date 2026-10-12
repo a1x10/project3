@@ -98,9 +98,72 @@ describe('BilimClassClient', () => {
     assert.equal(mock.state.requests.length, 1, 'второй попытки входа быть не должно');
   });
 
-  it('HTTP 426 — сообщение про обновление API', async () => {
-    mock.state.handler = (req) => (req.url.pathname === '/api/v2/os/login' ? [200, LOGIN_OK] : [426, {}]);
+  it('HTTP 426 (токен устарел) — продлевает вход как сайт и повторяет запрос', async () => {
+    mock.state.requests = [];
+    const LOGIN = { ...LOGIN_OK, refresh_token: 'refresh-1' };
+    mock.state.handler = (req) => {
+      if (req.url.pathname === '/api/v2/os/login') return [200, LOGIN];
+      if (req.url.pathname === '/api/v2/os/refresh_token') {
+        assert.deepEqual(JSON.parse(req.body), { refreshToken: 'refresh-1' });
+        return [200, { access_token: 'token-2', refresh_token: 'refresh-2' }];
+      }
+      return req.headers.authorization === 'Bearer token-2' ? [200, { data: { days: [] } }] : [426, { message: 'expired' }];
+    };
+    const c = client();
+    await c.getWeek('2025-10-13');
+    assert.equal(c.token, 'token-2');
+    assert.equal(c.refreshToken, 'refresh-2');
+    assert.equal(mock.state.requests.filter((r) => r.url.pathname === '/api/v2/os/login').length, 1, 'без повторного ввода пароля');
+  });
+
+  it('HTTP 426 и продлить не вышло — входит заново по паролю', async () => {
+    let logins = 0;
+    mock.state.handler = (req) => {
+      if (req.url.pathname === '/api/v2/os/login') {
+        logins += 1;
+        return [200, { ...LOGIN_OK, access_token: `token-L${logins}`, refresh_token: 'r' }];
+      }
+      if (req.url.pathname === '/api/v2/os/refresh_token') return [412, { message: 'Ваша сессия истекла' }];
+      return req.headers.authorization === 'Bearer token-L2' ? [200, { data: { days: [] } }] : [426, {}];
+    };
+    await client().getWeek('2025-10-13');
+    assert.equal(logins, 2);
+  });
+
+  it('HTTP 426 не проходит даже после повторного входа — понятная ошибка', async () => {
+    mock.state.handler = (req) => {
+      if (req.url.pathname === '/api/v2/os/login') return [200, LOGIN_OK];
+      if (req.url.pathname === '/api/v2/os/refresh_token') return [412, {}];
+      return [426, {}];
+    };
     await assert.rejects(() => client().getWeek('2025-10-13'), (e) => e instanceof BilimApiError && e.status === 426);
+  });
+
+  it('продлевает вход заранее, если сервер сообщил срок жизни токена', async () => {
+    let refreshes = 0;
+    mock.state.handler = (req) => {
+      if (req.url.pathname === '/api/v2/os/login') return [200, { ...LOGIN_OK, refresh_token: 'r1' }];
+      if (req.url.pathname === '/api/v2/os/refresh_token') {
+        refreshes += 1;
+        return [200, { access_token: 'token-new', refresh_token: 'r2' }];
+      }
+      return [200, { data: { days: [] } }];
+    };
+    const c = client();
+    await c.login();
+    c.expiresAt = Date.now() + 10_000; // токен вот-вот истечёт
+    await c.getWeek('2025-10-13');
+    assert.equal(refreshes, 1);
+    assert.equal(c.token, 'token-new');
+  });
+
+  it('разбор срока жизни токена', () => {
+    const now = Date.parse('2026-10-12T10:00:00Z');
+    assert.equal(BilimClassClient.parseExpiry(3600, now), now + 3600_000);
+    assert.equal(BilimClassClient.parseExpiry(String(Math.floor(now / 1000) + 7200), now), now + 7200_000);
+    assert.equal(BilimClassClient.parseExpiry('2026-10-12T12:00:00Z', now), now + 2 * 3600_000);
+    assert.equal(BilimClassClient.parseExpiry('ерунда', now), 0);
+    assert.equal(BilimClassClient.parseExpiry(5, now), 0, 'слишком короткий срок — не доверяем');
   });
 
   it('ручные BILIM_SCHOOL_ID / BILIM_GROUP_ID важнее профиля', async () => {

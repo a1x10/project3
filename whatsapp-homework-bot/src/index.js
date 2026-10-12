@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Assistant } from './ai/assistant.js';
 import { GroqClient } from './ai/groq.js';
 import { BilimAuthError, BilimClassClient } from './bilimclass/client.js';
+import { ResilientBilimClient } from './bilimclass/resilient.js';
 import { ConfigError, loadConfig, validateForStart } from './config.js';
 import { BotCore } from './core.js';
 import { startHealthServer } from './health.js';
@@ -45,17 +46,25 @@ async function main() {
   if (!store.data.deviceId) store.update((s) => { s.deviceId = randomUUID(); });
 
   const bilim = new BilimClassClient({ ...config.bilim, deviceId: store.data.deviceId, logger: logger.child({ module: 'bilim' }) });
-  const homework = new HomeworkService({ client: bilim, store, config, logger: logger.child({ module: 'homework' }) });
+  // Браузер с сайтом BilimClass: скриншоты дневника и запасной способ получить ДЗ, если API сбоит
+  const siteBrowser = new DiaryScreenshotter({ config, logger: logger.child({ module: 'site' }), eduYear: () => bilim.session?.eduYear });
+  let core; // создаётся ниже, нужен для уведомлений
+  const diary = new ResilientBilimClient({
+    api: bilim,
+    site: siteBrowser.available ? siteBrowser : null,
+    logger: logger.child({ module: 'bilim' }),
+    onSwitch: (mode, reason) => {
+      if (mode === 'site') core?.notifyAdmins('bilim-site-mode', `API BilimClass сбоит (${reason}). Беру дневник через сайт — бот работает дальше.`, 24 * 3600 * 1000);
+    },
+  });
+  const homework = new HomeworkService({ client: diary, store, config, logger: logger.child({ module: 'homework' }) });
   const groq = new GroqClient({ ...config.groq, logger: logger.child({ module: 'groq' }) });
   const assistant = new Assistant({ groq, homework, config, logger: logger.child({ module: 'ai' }) });
   const wa = new WhatsAppConnection({ config, store, logger: logger.child({ module: 'wa' }) });
-  const core = new BotCore({ config, store, wa, logger });
-  let screenshotter = null;
-  if (config.features.homeworkPhoto === 'screenshot') {
-    screenshotter = new DiaryScreenshotter({ config, logger: logger.child({ module: 'screenshot' }), eduYear: () => bilim.session?.eduYear });
-    if (screenshotter.available) logger.info({ chromium: screenshotter.executable }, 'ДЗ будет приходить скриншотом дневника BilimClass');
-    else logger.warn('Chromium не найден — вместо скриншотов дневника будут нарисованные карточки. Установите chromium или задайте CHROMIUM_PATH');
-  }
+  core = new BotCore({ config, store, wa, logger });
+  if (siteBrowser.available) logger.info({ chromium: siteBrowser.executable }, 'Браузер для сайта BilimClass найден: скриншоты и запасной способ получения ДЗ включены');
+  else logger.warn('Chromium не найден — без скриншотов и без запасного способа получения ДЗ. Установите chromium или задайте CHROMIUM_PATH');
+  const screenshotter = config.features.homeworkPhoto === 'screenshot' ? siteBrowser : null;
   const photos = new HomeworkPhotos({
     config,
     screenshotter,
