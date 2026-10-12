@@ -5,7 +5,7 @@ const MODES = [['lessons', 'После уроков'], ['time', 'В своё в�
 const SCOPES = [['new', 'Завтра + новое на другие дни'], ['tomorrow', 'Только на завтра']];
 const PHOTO = [['screenshot', 'Скриншот дневника'], ['card', 'Карточка'], ['text', 'Текст']];
 
-export async function render(root) {
+export async function render(root, { app } = {}) {
   let fields = {};
   let draft = {};
   const bar = saveBar({
@@ -48,8 +48,11 @@ export async function render(root) {
     }
   }
 
-  const todayIso = todayLocal();
-  const today = isoWeekday(todayIso);
+  // «сегодня» — по часам школы (часовой пояс бота), даже если вкладка открыта со вчера
+  const todayIso = () => todayLocal(app?.overview?.bot?.timezone);
+  const today = isoWeekday(todayIso());
+  const groupsBox = h('div', h('div.skeleton', { style: { height: '60px' } }));
+  let groupsLoaded = false;
 
   function dayRow(d) {
     const day = draft['schedule.days'][d];
@@ -78,7 +81,8 @@ export async function render(root) {
 
   function draw() {
     if (!draft['schedule.days']) return;
-    const paused = fields['schedule.pausedUntil'];
+    const pausedRaw = fields['schedule.pausedUntil'];
+    const paused = pausedRaw === 'forever' || (pausedRaw && pausedRaw >= todayIso()) ? pausedRaw : null;
     const skip = fields['schedule.skipDates'] || [];
     const days = [1, 2, 3, 4, 5, 6, 7];
 
@@ -107,11 +111,14 @@ export async function render(root) {
       h('div', h('b', paused === 'forever' ? 'Рассылки на паузе' : `Рассылки на паузе по ${dm(paused)} включительно`), h('span', 'Бот не присылает ДЗ в группу сам. Новые задания запоминает и пришлёт после паузы. Ответы на вопросы и команды работают.')),
       h('button.btn.btn-primary.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': null }, '▶️ Рассылки снова включены') }, icon('play'), 'Продолжить')) : null;
 
-    const pauseDate = h('input.input.sm', { type: 'date', min: todayIso, value: addDaysIso(todayIso, 6), 'aria-label': 'Пауза до', style: { width: '170px' } });
-    const skipDate = h('input.input.sm', { type: 'date', min: todayIso, value: addDaysIso(todayIso, 1), 'aria-label': 'Пропустить день', style: { width: '170px' } });
+    const pauseDate = h('input.input.sm', { type: 'date', min: todayIso(), value: addDaysIso(todayIso(), 6), 'aria-label': 'Пауза до', style: { width: '170px' } });
+    const skipDate = h('input.input.sm', { type: 'date', min: todayIso(), value: addDaysIso(todayIso(), 1), 'aria-label': 'Пропустить день', style: { width: '170px' } });
 
-    const groupsBox = h('div', h('div.skeleton', { style: { height: '60px' } }));
-    loadGroups(groupsBox);
+    // группы загружаем один раз, а не при каждом изменении графика (это запрос к WhatsApp)
+    if (!groupsLoaded) {
+      groupsLoaded = true;
+      loadGroups(groupsBox);
+    }
 
     content.replaceChildren(
       pauseBanner || h('span'),
@@ -125,8 +132,8 @@ export async function render(root) {
             body: h('div.stack',
               h('p.hint', { style: { margin: 0 } }, 'Каникулы, карантин или просто не нужно — бот замолчит в группе, но будет отвечать на вопросы.'),
               h('div.row',
-                h('button.btn.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': todayIso }, '⏸ Сегодня без рассылок') }, 'Сегодня'),
-                h('button.btn.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': addDaysIso(todayIso, 6) }, '⏸ Пауза на неделю') }, 'Неделя'),
+                h('button.btn.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': todayIso() }, '⏸ Сегодня без рассылок') }, 'Сегодня'),
+                h('button.btn.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': addDaysIso(todayIso(), 6) }, '⏸ Пауза на неделю') }, 'Неделя'),
                 h('button.btn.btn-sm', { type: 'button', onclick: () => saveNow({ 'schedule.pausedUntil': 'forever' }, '⏸ Рассылки на паузе до отмены') }, 'До отмены')),
               h('div.row', pauseDate, h('button.btn.btn-sm', { type: 'button', onclick: () => pauseDate.value && saveNow({ 'schedule.pausedUntil': pauseDate.value }, `⏸ Пауза по ${dm(pauseDate.value)}`) }, icon('pause'), 'Пауза по дату'))),
           }),

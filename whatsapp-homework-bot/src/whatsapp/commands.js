@@ -5,6 +5,7 @@ import { ConfigError, parseClock } from '../config.js';
 import { isPaused } from '../settings.js';
 import { addDays, mondayOf, nowParts, onDay, parseDayArg, formatClock, toDM, WEEKDAYS_ACC, weekdayOf } from '../utils/dates.js';
 import { truncate } from '../utils/text.js';
+import { senderPhone } from './identity.js';
 
 const TODAY_CUTOFF_MINUTES = 12 * 60; // до полудня "!дз" показывает задания на сегодня
 
@@ -162,7 +163,7 @@ export class Commands {
             await this.reply(ctx, 'Нет привязанных групп. Напишите !привязать в группе класса.');
             return true;
           }
-          await this.scheduler.sendDigest({ targets, force: true });
+          await this.scheduler.sendDigest({ targets, force: true, scope: this.scheduler.todayScope() });
           if (!ctx.isGroup) await this.reply(ctx, `✅ Отправил ДЗ в группы: ${targets.length}`);
           return true;
         }
@@ -463,6 +464,12 @@ export class Commands {
     }
     if (!this.panel) {
       await this.reply(ctx, 'Панель управления выключена (ADMIN_PANEL=false).');
+      return true;
+    }
+    // полный доступ к панели — только номерам из ADMIN_NUMBERS (админам группы — нет)
+    const phone = await senderPhone(ctx, this.wa.sock).catch(() => null);
+    if (!ctx.isOwner && !(phone && this.config.whatsapp.admins.includes(phone))) {
+      await this.reply(ctx, '⛔ Ссылка на панель — только для номеров из ADMIN_NUMBERS.');
       return true;
     }
     const link = this.panel.oneTimeLink(ctx.sender || ctx.chat);

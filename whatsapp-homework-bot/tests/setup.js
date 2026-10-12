@@ -63,7 +63,7 @@ export function setup(env = {}, { withInbox = false } = {}) {
   core.today = () => '2025-10-14';
   const assistant = new Assistant({ groq, homework, config, logger });
   core.assistant = assistant;
-  const scheduler = new Scheduler({ config, store, homework, wa, core, logger });
+  const scheduler = new Scheduler({ config, store, homework, wa, core, logger, settings });
   const commands = new Commands({ core, homework, wa, scheduler, config, logger, settings });
   const inbox = withInbox ? new Inbox({ file: null, logger }) : null;
   if (inbox) wa.on('sent', () => {}); // FakeWA не шлёт событий — исходящие пишем вручную в тестах

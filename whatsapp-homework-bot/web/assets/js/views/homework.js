@@ -1,7 +1,7 @@
 // Домашка: неделя из дневника, предпросмотр фото для класса, ДЗ вручную.
 import { addDaysIso, busy, del, todayLocal, dm, emptyState, get, h, humanDate, icon, isoWeekday, modal, post, toast, WEEKDAYS } from '../lib.js';
 
-export async function render(root) {
+export async function render(root, { app } = {}) {
   let monday = null;
   const title = h('h2');
   const weekBox = h('div.week');
@@ -84,7 +84,7 @@ export async function render(root) {
   }
 
   function addManual() {
-    const date = h('input.input', { type: 'date', value: addDaysIso(todayLocal(), 1) });
+    const date = h('input.input', { type: 'date', value: addDaysIso(todayLocal(app?.overview?.bot?.timezone), 1) });
     const subject = h('input.input', { placeholder: 'Например: Алгебра', maxlength: 80 });
     const text = h('textarea.textarea', { placeholder: 'Например: № 250–255, повторить формулы', maxlength: 2000 });
     const save = h('button.btn.btn-primary', { type: 'button' }, icon('plus'), 'Добавить');
