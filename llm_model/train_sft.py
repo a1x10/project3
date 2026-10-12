@@ -81,9 +81,13 @@ def main():
     args = p.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.base)
-    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base, torch_dtype=torch.bfloat16 if bf16 else torch.float32)
+    # bf16 — на новых GPU; fp16 — на T4 (бесплатный Colab/Kaggle); fp32 — на CPU.
+    # При полном fine-tune в fp16 веса держим в fp32, иначе AMP не сможет обновлять градиенты.
+    cuda = torch.cuda.is_available()
+    bf16 = cuda and torch.cuda.is_bf16_supported()
+    fp16 = cuda and not bf16
+    dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 and not args.full else torch.float32
+    model = AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=dtype)
 
     if not args.full:
         from peft import LoraConfig, get_peft_model
@@ -112,6 +116,7 @@ def main():
             save_strategy="epoch",
             save_total_limit=2,
             bf16=bf16,
+            fp16=fp16,
             gradient_checkpointing=args.full,
             remove_unused_columns=False,
             report_to="none",
