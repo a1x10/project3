@@ -119,7 +119,7 @@ export class BilimClassClient {
 
   async doLogin() {
     const { login, password } = this.credentials;
-    if (!login || !password) throw new BilimAuthError('Не заданы BILIM_LOGIN / BILIM_PASSWORD');
+    if (!login || !password) throw new BilimAuthError('Не заданы логин и пароль BilimClass — укажите их в панели («Ключи и доступ») или в .env (BILIM_LOGIN / BILIM_PASSWORD)');
     if (this.authFailedAt && Date.now() - this.authFailedAt < AUTH_RETRY_PAUSE_MS) {
       throw new BilimAuthError(this.authFailMessage);
     }

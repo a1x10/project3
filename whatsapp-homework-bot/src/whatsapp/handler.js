@@ -4,14 +4,42 @@ import { BilimAuthError } from '../bilimclass/client.js';
 import { errText } from '../logger.js';
 import { RateLimiter } from '../utils/ratelimit.js';
 import { parseCommand } from './commands.js';
-import { isBotJid } from './identity.js';
+import { isBotJid, senderPhone } from './identity.js';
+import { detectIntent } from './intents.js';
 import { parseMessage } from './message.js';
 
 const MAX_MESSAGE_AGE_MS = 3 * 60 * 1000; // старые сообщения (пришедшие после переподключения) не обрабатываем
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const GREETING = /^(привет\S*|здравствуй\S*|здрасьте|салам\S*|салем\S*|сәлем\S*|қайырлы\s+\S+|добр\S+\s+(утро|день|вечер)|хай|hi|hello|hey|ку|йо)[\s!.,)]*$/i;
+
+// Длинный ответ — несколькими сообщениями, как пишут люди (не больше трёх)
+export function splitHuman(text, { max = 3, minSize = 450 } = {}) {
+  const clean = String(text || '').trim();
+  if (clean.length <= minSize) return [clean];
+  const paragraphs = clean.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (paragraphs.length < 2) return [clean];
+  const target = Math.max(minSize * 0.6, clean.length / max);
+  const chunks = [];
+  let current = '';
+  for (const paragraph of paragraphs) {
+    if (current && current.length + paragraph.length > target && chunks.length < max - 1) {
+      chunks.push(current);
+      current = paragraph;
+    } else {
+      current = current ? `${current}\n\n${paragraph}` : paragraph;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+// Сколько «печатать» сообщение: ~35 знаков в секунду, от 1 до 7 секунд, с небольшим разбросом
+export const typingMs = (text, random = Math.random) => Math.min(7000, Math.max(1000, String(text).length * 28)) + Math.round(random() * 500);
 
 export class MessageHandler {
-  constructor({ config, core, wa, homework, assistant, commands, logger }) {
+  constructor({ config, core, wa, homework, assistant, commands, logger, inbox = null }) {
+    this.inbox = inbox; // журнал переписки для панели
+    this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     this.config = config;
     this.core = core;
     this.wa = wa;
@@ -49,13 +77,53 @@ export class MessageHandler {
     return false;
   }
 
-  async reply(ctx, text) {
-    const sent = await this.wa.sendText(ctx.chat, text, { quoted: ctx.raw, maxAgeMs: 10 * 60 * 1000 });
+  trackBotMessage(sent) {
     if (sent?.key?.id) {
       this.botMessageIds.add(sent.key.id);
       if (this.botMessageIds.size > 1000) this.botMessageIds.delete(this.botMessageIds.values().next().value);
     }
+  }
+
+  async reply(ctx, text, { quote = true } = {}) {
+    const sent = await this.wa.sendText(ctx.chat, text, { quoted: quote ? ctx.raw : undefined, maxAgeMs: 10 * 60 * 1000 });
+    this.trackBotMessage(sent);
     return sent;
+  }
+
+  // Ответ «как человек»: прочитал → печатает (по длине текста) → пишет; длинное — несколькими сообщениями.
+  // В личке не цитируем вопрос (так в переписке не делают), в группе цитируем, чтобы было видно, кому ответ.
+  async replyHuman(ctx, text, { startedAt = Date.now() } = {}) {
+    if (!this.config.ai.humanLike) return this.reply(ctx, text);
+    const parts = splitHuman(text);
+    for (let i = 0; i < parts.length; i += 1) {
+      await this.wa.typing(ctx.chat, true);
+      const already = i === 0 ? Date.now() - startedAt : 0; // пока ИИ думал, «печатание» уже шло
+      await this.sleep(Math.max(0, typingMs(parts[i]) - already));
+      const sent = await this.wa.sendText(ctx.chat, parts[i], { quoted: i === 0 && ctx.isGroup ? ctx.raw : undefined, maxAgeMs: 10 * 60 * 1000 });
+      this.trackBotMessage(sent);
+      if (i < parts.length - 1) {
+        await this.wa.typing(ctx.chat, false);
+        await this.sleep(400 + Math.round(Math.random() * 700));
+      }
+    }
+    return null;
+  }
+
+  // Первое сообщение в личке: кто я, что умею и честно — что переписку видит админ класса
+  async welcome(ctx) {
+    const className = this.homework.client?.session?.className;
+    const name = ctx.name ? `, ${ctx.name.split(' ')[0]}` : '';
+    const lines = [
+      `Привет${name}! 👋 Я ${this.config.ai.botName} — бот${className ? ` ${className} класса` : ' класса'}, помогаю с домашкой.`,
+      '',
+      'Пиши обычными словами:',
+      '• «что задали на завтра» — скину ДЗ из дневника',
+      '• «что по алгебре?» или «дз на пятницу»',
+      '• «расписание на завтра»',
+    ];
+    if (this.assistant.enabled) lines.push(`• вопрос по заданию или фото задания${this.config.ai.voice !== 'off' ? ' (можно голосовым)' : ''} — объясню`);
+    lines.push('', 'ℹ️ Переписку с ботом может видеть админ класса.');
+    await this.reply(ctx, lines.join('\n'), { quote: false });
   }
 
   async handle(msg) {
@@ -89,11 +157,46 @@ export class MessageHandler {
     const label = ctx.text ? (ctx.hasImage ? `[фото] ${ctx.text}` : ctx.text) : ctx.hasImage ? '[фото]' : '';
     if (label && !command) this.remember(ctx.chat, { name: ctx.name || 'Ученик', text: label, fromBot: false });
 
+    // Личка: в журнал для панели; новому собеседнику — приветствие
+    if (!ctx.isGroup && !ctx.fromMe) {
+      const isNew = this.inbox?.isNew(ctx.chat) ?? false;
+      this.inbox?.record(ctx.chat, {
+        dir: 'in', text: ctx.text, media: ctx.hasImage ? 'image' : ctx.isVoice ? 'voice' : null, name: ctx.name, id: ctx.id,
+        phone: await senderPhone(ctx, this.wa.sock).catch(() => null) || '',
+      });
+      this.core.countUsage('dm');
+      if (isNew && !command) {
+        await this.welcome(ctx);
+        if (GREETING.test(ctx.text) || (!ctx.text && !ctx.hasImage && !ctx.isVoice)) return;
+      }
+    }
+
     if (command) {
       await this.runCommand(ctx, command);
       return;
     }
+    // админ отключил ИИ в этом чате или отвечает сам — бот молчит (команды работают)
+    if (this.inbox && !this.inbox.aiAllowed(ctx.chat)) return;
+    if (await this.tryIntent(ctx)) return;
     await this.maybeAnswer(ctx);
+  }
+
+  // Просьба обычными словами: в личке — всегда, в группе — когда к боту обратились («бот, скинь дз на завтра»)
+  async tryIntent(ctx) {
+    if (!ctx.text) return false;
+    let text = ctx.text;
+    if (ctx.isGroup) {
+      const call = this.explicitCall(ctx);
+      if (!call.explicit) return false;
+      text = call.question;
+    }
+    const intent = detectIntent(text, this.homework.today());
+    if (!intent) return false;
+    if (ctx.isGroup) this.inbox?.record(ctx.chat, { dir: 'in', text: ctx.text, name: ctx.name, id: ctx.id });
+    this.logger.debug({ intent }, 'Просьба обычными словами');
+    if (this.config.ai.humanLike) await this.wa.markRead(ctx.raw.key);
+    await this.runCommand(ctx, intent);
+    return true;
   }
 
   async runCommand(ctx, command) {
@@ -196,21 +299,30 @@ export class MessageHandler {
       return;
     }
 
-    await this.wa.typing(ctx.chat, true);
+    const startedAt = Date.now();
+    const human = this.config.ai.humanLike;
+    if (human) await this.wa.markRead(ctx.raw.key);
+    // «печатает…» появляется не мгновенно, а как у человека — через секунду после прочтения
+    const typingTimer = setTimeout(() => this.wa.typing(ctx.chat, true), human ? 600 + Math.round(Math.random() * 700) : 0);
+    if (ctx.isGroup) this.inbox?.record(ctx.chat, { dir: 'in', text: question || ctx.text || '', media: image ? 'image' : null, name: ctx.name, id: ctx.id });
     try {
       // сам вопрос в историю не входит (команды туда и не попадают)
-      const history = fromCommand ? this.recent(ctx.chat) : this.recent(ctx.chat).slice(0, -1);
+      const isPrivate = !ctx.isGroup;
+      let history = fromCommand ? this.recent(ctx.chat) : this.recent(ctx.chat).slice(0, -1);
+      // в личке — память переписки за сутки (переживает перезапуск бота)
+      if (isPrivate && this.inbox) history = this.inbox.history(ctx.chat, this.config.ai.historySize + 1).slice(0, -1);
       const quoted = ctx.quoted?.text ? { text: ctx.quoted.text, name: isBotJid(ctx.quoted.participant, this.wa.me) ? this.config.ai.botName : '' } : null;
-      const text = await this.assistant.answer({ question, senderName: ctx.name, history, quoted, image });
+      const text = await this.assistant.answer({ question, senderName: ctx.name, history, quoted, image, isPrivate });
+      clearTimeout(typingTimer);
       this.core.countUsage('ai');
       if (image) this.core.countUsage('vision');
-      await this.reply(ctx, text);
+      await this.replyHuman(ctx, text, { startedAt });
       this.remember(ctx.chat, { name: this.config.ai.botName, text, fromBot: true });
       this.core.clearAlert('groq-auth');
     } catch (error) {
       this.logger.error({ err: errText(error), status: error.status }, 'Ошибка ИИ');
       if (error.status === 401 || error.status === 403) {
-        this.core.notifyAdmins('groq-auth', 'Groq отклоняет ключ API (GROQ_API_KEY). Проверьте ключ на console.groq.com/keys');
+        this.core.notifyAdmins('groq-auth', 'Groq не принимает ни один ключ API. Добавьте рабочий ключ в панели («Ключи и доступ») или в .env (GROQ_API_KEY). Ключ: console.groq.com/keys');
       }
       if (error instanceof BilimAuthError) {
         this.core.notifyAdmins('bilim-auth', `Не могу войти в BilimClass: ${errText(error)}`);
@@ -220,6 +332,7 @@ export class MessageHandler {
         await this.reply(ctx, `😔 ${busy}. Попробуйте через минуту.`);
       }
     } finally {
+      clearTimeout(typingTimer);
       await this.wa.typing(ctx.chat, false);
     }
   }

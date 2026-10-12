@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Бот ДЗ — домашка сама приходит в WhatsApp</title>
+  <meta name="description" content="WhatsApp-бот класса: берёт домашнее задание из электронного дневника BilimClass, после уроков присылает его в чат скриншотом, а ИИ помогает разобраться с заданиями.">
+  <meta name="theme-color" content="#06080d">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/NotoSans-Bold.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="/assets/css/base.css">
+  <link rel="stylesheet" href="/assets/css/landing.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three/three.module.min.js","three/addons/":"/vendor/three/addons/"}}</script>
+  <script type="module" src="/assets/js/landing.js"></script>
+</head>
+<body class="landing">
+  <svg class="sprite" aria-hidden="true" width="0" height="0">
+    <defs>
+      <linearGradient id="logo-grad" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#25d366"/><stop offset="0.5" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/>
+      </linearGradient>
+      <symbol id="mark" viewBox="0 0 48 48">
+        <path d="M24 4C12.95 4 4 12.4 4 22.76c0 4.06 1.38 7.82 3.72 10.9L6 42.5l9.3-2.88A21.3 21.3 0 0 0 24 41.5c11.05 0 20-8.4 20-18.74S35.05 4 24 4Z" fill="url(#logo-grad)"/>
+        <path d="M15 16.5c3.2-.9 6.2-.6 9 1.1 2.8-1.7 5.8-2 9-1.1v13.2c-3.2-.9-6.2-.6-9 1.1-2.8-1.7-5.8-2-9-1.1V16.5Z" fill="#06080d" opacity=".9"/>
+        <path d="M24 17.6v13.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="m17.6 23.6 2.4 2.4 3-3.6" stroke="#25d366" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+    </defs>
+  </svg>
+  <canvas id="scene" aria-hidden="true"></canvas>
+  <div class="backdrop" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <div class="loader" id="loader" aria-hidden="true">
+    <div class="loader-mark"><svg viewBox="0 0 48 48"><use href="#mark"/></svg></div>
+    <div class="loader-bar"><i></i></div>
+  </div>
+
+  <header class="nav" id="nav">
+    <a class="brand" href="#top" aria-label="Бот ДЗ — наверх">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><use href="#mark"/></svg>
+      <span>Бот&nbsp;ДЗ</span>
+    </a>
+    <nav class="nav-links" aria-label="Разделы">
+      <a href="#story">Как работает</a>
+      <a href="#reliability">Надёжность</a>
+      <a href="#features">Панель</a>
+    </nav>
+    <div class="nav-right">
+      <span class="live" id="live" hidden><i></i><span>бот онлайн</span></span>
+      <a class="btn btn-sm btn-primary" href="/app">Войти</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero" data-chapter="0">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="chip">WhatsApp</span><span class="x">×</span><span class="chip">BilimClass</span><span class="x">×</span><span class="chip">ИИ</span></p>
+        <h1>Домашка сама<br>приходит <span class="grad-text">в&nbsp;чат класса</span></h1>
+        <p class="lead">Бот берёт задания из электронного дневника, после уроков присылает их в группу настоящим скриншотом, а ИИ объясняет, как решать — днём и ночью.</p>
+        <div class="hero-cta">
+          <a class="btn btn-lg btn-grad" href="/app">Открыть панель
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-lg btn-ghost" href="#story">Как это работает</a>
+        </div>
+        <ul class="hero-facts">
+          <li><b>0</b><span>ручной работы в день</span></li>
+          <li><b>24/7</b><span>на связи</span></li>
+          <li><b>2</b><span>пути к дневнику</span></li>
+        </ul>
+      </div>
+      <a class="scroll-hint" href="#story" aria-label="Листайте вниз"><span></span></a>
+    </section>
+
+    <div id="story">
+      <section class="chapter left" data-chapter="1">
+        <article class="card reveal">
+          <p class="time"><span class="dot"></span>08:00 — 14:30 · уроки</p>
+          <h2>Учитель записывает ДЗ в&nbsp;электронный дневник</h2>
+          <p>Бот тихо проверяет BilimClass каждые полчаса. Только свежие данные — если дневник недоступен, бот честно подождёт, а не пришлёт вчерашнее.</p>
+          <div class="mock-diary" aria-hidden="true">
+            <div class="row"><span class="subj">Алгебра</span><span class="hw">№ 250–255, стр. 84</span></div>
+            <div class="row"><span class="subj">Русский язык</span><span class="hw">Упр. 312, выучить правило</span></div>
+            <div class="row new"><span class="subj">Физика</span><span class="hw">§ 12, вопросы 1–4</span><em>новое</em></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="chapter right" data-chapter="2">
+        <article class="card reveal">
+          <p class="time"><span class="dot"></span>14:45 · уроки закончились</p>
+          <h2>Бот знает расписание и&nbsp;ждёт конца уроков</h2>
+          <p>Через 15 минут после последнего урока бот собирает всё, что появилось в дневнике. Днём новое копится, срочное (на сегодня) — приходит сразу.</p>
+          <ol class="timeline" aria-hidden="true">
+            <li><i></i><span>14:30</span>последний урок</li>
+            <li class="on"><i></i><span>14:45</span>проверка дневника</li>
+            <li><i></i><span>14:46</span>ДЗ в чате класса</li>
+          </ol>
+        </article>
+      </section>
+
+      <section class="chapter left" data-chapter="3">
+        <article class="card reveal">
+          <p class="time"><span class="dot"></span>14:46 · в группе</p>
+          <h2>Скриншот дневника летит в&nbsp;WhatsApp</h2>
+          <p>«Домашнее задание на завтра» — настоящее фото из дневника, как будто его сделал староста. Только новое, без повторов. В воскресенье — только на понедельник, без завала на всю неделю.</p>
+          <div class="mock-chat" aria-hidden="true">
+            <div class="msg bot photo"><div class="ph"><i></i><i></i><i></i></div><span>📚 Домашнее задание на завтра</span><time>14:46</time></div>
+            <div class="msg me"><span>спасибо бот 🙏</span><time>14:47</time></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="chapter right" data-chapter="4">
+        <article class="card reveal">
+          <p class="time"><span class="dot"></span>19:20 · «как решить №250?»</p>
+          <h2>ИИ объясняет, как хороший репетитор</h2>
+          <p>Вопрос текстом, голосовым или фото задания — бот отвечает по шагам и видит, что именно задано в дневнике. Сочинения целиком не пишет: учит думать, а не списывать.</p>
+          <div class="mock-chat" aria-hidden="true">
+            <div class="msg me"><span>как решить номер 250? 🥲</span><time>19:20</time></div>
+            <div class="msg bot"><span><b>Смотри:</b> это система из двух уравнений. Выразим <i>y</i> из первого и подставим во второе…</span><time>19:20</time></div>
+            <div class="msg bot typing"><i></i><i></i><i></i></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="chapter left" data-chapter="5" id="reliability">
+        <article class="card reveal wide">
+          <p class="time"><span class="dot"></span>24/7 · сам себя чинит</p>
+          <h2>Не падает. А&nbsp;если что — чинится сам</h2>
+          <ul class="bullets">
+            <li><b>Два пути к дневнику.</b> Сломалось API — бот открывает сайт BilimClass в браузере и берёт данные оттуда.</li>
+            <li><b>Вход не слетает.</b> Сессия продлевается сама, как в приложении; при сбое — повторный вход.</li>
+            <li><b>Сообщения не теряются.</b> Очередь переживает перезагрузку сервера и обрывы связи.</li>
+            <li><b>Сторож.</b> Следит за WhatsApp, памятью и зависаниями и восстанавливает работу без человека.</li>
+            <li><b>Тревога — только админу.</b> Технические сообщения уходят в личку админа, а не в чат класса.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="chapter features" data-chapter="6" id="features">
+        <header class="features-head reveal">
+          <p class="time"><span class="dot"></span>панель управления</p>
+          <h2>Всё под контролем — <span class="grad-text">с&nbsp;телефона</span></h2>
+          <p>Красивая и безопасная панель: вход по паролю или коду из WhatsApp.</p>
+        </header>
+        <div class="feature-grid">
+          <article class="feature reveal"><span class="ico">🗓</span><h3>График по дням</h3><p>После уроков, в своё время или выключено — для каждого дня недели. Пауза и пропуск дня в один клик.</p></article>
+          <article class="feature reveal"><span class="ico">💬</span><h3>Переписка</h3><p>Личные чаты учеников с ботом. Можно ответить самому — ИИ в этот момент подождёт.</p></article>
+          <article class="feature reveal"><span class="ico">🔑</span><h3>Ключи и доступ</h3><p>Ключи ИИ, запасной ИИ, вход в дневник, привязка WhatsApp по QR — без доступа к серверу.</p></article>
+          <article class="feature reveal"><span class="ico">⌨️</span><h3>Терминал</h3><p>Команды бота и живой журнал прямо в браузере. Безопасно: это не shell сервера.</p></article>
+          <article class="feature reveal"><span class="ico">🔔</span><h3>Уведомления</h3><p>Журнал всех проблем и восстановлений, вечерний отчёт админу.</p></article>
+          <article class="feature reveal"><span class="ico">🧠</span><h3>ИИ как человек</h3><p>Печатает, пишет короткими сообщениями, помнит разговор — и честно говорит, что он бот.</p></article>
+        </div>
+      </section>
+
+      <section class="cta" data-chapter="7">
+        <div class="cta-card reveal">
+          <h2>Готов к работе <span class="grad-text">каждый учебный&nbsp;день</span></h2>
+          <p>Откройте панель, чтобы настроить график, проверить ключи и посмотреть, как бот общается с классом.</p>
+          <a class="btn btn-lg btn-primary" href="/app">Войти в панель</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <span>Бот ДЗ · сделано для своего класса</span>
+    <span class="muted">Неофициальный проект, не связан с BilimClass. Данные дневника видны только боту класса.</span>
+  </footer>
+</body>
+</html>

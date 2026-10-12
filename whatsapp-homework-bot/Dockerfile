@@ -1,6 +1,7 @@
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production \
+    RUNNING_IN_DOCKER=1 \
     DATA_DIR=/app/data \
     HTTP_HOST=0.0.0.0 \
     HTTP_PORT=3000
@@ -20,6 +21,7 @@ RUN npm ci --omit=dev \
 COPY src ./src
 COPY scripts ./scripts
 COPY assets ./assets
+COPY web ./web
 RUN mkdir -p /app/data && chown -R node:node /app/data
 
 USER node

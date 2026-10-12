@@ -17,8 +17,12 @@ describe('настройки', () => {
     assert.equal(c.features.homeworkAttachedTo, 'due');
   });
 
-  it('без ключа Groq ИИ выключается', () => {
-    assert.equal(buildConfig({}).ai.mode, 'off');
+  it('план рассылки по дням: пн–сб после уроков, вс — только «на завтра» в 18:00', () => {
+    const { days } = buildConfig({}).schedule;
+    for (let d = 1; d <= 6; d += 1) assert.deepEqual(days[d], { mode: 'lessons', time: 18 * 60, scope: 'new' });
+    assert.deepEqual(days[7], { mode: 'time', time: 18 * 60, scope: 'tomorrow' });
+    assert.ok(Object.values(buildConfig({ DIGEST_MODE: 'off' }).schedule.days).every((d) => d.mode === 'off'));
+    assert.deepEqual(buildConfig({ DIGEST_MODE: 'fixed', DIGEST_TIME: '19:00' }).schedule.days[2], { mode: 'time', time: 19 * 60, scope: 'new' });
   });
 
   it('номера телефонов нормализуются', () => {

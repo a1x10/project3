@@ -1,5 +1,6 @@
 // ИИ-помощник: решает, отвечать ли на сообщение, и формирует ответ с учётом ДЗ из дневника.
 import { markdownToWhatsApp, normalize } from '../utils/text.js';
+import { GroqError } from './groq.js';
 import { classifierPrompt, systemPrompt } from './prompts.js';
 
 const QUESTION_WORDS = [
@@ -56,16 +57,45 @@ function clipAnswer(text, max) {
   return `${cut.slice(0, lastBreak > max * 0.6 ? lastBreak + 1 : max).trimEnd()}\n…`;
 }
 
+// Картинки запасному ИИ не отправляем (не все модели их понимают) — только текст
+function textOnly(messages) {
+  return messages.map((m) => (Array.isArray(m.content)
+    ? { ...m, content: m.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') + '\n(К сообщению было приложено фото, но сейчас я его не вижу.)' }
+    : m));
+}
+
 export class Assistant {
-  constructor({ groq, homework, config, logger }) {
+  constructor({ groq, homework, config, logger, backup = null }) {
     this.groq = groq;
     this.homework = homework;
     this.config = config;
     this.logger = logger;
+    this.backup = backup; // BackupAi — запасной провайдер, если Groq недоступен
+    this.lastProvider = null;
+  }
+
+  get hasProvider() {
+    return Boolean(this.groq.hasKey ?? this.config.groq.apiKey) || Boolean(this.backup?.client());
   }
 
   get enabled() {
-    return this.config.ai.mode !== 'off' && Boolean(this.config.groq.apiKey);
+    return this.config.ai.mode !== 'off' && this.hasProvider;
+  }
+
+  // Запрос к ИИ: сначала Groq, при сбое (нет ключа, перегрузка, недоступен) — запасной провайдер, если настроен
+  async complete(params) {
+    try {
+      const result = await this.groq.chat(params);
+      this.lastProvider = 'groq';
+      return result;
+    } catch (error) {
+      const backup = this.backup?.client();
+      if (!backup || !(error instanceof GroqError) || error.status === 400) throw error;
+      this.logger?.warn({ err: error.message }, 'Groq недоступен — отвечаю через запасной ИИ');
+      const result = await backup.client.chat({ ...params, model: backup.model, fallbacks: [], messages: textOnly(params.messages) });
+      this.lastProvider = 'backup';
+      return { ...result, viaBackup: true, groqError: error };
+    }
   }
 
   // Решение «отвечать ли» для сообщений, где бота не звали явно (режим smart)
@@ -74,7 +104,7 @@ export class Assistant {
     if (!looksLikeStudyQuestion(text, subjects)) return { respond: false, reason: 'эвристика' };
     try {
       const transcript = recent.slice(-4).map((m) => `[${m.name}]: ${m.text}`).join('\n');
-      const { text: raw } = await this.groq.chat({
+      const { text: raw } = await this.complete({
         model: this.config.groq.fastModel,
         fallbacks: [this.config.groq.model],
         messages: [
@@ -94,39 +124,41 @@ export class Assistant {
     return { respond: true, reason: 'эвристика (классификатор недоступен)' };
   }
 
-  // Сформировать ответ. history — недавние сообщения чата [{name, text, fromBot}]
-  async answer({ question, senderName, history = [], quoted = null, image = null }) {
+  // Сформировать ответ. history — недавние сообщения чата [{name, text, fromBot}].
+  // В личке история идёт настоящим диалогом (user/assistant), в группе — как стенограмма чата.
+  async answer({ question, senderName, history = [], quoted = null, image = null, isPrivate = false }) {
     const context = await this.homework.aiContext();
-    const system = systemPrompt({ botName: this.config.ai.botName, style: this.config.ai.style, context });
+    const { botName, style, humanLike } = this.config.ai;
+    const system = systemPrompt({ botName, style, context, humanLike, isPrivate, senderName });
+    const recent = history.slice(-this.config.ai.historySize);
 
     const parts = [];
-    const recent = history.slice(-this.config.ai.historySize);
-    if (recent.length) {
+    const dialog = [];
+    if (isPrivate) {
+      for (const m of recent) dialog.push({ role: m.fromBot ? 'assistant' : 'user', content: m.text.slice(0, 1500) });
+    } else if (recent.length) {
       parts.push('Недавние сообщения в чате (для контекста):');
-      for (const m of recent) parts.push(`[${m.fromBot ? this.config.ai.botName : m.name}]: ${m.text.slice(0, 600)}`);
+      for (const m of recent) parts.push(`[${m.fromBot ? botName : m.name}]: ${m.text.slice(0, 600)}`);
       parts.push('');
     }
     if (quoted?.text) parts.push(`Пользователь отвечает на сообщение${quoted.name ? ` от ${quoted.name}` : ''}: «${quoted.text.slice(0, 1500)}»`, '');
-    parts.push(`Вопрос от ${senderName || 'ученика'}:`, question || (image ? 'Помоги с заданием на фото.' : ''));
+    if (isPrivate) parts.push(question || (image ? 'Помоги с заданием на фото.' : ''));
+    else parts.push(`Вопрос от ${senderName || 'ученика'}:`, question || (image ? 'Помоги с заданием на фото.' : ''));
     const userText = parts.join('\n');
 
-    let messages;
     let model = this.config.groq.model;
     let fallbacks = this.config.groq.fallbackModels;
+    let userMessage = { role: 'user', content: userText };
     if (image) {
       model = this.config.groq.visionModel;
       fallbacks = [];
       const dataUrl = `data:${image.mimetype || 'image/jpeg'};base64,${image.buffer.toString('base64')}`;
-      messages = [
-        { role: 'system', content: system },
-        { role: 'user', content: [{ type: 'text', text: userText }, { type: 'image_url', image_url: { url: dataUrl } }] },
-      ];
-    } else {
-      messages = [{ role: 'system', content: system }, { role: 'user', content: userText }];
+      userMessage = { role: 'user', content: [{ type: 'text', text: userText }, { type: 'image_url', image_url: { url: dataUrl } }] };
     }
+    const messages = [{ role: 'system', content: system }, ...dialog, userMessage];
 
-    const result = await this.groq.chat({ model, fallbacks, messages, maxTokens: 3000, temperature: 0.3, reasoningEffort: 'medium' });
-    this.logger?.debug({ model: result.model, usage: result.usage }, 'Ответ ИИ получен');
+    const result = await this.complete({ model, fallbacks, messages, maxTokens: 3000, temperature: humanLike ? 0.5 : 0.3, reasoningEffort: 'medium' });
+    this.logger?.debug({ model: result.model, usage: result.usage, backup: Boolean(result.viaBackup) }, 'Ответ ИИ получен');
     return clipAnswer(markdownToWhatsApp(result.text), this.config.ai.maxAnswerChars);
   }
 

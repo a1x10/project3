@@ -2,6 +2,9 @@
 // Входит в BilimClass, показывает ДЗ на ближайший день и проверяет ключ Groq. В WhatsApp ничего не отправляет.
 import path from 'node:path';
 import { GroqClient } from '../src/ai/groq.js';
+import { KeyRing } from '../src/ai/keys.js';
+import { SecretStore } from '../src/secrets.js';
+import { describeDay, Settings } from '../src/settings.js';
 import { BilimClassClient } from '../src/bilimclass/client.js';
 import { loadConfig } from '../src/config.js';
 import { formatDay, formatWeek } from '../src/homework/format.js';
@@ -16,6 +19,12 @@ const bad = (s) => console.log(`❌ ${s}`);
 const info = (s) => console.log(`   ${s}`);
 
 const config = loadConfig();
+// то, что задано в панели управления, важнее .env
+new Settings({ config }).load();
+const secrets = new SecretStore(path.join(config.dataDir, 'secrets.json')).load();
+const savedBilim = secrets.get('bilim');
+if (savedBilim?.login && savedBilim?.password) Object.assign(config.bilim, { login: savedBilim.login, password: savedBilim.password });
+const keys = new KeyRing({ secrets, envKey: config.groq.apiKey }).load();
 let failed = false;
 
 console.log('\n— BilimClass —');
@@ -28,11 +37,9 @@ try {
   info(`schoolId=${session.schoolId} groupId=${session.groupId} учебный год=${session.eduYear}`);
   const today = homework.today();
   const end = await homework.lessonsEnd(today, { fresh: true });
-  if (config.schedule.digestMode === 'after_lessons') {
-    info(end != null
-      ? `Сегодня уроки до ${formatClock(end)} → рассылка новых ДЗ в ${formatClock(Math.min(end + config.schedule.digestDelayMinutes, 1439))}`
-      : `Сегодня уроков нет → рассылка (если завтра учебный день) в ${formatClock(config.schedule.digestTime)}`);
-  }
+  info('График рассылки:');
+  for (let d = 1; d <= 7; d += 1) info(`  ${describeDay(d, config.schedule.days[d], { delay: config.schedule.digestDelayMinutes })}`);
+  if (end != null) info(`Сегодня уроки до ${formatClock(end)}`);
   const next = await homework.nextSchoolDay(today);
   if (next) {
     ok(`Ближайший учебный день: ${toDMY(next)}`);
@@ -76,10 +83,10 @@ try {
 }
 
 console.log('\n— Groq (ИИ) —');
-if (!config.groq.apiKey) {
-  bad('GROQ_API_KEY не задан — ИИ-ответы будут выключены. Получить ключ: https://console.groq.com/keys');
+if (!keys.hasKey) {
+  bad('Нет ключа Groq — ИИ-ответы будут выключены. Ключ: https://console.groq.com/keys (добавьте в .env или в панели)');
 } else {
-  const groq = new GroqClient(config.groq);
+  const groq = new GroqClient({ ...config.groq, keys });
   try {
     const { text, model } = await groq.chat({
       model: config.groq.model,

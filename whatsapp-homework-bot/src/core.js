@@ -1,10 +1,12 @@
 // Общие функции бота: какие группы обслуживаем, кто админ, уведомления админам, статистика.
+import { EventEmitter } from 'node:events';
 import { normalize } from './utils/text.js';
 import { nowParts } from './utils/dates.js';
 import { findParticipant, senderIds, senderPhone } from './whatsapp/identity.js';
 
-export class BotCore {
+export class BotCore extends EventEmitter {
   constructor({ config, store, wa, logger }) {
+    super();
     this.config = config;
     this.store = store;
     this.wa = wa;
@@ -110,16 +112,27 @@ export class BotCore {
     return false;
   }
 
-  // Сообщение админам в личку; одинаковые уведомления не чаще throttleMs
+  aiReady() {
+    return Boolean(this.assistant?.enabled);
+  }
+
+  // Техническое уведомление: в журнал панели и админам в личку WhatsApp (только им — не в группу).
+  // Одинаковые уведомления — не чаще throttleMs. level: error | warn | ok
   async notifyAdmins(key, text, throttleMs = 6 * 3600 * 1000) {
     const last = this.store.data.alerts[key] || 0;
     if (Date.now() - last < throttleMs) return;
+    const level = /recovered|^ok-/.test(key) || text.startsWith('✅') ? 'ok' : /auth|down|failed|invalid/.test(key) ? 'error' : 'warn';
+    const entry = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, key, text, level, at: Date.now() };
     this.store.update((s) => {
       s.alerts[key] = Date.now();
+      s.alertLog = [entry, ...(s.alertLog || [])].slice(0, 200);
     });
     this.logger.warn({ key }, `Уведомление админам: ${text}`);
+    this.emit('alert', entry);
+    if (this.config.notify?.whatsapp === false) return;
+    const icon = level === 'ok' ? '' : '⚠️ ';
     for (const phone of this.config.whatsapp.admins) {
-      this.wa.sendText(`${phone}@s.whatsapp.net`, `⚠️ *Бот ДЗ*\n${text}`, { persist: true, maxAgeMs: 24 * 3600 * 1000 }).catch(() => {});
+      this.wa.sendText(`${phone}@s.whatsapp.net`, `${icon}*Бот ДЗ*\n${text}`, { persist: true, maxAgeMs: 24 * 3600 * 1000 }).catch(() => {});
     }
   }
 
@@ -129,6 +142,28 @@ export class BotCore {
         delete s.alerts[key];
       });
     }
+  }
+
+  // Личное сообщение всем админам (без журнала тревог): коды входа, отчёты
+  messageAdmins(text, { maxAgeMs = 10 * 60 * 1000 } = {}) {
+    const admins = this.config.whatsapp.admins;
+    for (const phone of admins) this.wa.sendText(`${phone}@s.whatsapp.net`, text, { maxAgeMs }).catch(() => {});
+    return admins.length;
+  }
+
+  // Вечерний отчёт админу: что бот сделал за день
+  async dailyReport(now) {
+    const usage = this.store.data.usage[now.iso] || {};
+    const problems = (this.store.data.alertLog || []).filter((a) => a.at > Date.now() - 24 * 3600 * 1000 && a.level === 'error');
+    const lines = [
+      `📊 *Отчёт за ${now.iso.slice(8, 10)}.${now.iso.slice(5, 7)}*`,
+      `• Рассылка ДЗ: ${this.store.data.jobs.digest === now.iso ? 'отправлена ✅' : 'не было'}`,
+      `• Ответов ИИ: ${usage.ai || 0}${usage.voice ? `, голосовых: ${usage.voice}` : ''}${usage.vision ? `, фото: ${usage.vision}` : ''}`,
+      `• Сообщений в личке: ${usage.dm || 0}`,
+      `• WhatsApp: ${this.wa.isOpen ? 'на связи' : this.wa.status}, в очереди: ${this.wa.queue?.length || 0}`,
+      problems.length ? `• Проблемы: ${problems.map((p) => p.text).slice(0, 3).join(' / ')}` : '• Проблем не было 👌',
+    ];
+    this.messageAdmins(lines.join('\n'), { maxAgeMs: 3 * 3600 * 1000 });
   }
 
   today() {
