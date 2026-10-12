@@ -11,7 +11,27 @@
 | `chat.py` | контрольные вопросы / интерактивный чат |
 | `Modelfile`, `to_ollama.sh` | конвертация в GGUF Q8/Q4 и запуск в Ollama |
 
-## Запуск
+## Без видеокарты
+
+Обучать — в бесплатном облаке, запускать — у себя на ноутбуке. Ollama на CPU работает нормально.
+
+1. Откройте [colab_stella.ipynb в Colab](https://colab.research.google.com/github/a1x10/project3/blob/claude/tender-cray-foqpnc/llm_model/colab_stella.ipynb),
+   выберите *Среда выполнения → Сменить среду → T4 GPU* и нажмите *Выполнить всё* (~15–20 мин).
+2. Из Google Диска (папка `stella/`) скачайте `stella-1.5b-Q8_0.gguf` и `Modelfile` в одну папку.
+3. Установите [Ollama](https://ollama.com/download), в этой папке выполните:
+   ```
+   ollama create stella -f Modelfile
+   ollama run stella
+   ```
+
+Нужно 4+ ГБ свободной RAM, на обычном ноутбуке это ~10–25 токенов/с.
+Альтернатива Colab — Kaggle Notebooks (30 ч GPU в неделю бесплатно), тот же ноутбук.
+
+Обучать прямо на CPU тоже можно, но долго (часы): лучше взять модель 0.5B и
+оставить на ночь — `python train_sft.py --base Qwen/Qwen2.5-0.5B-Instruct --batch 2 --grad-accum 8`,
+затем `python export.py --base Qwen/Qwen2.5-0.5B-Instruct`. Для 1.5B на CPU нужно 16 ГБ RAM.
+
+## Запуск на машине с GPU
 
 ```bash
 pip install -r requirements.txt
