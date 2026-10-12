@@ -72,7 +72,8 @@ export class HomeworkPhotos {
     try {
       const shots = await this.screenshotter.captureDays(wanted.map((v) => ({
         date: v.date,
-        subjects: [...new Set(v.entries.map((e) => e.subject))],
+        // на снимке должны быть ВСЕ уроки дня (иначе это неполный снимок — лучше отправить карточку)
+        subjects: [...new Set([...(v.lessons || []).map((l) => l.subject), ...v.entries.map((e) => e.subject)])],
         key: v.entries.map((e) => `${e.subject}:${e.text}`).join('|'),
       })));
       if (shots.size) {
