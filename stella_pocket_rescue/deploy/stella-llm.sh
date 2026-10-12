@@ -149,7 +149,7 @@ main() {
     say "чат работает на облачном и резервном ИИ. Собрать: sudo stella update (нужен интернет)"
     exit 0
   fi
-  cmd=("$LLAMA_BIN" -m "$model" --host 127.0.0.1 --port 8081 -c "$ctx" -t "$threads" --parallel 1 "${extra[@]}")
+  cmd=("$LLAMA_BIN" -m "$model" --alias stella --host 127.0.0.1 --port 8081 -c "$ctx" -t "$threads" --parallel 1 "${extra[@]}")
   if [ -n "$TASKSET" ] && command -v "$TASKSET" >/dev/null 2>&1; then
     if "$TASKSET" -c "$cpus" true >/dev/null 2>&1; then
       cmd=("$TASKSET" -c "$cpus" "${cmd[@]}")
