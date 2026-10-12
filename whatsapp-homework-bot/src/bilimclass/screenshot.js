@@ -263,7 +263,12 @@ export class DiaryScreenshotter {
 
   async prepare(page) {
     await page.addStyleTag({ content: PAGE_CSS });
-    // прячем всё «висящее» поверх страницы: окна, баннеры, чат поддержки, кнопку «Сегодня»
+    await this.hideFloating(page);
+  }
+
+  // прячем всё «висящее» поверх страницы: окна, баннеры, чат поддержки, кнопку «Сегодня».
+  // Повторяем перед каждым снимком: после прокрутки сайт может показать такие кнопки заново.
+  async hideFloating(page) {
     await page.evaluate(() => {
       for (const el of document.querySelectorAll('body *')) {
         const { position } = getComputedStyle(el);
@@ -301,8 +306,8 @@ export class DiaryScreenshotter {
       for (let round = 0; round < 5; round += 1) {
         const r = el.getBoundingClientRect();
         let changed = false;
-        for (const fx of [0.08, 0.3, 0.5, 0.7, 0.92]) {
-          for (const fy of [0.08, 0.3, 0.5, 0.7, 0.92]) {
+        for (const fx of [0.02, 0.25, 0.5, 0.75, 0.98]) {
+          for (const fy of [0.02, 0.25, 0.5, 0.75, 0.98]) {
             const x = r.left + r.width * fx;
             const y = r.top + r.height * fy;
             if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
@@ -335,6 +340,7 @@ export class DiaryScreenshotter {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await block.scrollIntoViewIfNeeded().catch(() => {});
       await page.waitForTimeout(attempt === 1 ? 400 : 2000);
+      await this.hideFloating(page).catch(() => {});
       const fixed = await this.unveil(block).catch(() => ({ hidden: [], faded: [] }));
       const buffer = await block.screenshot({ type: 'jpeg', quality: 90, animations: 'disabled' });
       const ink = await inkRatio(buffer);
