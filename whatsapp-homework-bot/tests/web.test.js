@@ -71,6 +71,14 @@ describe('веб-панель', () => {
     }
   });
 
+  it('битая кука от другого сайта на localhost не ломает панель', async () => {
+    const res = await fetch(`${base}/`, { headers: { Cookie: 'other=100%; x=%E0%A4%A' } });
+    assert.equal(res.status, 200);
+    const api = await fetch(`${base}/api/auth/me`, { headers: { Cookie: 'other=100%' } });
+    assert.equal(api.status, 200);
+    assert.notEqual((await fetch(`${base}/api/chats/%E0%A4%A`, { headers: { Cookie: 'other=1' } })).status, 500);
+  });
+
   it('без входа данные панели недоступны', async () => {
     assert.equal((await call('/api/overview')).status, 401);
     assert.equal((await call('/api/events')).status, 401);
@@ -154,7 +162,7 @@ describe('веб-панель', () => {
     assert.match((await run('$(reboot)'))[0].t, /команда не найдена/);
     const dz = await run('dz 15.10');
     assert.ok(dz.some((l) => /№ 250/.test(l.t)));
-    assert.equal((await run('restart --yes'))[0].c, 'warn');
+    assert.match((await run('restart --yes'))[0].t, /Перезапуск недоступен/);
     assert.deepEqual(tokenize(`ai ask "как дела" 'и ещё'`), ['ai', 'ask', 'как дела', 'и ещё']);
   });
 

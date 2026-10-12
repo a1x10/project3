@@ -31,9 +31,12 @@ applyTheme(theme);
 
 // --- вход ---
 async function showAuth(reason) {
+  clearInterval(state.timer); // без входа не опрашиваем бота (иначе форма входа сбрасывалась бы каждые 30 с)
+  state.events?.close();
+  state.events = null;
+  if (!$('#auth').hidden && !reason) return; // форма входа уже на экране — не сбрасываем введённое
   $('#shell').hidden = true;
   $('#auth').hidden = false;
-  state.events?.close();
   let methods = { password: true, whatsapp: true };
   try {
     methods = (await get('/api/auth/me')).methods;
@@ -256,7 +259,10 @@ async function route() {
     if (state.route !== view) return;
     const container = h('div');
     root.replaceChildren(container);
-    state.cleanup = (await mod.render(container, { params, app: state, refreshOverview })) || null;
+    const cleanup = (await mod.render(container, { params, app: state, refreshOverview })) || null;
+    // пока раздел загружался, перешли в другой — сразу снимаем его подписки
+    if (state.route !== view || !container.isConnected) cleanup?.();
+    else state.cleanup = cleanup;
   } catch (error) {
     root.replaceChildren(h('div.empty', h('b', 'Не удалось открыть раздел'), error.message));
   }

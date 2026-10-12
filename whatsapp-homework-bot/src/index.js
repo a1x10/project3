@@ -101,7 +101,7 @@ async function main() {
     className: () => bilim.session?.className,
     notify: (key, text, throttle) => core.notifyAdmins(key, text, throttle),
   });
-  const scheduler = new Scheduler({ config, store, homework, wa, core, photos, logger: logger.child({ module: 'scheduler' }) });
+  const scheduler = new Scheduler({ config, store, homework, wa, core, photos, settings, logger: logger.child({ module: 'scheduler' }) });
 
   const restart = (reason = 'panel') => {
     if (!supervised) {

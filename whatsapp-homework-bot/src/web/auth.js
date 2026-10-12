@@ -61,9 +61,12 @@ export class PanelAuth {
     this.envHash = config.panel.password ? hashPassword(config.panel.password) : null;
     this.code = null; // { hash, expires, tries }
     this.links = new Map(); // hash -> { expires, by }
-    this.loginAttempts = new Attempts(8, 15 * 60 * 1000); // по IP
-    this.globalAttempts = new Attempts(40, 15 * 60 * 1000); // всего
-    this.codeRequests = new Attempts(3, 15 * 60 * 1000);
+    // ограничение перебора пароля: по адресу и всего. Вход по коду и по ссылке от него не зависит —
+    // так даже при атаке на пароль админ войдёт через WhatsApp.
+    this.loginAttempts = new Attempts(8, 15 * 60 * 1000);
+    this.globalAttempts = new Attempts(40, 15 * 60 * 1000);
+    this.codeRequestsByIp = new Attempts(3, 15 * 60 * 1000);
+    this.codeRequests = new Attempts(10, 60 * 60 * 1000);
     this.sessions = this.secrets.get('sessions') || {};
     this.pruneSessions();
   }
@@ -110,7 +113,8 @@ export class PanelAuth {
   requestCode(meta) {
     if (!this.config.whatsapp.admins.length) return { error: 'Не заданы номера админов (ADMIN_NUMBERS)', status: 400 };
     if (!this.core.wa.isOpen) return { error: 'WhatsApp сейчас не на связи — войдите по паролю', status: 503 };
-    if (this.codeRequests.blocked('all')) return { error: 'Код уже отправлен несколько раз. Подождите 15 минут.', status: 429 };
+    if (this.codeRequestsByIp.blocked(meta.ip) || this.codeRequests.blocked('all')) return { error: 'Код уже отправлен несколько раз. Подождите 15 минут.', status: 429 };
+    this.codeRequestsByIp.add(meta.ip);
     this.codeRequests.add('all');
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     this.code = { hash: sha256(code), expires: Date.now() + CODE_TTL_MS, tries: 0 };
@@ -120,9 +124,8 @@ export class PanelAuth {
     return { ok: true, sentTo: this.config.whatsapp.admins.length };
   }
 
+  // у кода своя защита: 5 попыток на код, новый код — не чаще 3 раз за 15 минут с одного адреса
   loginCode(code, meta) {
-    const limit = this.limited(meta.ip);
-    if (limit) return { error: limit, status: 429 };
     const current = this.code;
     if (!current || current.expires < Date.now()) return { error: 'Код устарел — запросите новый', status: 401 };
     current.tries += 1;
@@ -132,7 +135,7 @@ export class PanelAuth {
     }
     const given = sha256(String(code || '').replace(/\D/g, ''));
     if (!timingSafeEqual(Buffer.from(given), Buffer.from(current.hash))) {
-      this.failed(meta.ip, 'code');
+      this.logger?.warn({ ip: meta.ip }, 'Неверный код входа в панель');
       return { error: 'Неверный код', status: 401 };
     }
     this.code = null;
@@ -148,14 +151,13 @@ export class PanelAuth {
     return `${base}/auth/link?t=${token}`;
   }
 
+  // ссылку подобрать невозможно (192 бита), поэтому без ограничителя попыток
   loginLink(token, meta) {
-    const limit = this.limited(meta.ip);
-    if (limit) return { error: limit, status: 429 };
     const hash = sha256(token || '');
     const link = this.links.get(hash);
     this.links.delete(hash);
     if (!link || link.expires < Date.now()) {
-      this.failed(meta.ip, 'link');
+      this.logger?.warn({ ip: meta.ip }, 'Устаревшая или неверная ссылка входа в панель');
       return { error: 'Ссылка устарела или уже использована. Напишите боту !панель ещё раз.', status: 401 };
     }
     return { token: this.createSession({ ...meta, method: 'link' }) };

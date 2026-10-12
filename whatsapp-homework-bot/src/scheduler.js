@@ -18,8 +18,9 @@ const REPORT_AT = 21 * 60; // вечерний отчёт админу
 const announceKey = (e) => `${e.lessonDate}|${e.key}`;
 
 export class Scheduler {
-  constructor({ config, store, homework, wa, core, logger, clock, photos }) {
+  constructor({ config, store, homework, wa, core, logger, clock, photos, settings = null }) {
     this.config = config;
+    this.settings = settings; // чтобы убирать закончившуюся паузу и прошедшие пропуски
     // фото с ДЗ: скриншот дневника / нарисованная карточка / текст
     this.photos = photos || new HomeworkPhotos({ config, logger, className: () => homework.client.session?.className });
     this.clock = clock || (() => nowParts(config.timezone)); // текущие дата/время школы (подменяется в тестах)
@@ -49,6 +50,21 @@ export class Scheduler {
     this.store.update((s) => {
       s.jobs[name] = value;
     });
+  }
+
+  // Закончившаяся пауза и прошедшие «пропустить» больше не нужны (и не должны показываться в панели)
+  cleanupSchedule(now) {
+    const s = this.config.schedule;
+    const patch = {};
+    if (s.pausedUntil && s.pausedUntil !== 'forever' && s.pausedUntil < now.iso) patch['schedule.pausedUntil'] = null;
+    const skips = (s.skipDates || []).filter((d) => d >= now.iso);
+    if (skips.length !== (s.skipDates || []).length) patch['schedule.skipDates'] = skips;
+    if (Object.keys(patch).length) this.settings?.update(patch, { by: 'scheduler' });
+  }
+
+  // Что присылать сегодня: «завтра + новое» или «только на завтра» (по графику дня)
+  todayScope() {
+    return this.config.schedule.days?.[this.clock().weekday]?.scope || 'new';
   }
 
   // Пора ли запускать ежедневную задачу: время наступило, сегодня ещё не запускали, не вышли за окно догонялки
@@ -84,6 +100,7 @@ export class Scheduler {
         this.store.prune(now.iso);
         this.jobDone('prune', now.iso);
       }
+      this.cleanupSchedule(now);
       if (this.store.data.jobs.digest !== now.iso) {
         const plan = await this.digestPlan(now);
         if (plan?.at != null && this.isDue('digest', plan.at, now, this.digestDeadline(plan))) await this.guard('digest', now, () => this.dailyDigest(now));
@@ -343,20 +360,25 @@ export class Scheduler {
       return { added: 0, changed: 0 };
     }
     const { added, changed, firstRun } = result;
+    const total = { added: added.length, changed: changed.length };
     if (firstRun) {
       this.logger.info('Первая проверка дневника: запомнил текущие ДЗ, дальше буду сообщать об изменениях');
       return { added: 0, changed: 0 };
     }
-    if (!this.config.schedule.notifyChanges || (!added.length && !changed.length)) return { added: added.length, changed: changed.length };
+    if (!this.config.schedule.notifyChanges) return total;
 
     const today = this.homework.today();
     const now = this.clock();
     const quiet = quietReason(this.config.schedule, now.iso, now.weekday);
     if (quiet && !manual) {
       // в «тихий» день ничего не шлём: новое попадёт в следующую рассылку
-      this.logger.info({ ...{ added: added.length, changed: changed.length }, reason: quiet }, 'Новые ДЗ найдены — пришлю позже');
-      return { added: added.length, changed: changed.length };
+      if (added.length || changed.length) this.logger.info({ ...total, reason: quiet }, 'Новые ДЗ найдены — пришлю позже');
+      return total;
     }
+    // ДЗ на сегодня, которое так и не дошло до группы (выставили в «тихий» день, бот был выключен), —
+    // срочное, шлём сейчас. Только пока сегодняшняя рассылка впереди: после уроков ДЗ на сегодня уже не нужно.
+    const missed = manual || !this.store.data.announcedReady || !this.digestPending(now) ? [] : await this.missedToday(today, [...added, ...changed]);
+    if (!added.length && !changed.length && !missed.length) return total;
     // «только на завтра»: задания на дальние дни придут в своей рассылке
     const until = !manual && this.config.schedule.days?.[now.weekday]?.scope === 'tomorrow'
       ? await this.homework.nextSchoolDay(today).catch(() => null)
@@ -367,9 +389,9 @@ export class Scheduler {
     const pick = (list) => this.classify(list)
       .filter((e) => !hold || (e.dueDate && e.dueDate <= today))
       .filter((e) => !until || (e.dueDate && e.dueDate <= until));
-    const toAdd = pick(added);
-    const toChange = pick(changed);
-    const total = { added: added.length, changed: changed.length };
+    const toAdd = [...pick(added), ...missed.filter((e) => e.kind === 'new')];
+    const toChange = [...pick(changed), ...missed.filter((e) => e.kind === 'changed')];
+    if (missed.length) this.logger.info({ count: missed.length }, 'ДЗ на сегодня ещё не было в группе — отправляю');
     if ((hold || until) && toAdd.length + toChange.length < added.length + changed.length) {
       this.logger.info(total, 'Новые ДЗ найдены — пришлю их в рассылке');
     }
@@ -383,6 +405,16 @@ export class Scheduler {
     this.markAnnounced([...toAdd, ...toChange], { ready: false });
     if (this.config.features.sendFiles) await this.sendFiles([...toAdd, ...toChange].filter((e) => e.hasFiles), targets);
     return total;
+  }
+
+  async missedToday(today, known) {
+    const seen = new Set(known.map(announceKey));
+    try {
+      const view = await this.homework.dayView(today);
+      return this.classify(view.entries.filter((e) => !e.manual && !seen.has(announceKey(e))));
+    } catch {
+      return [];
+    }
   }
 
   // Сообщения о новых/изменённых ДЗ: фото дня (с пометками) или текст

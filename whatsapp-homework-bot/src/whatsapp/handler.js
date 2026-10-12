@@ -216,7 +216,8 @@ export class MessageHandler {
     if (ctx.quoted && (isBotJid(ctx.quoted.participant, me) || this.botMessageIds.has(ctx.quoted.id))) {
       return { explicit: true, question: ctx.text, replyToBot: true };
     }
-    const wake = this.config.ai.wakeWords.find((w) => new RegExp(`^${w}(?=[\\s,.:!?]|$)`, 'i').test(ctx.text));
+    const escape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wake = this.config.ai.wakeWords.find((w) => new RegExp(`^${escape(w)}(?=[\\s,.:!?]|$)`, 'i').test(ctx.text));
     if (wake) return { explicit: true, question: ctx.text.slice(wake.length).replace(/^[\s,.:!?]+/, '') };
     return { explicit: false, question: ctx.text };
   }

@@ -191,6 +191,8 @@ export class BackupAi {
     const current = this.settings;
     const next = { ...current, ...patch, apiKey: patch.apiKey ? String(patch.apiKey).trim() : current.apiKey };
     if (next.enabled || next.baseUrl || next.model) next.baseUrl = BackupAi.validate(next);
+    // сменили адрес, а ключ не ввели — старый ключ на чужой адрес не отправляем
+    if (!patch.apiKey && current.baseUrl && next.baseUrl !== current.baseUrl) next.apiKey = '';
     next.model = String(next.model || '').trim();
     next.label = String(next.label || '').trim().slice(0, 40);
     next.enabled = Boolean(next.enabled);

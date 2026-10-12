@@ -143,6 +143,45 @@ describe('рассылка по дням недели', () => {
   });
 });
 
+describe('после «тихого» дня ничего не теряется', () => {
+  it('ДЗ, выставленное в пропущенный день, приходит утром следующего дня', async () => {
+    const t = setup();
+    t.store.data.announcedReady = true;
+    t.settings.skipDate('2025-10-15'); // среда без рассылки
+    t.homework.today = () => '2025-10-15';
+    t.scheduler.clock = () => at('2025-10-15', 10);
+    await t.scheduler.runPoll(); // базовый снимок
+    t.client.weeks['2025-10-13'].days[3].subjects[0].homeworkBody = 'Параграф 5'; // на четверг
+    await t.scheduler.runPoll();
+    assert.equal(t.wa.sent.length, 0, 'в пропущенный день — тишина');
+    // четверг, утро: рассылка после уроков ещё впереди — срочное ДЗ на сегодня приходит сразу
+    t.homework.today = () => '2025-10-16';
+    t.scheduler.clock = () => at('2025-10-16', 7, 30);
+    await t.scheduler.digestPlan(at('2025-10-16', 7, 30));
+    await t.scheduler.runPoll();
+    assert.equal(t.wa.sent.length, 1);
+    assert.match(t.wa.texts()[0], /История[\s\S]*Параграф 5/);
+    await t.scheduler.runPoll();
+    assert.equal(t.wa.sent.length, 1, 'второй раз не шлёт');
+  });
+
+  it('закончившаяся пауза и прошедшие пропуски убираются сами', () => {
+    const t = setup();
+    t.settings.update({ 'schedule.pausedUntil': '2025-10-13', 'schedule.skipDates': ['2025-10-10', '2025-10-20'] });
+    t.scheduler.cleanupSchedule(at('2025-10-14', 9));
+    assert.equal(t.config.schedule.pausedUntil, null);
+    assert.deepEqual(t.config.schedule.skipDates, ['2025-10-20']);
+  });
+
+  it('предпросмотр и «разослать сейчас» используют график дня', () => {
+    const t = setup();
+    t.scheduler.clock = () => at('2025-10-19', 12);
+    assert.equal(t.scheduler.todayScope(), 'tomorrow');
+    t.scheduler.clock = () => at('2025-10-14', 12);
+    assert.equal(t.scheduler.todayScope(), 'new');
+  });
+});
+
 describe('команды графика', () => {
   it('!график, !график вс выкл, !график пт 15:00', async () => {
     const t = setup();
@@ -168,6 +207,25 @@ describe('команды графика', () => {
     assert.deepEqual(t.config.schedule.skipDates, ['2025-10-15']);
     await t.handler.handle(incoming({ chat: GROUP, sender: ADMIN, text: '!пропустить завтра' }));
     assert.deepEqual(t.config.schedule.skipDates, [], 'повтор отменяет пропуск');
+  });
+
+  it('!панель — только номерам из ADMIN_NUMBERS, не админам группы', async () => {
+    const t = setup();
+    t.commands.panel = { oneTimeLink: () => 'http://localhost:3000/auth/link?t=SECRET' };
+    const groupAdmin = '77019998877@s.whatsapp.net';
+    t.wa.groups[GROUP].participants.push({ id: groupAdmin, admin: 'admin' });
+    await t.handler.handle(incoming({ chat: groupAdmin, text: '!панель' }));
+    assert.match(t.wa.texts().at(-1), /только для номеров из ADMIN_NUMBERS/);
+    assert.ok(!t.wa.texts().some((x) => x.includes('SECRET')));
+    await t.handler.handle(incoming({ chat: ADMIN, text: '!панель' }));
+    assert.match(t.wa.texts().at(-1), /SECRET/);
+  });
+
+  it('слово-обращение со спецсимволами не ломает ответы', async () => {
+    const t = setup();
+    t.settings.update({ 'ai.wakeWords': '(ии, бот' });
+    await t.handler.handle(incoming({ chat: GROUP, text: 'бот, как решить номер 250?' }));
+    assert.equal(t.groq.calls.filter((c) => !c.json).length, 1);
   });
 
   it('ученикам команды графика недоступны', async () => {

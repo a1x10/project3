@@ -142,8 +142,9 @@ export class Terminal {
         return log.slice(0, 25).map((e) => line(`${new Date(e.at).toLocaleString('ru-RU')}  ${e.text}`, e.level === 'error' ? 'err' : e.level === 'ok' ? 'ok' : 'warn'));
       },
       restart: (r) => {
+        if (!a.restart) return line('Перезапуск недоступен: бот запущен без Docker/PM2/systemd — перезапустите его на сервере', 'err');
         if (r[0] !== '--yes') return line('Бот перезапустится (Docker/PM2 поднимут его снова). Подтвердите: restart --yes', 'warn');
-        a.restart?.();
+        a.restart();
         return line('Перезапуск… Страница переподключится сама через несколько секунд.', 'warn');
       },
       exit: () => line('Это терминал бота, а не SSH 🙂 Закройте вкладку или выберите другой раздел.', 'dim'),
@@ -219,11 +220,10 @@ export class Terminal {
     if (sub === 'send') {
       const targets = a.scheduler.digestTargets();
       if (!targets.length) return line('Нет групп для рассылки', 'err');
-      await a.scheduler.sendDigest({ targets, force: true });
+      await a.scheduler.sendDigest({ targets, force: true, scope: a.scheduler.todayScope() });
       return line(`✓ Рассылка отправлена в очередь (групп: ${targets.length})`, 'ok');
     }
-    const day = a.config.schedule.days[nowParts(a.config.timezone).weekday];
-    const digest = await a.scheduler.buildDigest({ force: true, scope: day?.scope });
+    const digest = await a.scheduler.buildDigest({ force: true, scope: a.scheduler.todayScope() });
     const out = [line(`Предпросмотр рассылки${digest.firstTime ? ' (первая — только на завтра)' : ''}:`, 'head')];
     for (const m of digest.messages || []) {
       if (m.image) out.push(line(`  🖼 фото · ${m.caption.replace(/\n/g, ' · ')}`, 'acc'));

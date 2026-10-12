@@ -15,7 +15,8 @@ import { ConfigError } from '../config.js';
 import { HomeworkPhotos } from '../homework/message.js';
 import { isPrivateJid } from '../inbox.js';
 import { mask } from '../secrets.js';
-import { addDays, formatClock, mondayOf, nowParts, parseDayArg } from '../utils/dates.js';
+import { isPaused } from '../settings.js';
+import { addDays, formatClock, mondayOf, parseDayArg } from '../utils/dates.js';
 import { Terminal } from './console.js';
 
 const MIME = {
@@ -111,9 +112,17 @@ export function startWebServer(app) {
   const sse = new Set();
   const trustProxy = Boolean(config.panel.trustProxy);
 
+  // за своим прокси берём адрес, который дописал прокси (последний), — первый клиент может подделать
   const clientIp = (req) => {
-    const fwd = trustProxy ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
+    const fwd = trustProxy ? String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean).at(-1) : '';
     return fwd || req.socket.remoteAddress?.replace(/^::ffff:/, '') || '';
+  };
+  const safeDecode = (value) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return null;
+    }
   };
   const isHttps = (req) => (trustProxy && req.headers['x-forwarded-proto'] === 'https') || config.panel.publicUrl.startsWith('https://');
 
@@ -137,7 +146,7 @@ export function startWebServer(app) {
     const out = {};
     for (const part of String(req.headers.cookie || '').split(';')) {
       const i = part.indexOf('=');
-      if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      if (i > 0) out[part.slice(0, i).trim()] = safeDecode(part.slice(i + 1).trim()) ?? '';
     }
     return out;
   }
@@ -261,7 +270,7 @@ export function startWebServer(app) {
         sentToday: core.store.data.jobs.digest === today,
         last: core.store.data.jobs.digest || null,
         week: app.scheduler.weekPlanLines(),
-        pausedUntil: config.schedule.pausedUntil,
+        pausedUntil: isPaused(config.schedule, today) ? config.schedule.pausedUntil : null,
       },
       groups: core.targets().map((jid) => ({ jid, name: core.store.data.groups[jid]?.name || jid, ...core.groupSettings(jid) })),
       stats,
@@ -346,7 +355,7 @@ export function startWebServer(app) {
     const text = String(body.text || '').trim();
     if (!text) throw new HttpError(400, 'Пустое сообщение');
     if (text.length > 4000) throw new HttpError(400, 'Сообщение слишком длинное');
-    if (!wa.isOpen) throw new HttpError(503, 'WhatsApp сейчас не на связи — сообщение уйдёт, когда он подключится');
+    if (!wa.isOpen) throw new HttpError(503, 'WhatsApp сейчас не на связи — сообщение не отправлено. Попробуйте позже.');
     // в личке ИИ замолкает на 30 минут, чтобы не перебивать админа; в группе — отвечает как обычно
     if (isPrivateJid(params[0])) app.inbox.takeover(params[0]);
     wa.sendText(params[0], text, { meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
@@ -412,12 +421,11 @@ export function startWebServer(app) {
   route('POST', /^\/api\/actions\/digest$/, async ({ body }) => {
     const targets = body.jid ? [body.jid] : app.scheduler.digestTargets();
     if (!targets.length) throw new HttpError(400, 'Нет групп для рассылки — добавьте бота в группу и напишите там !привязать');
-    await app.scheduler.sendDigest({ targets, force: true });
+    await app.scheduler.sendDigest({ targets, force: true, scope: app.scheduler.todayScope() });
     return { ok: true, groups: targets.length };
   });
   route('POST', /^\/api\/actions\/digest\/preview$/, async () => {
-    const weekday = nowParts(config.timezone).weekday;
-    const digest = await app.scheduler.buildDigest({ force: true, scope: config.schedule.days[weekday]?.scope });
+    const digest = await app.scheduler.buildDigest({ force: true, scope: app.scheduler.todayScope() });
     return {
       firstTime: digest.firstTime,
       fresh: digest.fresh.length,
@@ -649,7 +657,8 @@ export function startWebServer(app) {
         if (req.method !== 'GET') checkCsrf(req);
         if (match.r.needAuth && !session) throw new HttpError(401, 'Нужно войти в панель');
         const body = req.method === 'GET' ? {} : await readBody(req);
-        const params = match.m.slice(1).map((p) => decodeURIComponent(p));
+        const params = match.m.slice(1).map(safeDecode);
+        if (params.includes(null)) throw new HttpError(400, 'Неверный адрес');
         const result = await match.r.handler({ req, res, url, body, params, session, token, meta });
         if (!res.headersSent) json(res, 200, result ?? { ok: true });
         return;

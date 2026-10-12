@@ -200,8 +200,15 @@ export function dayLabel(ts) {
 export const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 export const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 export const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-// сегодняшняя дата по часам этого устройства, YYYY-MM-DD
-export const todayLocal = () => {
+// сегодняшняя дата YYYY-MM-DD — в часовом поясе бота (школы), иначе по часам этого устройства
+export const todayLocal = (timeZone) => {
+  if (timeZone) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    } catch {
+      /* неизвестный пояс — берём местное время */
+    }
+  }
   const t = new Date();
   return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
 };
