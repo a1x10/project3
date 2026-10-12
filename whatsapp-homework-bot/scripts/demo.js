@@ -17,7 +17,7 @@ import { Scheduler } from '../src/scheduler.js';
 import { SecretStore } from '../src/secrets.js';
 import { Settings } from '../src/settings.js';
 import { Store } from '../src/store.js';
-import { addDays, mondayOf, nowParts } from '../src/utils/dates.js';
+import { addDays, nowParts } from '../src/utils/dates.js';
 import { PanelAuth } from '../src/web/auth.js';
 import { startWebServer } from '../src/web/server.js';
 

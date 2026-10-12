@@ -13,7 +13,7 @@ import zlib from 'node:zlib';
 import { BilimAuthError, BilimClassClient } from '../bilimclass/client.js';
 import { ConfigError } from '../config.js';
 import { HomeworkPhotos } from '../homework/message.js';
-import { contentSummary } from '../inbox.js';
+import { isPrivateJid } from '../inbox.js';
 import { mask } from '../secrets.js';
 import { addDays, formatClock, mondayOf, nowParts, parseDayArg } from '../utils/dates.js';
 import { Terminal } from './console.js';
@@ -347,7 +347,8 @@ export function startWebServer(app) {
     if (!text) throw new HttpError(400, 'Пустое сообщение');
     if (text.length > 4000) throw new HttpError(400, 'Сообщение слишком длинное');
     if (!wa.isOpen) throw new HttpError(503, 'WhatsApp сейчас не на связи — сообщение уйдёт, когда он подключится');
-    app.inbox.takeover(params[0]);
+    // в личке ИИ замолкает на 30 минут, чтобы не перебивать админа; в группе — отвечает как обычно
+    if (isPrivateJid(params[0])) app.inbox.takeover(params[0]);
     wa.sendText(params[0], text, { meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
     return { ok: true };
   });
