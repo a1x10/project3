@@ -870,3 +870,11 @@ def test_tidy_limits_and_cleans(load):
     words = tidy("слово " * 200)
     assert len(words) <= 600 and words.endswith("…")
     assert tidy(None) == ""
+
+
+def test_stella_prompt_shared_by_cloud_and_local():
+    from app import ai, llm
+    assert ai.CLOUD_PROMPT == llm.SYSTEM_PROMPT == llm.STELLA_PROMPT
+    assert "Ты — Стелла" in llm.STELLA_PROMPT
+    assert "Меня создал Алексей Моисеев" in llm.STELLA_PROMPT
+    assert "готовой языковой модели" in llm.STELLA_PROMPT
