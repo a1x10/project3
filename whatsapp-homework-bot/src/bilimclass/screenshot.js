@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { mondayOf, toDMY } from '../utils/dates.js';
 import { normalize } from '../utils/text.js';
 
@@ -28,6 +29,25 @@ const PAGE_CSS = `
 
 const require = createRequire(import.meta.url);
 export const BUNDLED = 'bundled';
+
+// Доля «чернил» (тёмных пикселей — текста) на снимке. На нормальном снимке дня ~2%, на пустом — 0.
+// Пустой снимок в группу не уходит никогда: бот попробует ещё раз, а потом отправит нарисованную карточку.
+const MIN_INK = 0.003;
+export async function inkRatio(buffer) {
+  const img = await loadImage(buffer);
+  const scale = Math.min(1, 400 / img.width);
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = createCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let ink = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2] < 150) ink += 1;
+  }
+  return ink / (w * h);
+}
 
 // Браузер, скачанный командой «npx playwright-core install chromium» — точно совместим с библиотекой
 function bundledChromium() {
@@ -228,6 +248,8 @@ export class DiaryScreenshotter {
       const response = await loaded;
       if (render) {
         await page.locator('.bc-diary-day').first().waitFor();
+        // сайт может догружать данные после первого ответа — ждём тишины в сети (но не дольше 8 секунд)
+        await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
         await page.waitForTimeout(1500); // даём дорисовать ДЗ и иконки
         return null;
       }
@@ -252,6 +274,52 @@ export class DiaryScreenshotter {
     });
   }
 
+  // Всё, что мешает увидеть блок дня: полупрозрачность (анимация появления ещё не сработала)
+  // и элементы поверх него (загрузчики, баннеры, окна). Возвращает, что было исправлено, — для журнала.
+  async unveil(block) {
+    return block.evaluate((el) => {
+      const describe = (node) => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${[...node.classList].slice(0, 3).map((c) => `.${c}`).join('')}`;
+      const report = { hidden: [], faded: [] };
+      for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+        const cs = getComputedStyle(node);
+        if (Number(cs.opacity) < 1) {
+          node.style.setProperty('opacity', '1', 'important');
+          report.faded.push(describe(node));
+        }
+        if (cs.visibility === 'hidden') node.style.setProperty('visibility', 'visible', 'important');
+      }
+      for (const child of el.querySelectorAll('*')) {
+        if (getComputedStyle(child).opacity === '0') {
+          child.style.setProperty('opacity', '1', 'important');
+          report.faded.push(describe(child));
+        }
+      }
+      // поверх блока ничего не должно лежать (в том числе прозрачное для мыши — поэтому временно включаем pointer-events)
+      const probe = document.createElement('style');
+      probe.textContent = '* { pointer-events: auto !important; }';
+      document.head.append(probe);
+      for (let round = 0; round < 5; round += 1) {
+        const r = el.getBoundingClientRect();
+        let changed = false;
+        for (const fx of [0.08, 0.3, 0.5, 0.7, 0.92]) {
+          for (const fy of [0.08, 0.3, 0.5, 0.7, 0.92]) {
+            const x = r.left + r.width * fx;
+            const y = r.top + r.height * fy;
+            if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
+            const top = document.elementFromPoint(x, y);
+            if (!top || el.contains(top) || top.contains(el)) continue;
+            top.style.setProperty('display', 'none', 'important');
+            report.hidden.push(describe(top));
+            changed = true;
+          }
+        }
+        if (!changed) break;
+      }
+      probe.remove();
+      return report;
+    });
+  }
+
   async shootDay(page, day) {
     const label = diaryDateLabel(day.date);
     const block = page.locator('.bc-diary-day').filter({
@@ -263,6 +331,19 @@ export class DiaryScreenshotter {
     const text = normalize(await block.innerText());
     const missing = (day.subjects || []).filter((s) => !text.includes(normalize(s)));
     if (missing.length) throw new Error(`на странице дня нет предметов: ${missing.join(', ')}`);
-    return block.screenshot({ type: 'jpeg', quality: 90, animations: 'disabled' });
+    // снимок проверяем: на нём должен быть текст. Пустой — ждём, пока страница дорисуется, и снимаем снова
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await block.scrollIntoViewIfNeeded().catch(() => {});
+      await page.waitForTimeout(attempt === 1 ? 400 : 2000);
+      const fixed = await this.unveil(block).catch(() => ({ hidden: [], faded: [] }));
+      const buffer = await block.screenshot({ type: 'jpeg', quality: 90, animations: 'disabled' });
+      const ink = await inkRatio(buffer);
+      if (ink >= MIN_INK) {
+        if (fixed.hidden.length || fixed.faded.length) this.logger?.info({ date: day.date, ...fixed }, 'Скриншот: убрал мешающие элементы');
+        return buffer;
+      }
+      this.logger?.warn({ date: day.date, attempt, ink: Number(ink.toFixed(4)), ...fixed }, 'Скриншот дня получился пустым — пробую ещё раз');
+    }
+    throw new Error('скриншот получился пустым (сайт не дорисовал страницу)');
   }
 }

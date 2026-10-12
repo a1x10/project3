@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { inkRatio } from '../src/bilimclass/screenshot.js';
 import { cardCaption, cardSubtitle, cleanForImage, renderDayCard, wrapText } from '../src/homework/image.js';
 
 const entry = (subject, text, extra = {}) => ({ key: subject, lessonDate: '2025-10-15', subject, text, books: [], hasFiles: false, ...extra });
@@ -45,5 +46,22 @@ describe('картинка с ДЗ', () => {
     assert.equal(cardCaption('2025-10-20', '2025-10-17', 'changed'), '✏️ Изменилось домашнее задание на понедельник, 20.10');
     assert.equal(cardSubtitle('2025-10-15', '2025-10-14'), 'на завтра · среда, 15 октября');
     assert.equal(cardSubtitle('2025-10-20', '2025-10-14'), 'на понедельник · 20 октября');
+  });
+});
+
+describe('проверка «пустого» снимка', () => {
+  it('пустая картинка — 0 «чернил», с текстом — больше порога', async () => {
+    const blank = createCanvas(800, 400);
+    const ctx = blank.getContext('2d');
+    ctx.fillStyle = '#f5f9fc';
+    ctx.fillRect(0, 0, 800, 400);
+    ctx.strokeStyle = '#dde3ee';
+    ctx.strokeRect(6, 0, 788, 400);
+    assert.equal(await inkRatio(blank.toBuffer('image/jpeg')), 0);
+    ctx.fillStyle = '#1f2937';
+    ctx.font = '32px sans-serif';
+    ctx.fillText('Алгебра — № 250, 251 (стр. 58)', 40, 120);
+    ctx.fillText('Физическая культура', 40, 200);
+    assert.ok((await inkRatio(blank.toBuffer('image/jpeg'))) > 0.003);
   });
 });
