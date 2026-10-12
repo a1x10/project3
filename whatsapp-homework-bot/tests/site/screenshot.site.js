@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { loadImage } from '@napi-rs/canvas';
-import { DiaryScreenshotter } from '../../src/bilimclass/screenshot.js';
+import { DiaryScreenshotter, inkRatio } from '../../src/bilimclass/screenshot.js';
 import { BotCore } from '../../src/core.js';
 import { HomeworkPhotos } from '../../src/homework/message.js';
 import { HomeworkService } from '../../src/homework/service.js';
@@ -35,6 +35,33 @@ describe('скриншот дневника на сайте BilimClass', { skip:
     assert.deepEqual([...shots.keys()].sort(), ['2026-10-13', '2026-10-19']);
     const img = await loadImage(shots.get('2026-10-13'));
     assert.ok(img.width > 700 && img.width <= 824, `мобильная ширина (412 × 2 без полей), получено ${img.width}`);
+  });
+
+  it('пустой снимок не уходит: бот убирает перекрытие и дожидается отрисовки', async () => {
+    // страница «не дорисовалась»: блок дня прозрачный, поверх — светлая подложка загрузчика
+    const broken = new DiaryScreenshotter({
+      config,
+      logger,
+      contextHook: async (ctx) => {
+        await installMocks(ctx, { currentWeek: '12.10.2026', weeks: SITE_WEEKS, scores: SCORES });
+        await ctx.addInitScript(() => {
+          const css = document.createElement('style');
+          css.textContent = '.bc-diary-day { opacity: 0; } #fake-loader { position: absolute; inset: 0; min-height: 4000px; background: #f5f9fc; z-index: 50; pointer-events: none; }';
+          const add = () => {
+            if (!document.body || document.getElementById('fake-loader')) return;
+            document.head.append(css);
+            const loader = document.createElement('div');
+            loader.id = 'fake-loader';
+            document.body.append(loader);
+          };
+          document.addEventListener('DOMContentLoaded', add);
+          setInterval(add, 300);
+        });
+      },
+    });
+    const shots = await broken.captureDays([{ date: '2026-10-13', subjects: ['Алгебра'] }]);
+    assert.ok(shots.has('2026-10-13'), 'снимок получился');
+    assert.ok((await inkRatio(shots.get('2026-10-13'))) > 0.01, 'на снимке есть текст');
   });
 
   it('запасной способ: дневник через сайт (если API сломалось)', async () => {
