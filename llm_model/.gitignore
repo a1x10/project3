@@ -1,0 +1,6 @@
+data/
+runs/
+stella-1.5b/
+*.gguf
+Modelfile.q4
+__pycache__/
