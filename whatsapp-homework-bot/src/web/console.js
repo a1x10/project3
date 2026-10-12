@@ -323,7 +323,7 @@ export class Terminal {
     const jid = to.includes('@') ? to : `${normalizePhone(to)}@s.whatsapp.net`;
     if (!/^[\d-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(jid)) return line('Неверный получатель', 'err');
     await a.wa.sendText(jid, text, { meta: { by: 'admin' } });
-    a.inbox?.takeover(jid);
+    if (!jid.endsWith('@g.us')) a.inbox?.takeover(jid);
     return line(`✓ Отправлено → ${jid}`, 'ok');
   }
 }

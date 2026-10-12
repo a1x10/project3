@@ -16,7 +16,12 @@ export function h(tag, attrs, ...children) {
     if (v == null || v === false) continue;
     if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'dataset') Object.assign(el.dataset, v);
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') {
+      for (const [prop, value] of Object.entries(v)) {
+        if (prop.startsWith('--')) el.style.setProperty(prop, value);
+        else el.style[prop] = value;
+      }
+    }
     else if (k === 'class') el.className = [el.className, v].filter(Boolean).join(' ');
     else if (k === 'value') el.value = v;
     else if (k in el && typeof v !== 'string') el[k] = v;
