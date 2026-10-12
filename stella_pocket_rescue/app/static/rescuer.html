@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STELLA · Консоль спасателя</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{ --bg:#05080b; --panel:#0b1016; --panel2:#0e141c; --line:#17212e; --ink:#d7e3ee; --dim:#7b8ba0; --mute:#5f7086;
+    --cy:#22d3ee; --gr:#34d399; --red:#f43f5e; --yel:#f5b83a; --grn:#34d399; --unk:#64748b; --vio:#a78bfa; --off:#3b4757; }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  .modebox{ display:flex; align-items:center; gap:8px; }
+  .modebox b{ font-size:12px; letter-spacing:1px; color:var(--gr); }
+  .modebox.em b{ color:var(--red); animation:blink 1s steps(1) infinite; }
+  #btnQuake{ color:var(--red); border-color:rgba(244,63,94,.5); background:rgba(244,63,94,.08); padding:6px 10px; font-size:12px; }
+  #btnStandby{ padding:6px 10px; font-size:12px; }
+  body.em header{ box-shadow:inset 0 -2px 0 var(--red); }
+  body{ margin:0; min-height:100vh; background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(34,211,238,.06), transparent),
+      radial-gradient(900px 500px at -10% 110%, rgba(167,139,250,.06), transparent), var(--bg);
+    color:var(--ink); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,"Roboto Mono",monospace; }
+  a{ color:var(--cy); }
+  .mono{ font-variant-numeric:tabular-nums; }
+  .scan-lines::before{ content:""; position:fixed; inset:0; pointer-events:none; z-index:9;
+    background:repeating-linear-gradient(transparent 0 2px, rgba(0,0,0,.14) 2px 3px); opacity:.35; }
+
+  #login{ max-width:360px; margin:16vh auto; padding:22px; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; box-shadow:0 0 60px rgba(34,211,238,.08); }
+  @media(max-width:400px){ #login{ margin:12vh 16px; } }
+  #login h1{ font-size:15px; letter-spacing:3px; color:var(--cy); margin:0 0 4px; }
+  #login p{ color:var(--dim); font-size:12px; margin:0 0 16px; }
+  #login .field input{ flex:1; min-width:0; }
+  .vlink{ display:inline-block; margin-top:14px; font-size:12px; letter-spacing:1px; color:var(--dim); text-decoration:none; }
+  .vlink:hover{ color:var(--cy); }
+  .field{ display:flex; gap:8px; }
+  input,textarea{ background:#060a0e; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
+  input:focus,textarea:focus{ outline:none; border-color:var(--cy); }
+  button, a.btn{ background:linear-gradient(180deg,#0e2a33,#0b1016); color:var(--cy); border:1px solid #14424e; border-radius:8px;
+    padding:9px 14px; font:inherit; cursor:pointer; letter-spacing:.5px; }
+  a.btn{ display:inline-block; text-decoration:none; white-space:nowrap; }
+  button:hover, a.btn:hover{ border-color:var(--cy); box-shadow:0 0 12px rgba(34,211,238,.25); }
+  button:active, a.btn:active{ transform:translateY(1px); }
+  button:disabled{ cursor:default; opacity:.7; box-shadow:none; border-color:#14424e; transform:none; }
+  button:focus-visible, a:focus-visible, [tabindex]:focus-visible{ outline:1px solid var(--cy); outline-offset:2px; }
+  .err{ color:var(--red); font-size:12px; min-height:16px; }
+
+  header{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:10px 16px;
+    border-bottom:1px solid var(--line); background:rgba(11,16,22,.8); backdrop-filter:blur(4px);
+    position:sticky; top:0; z-index:5; }
+  .brand{ font-weight:700; letter-spacing:3px; color:var(--cy); }
+  .brand b{ color:var(--vio); }
+  .stat{ color:var(--dim); font-size:12px; }
+  .stat b{ color:var(--ink); }
+  .counts{ display:flex; gap:8px; margin-left:auto; }
+  .chip{ padding:3px 10px; border-radius:20px; font-size:12px; font-weight:700; border:1px solid transparent; }
+  .c-red{ color:var(--red); border-color:rgba(244,63,94,.4); background:rgba(244,63,94,.08); }
+  .c-yellow{ color:var(--yel); border-color:rgba(245,184,58,.4); background:rgba(245,184,58,.08); }
+  .c-unknown{ color:var(--unk); border-color:rgba(100,116,139,.4); background:rgba(100,116,139,.08); }
+  .c-green{ color:var(--grn); border-color:rgba(52,211,153,.4); background:rgba(52,211,153,.08); }
+  @media(max-width:640px){
+    header{ gap:6px 12px; padding:8px 12px; position:static; }
+    .counts{ margin-left:0; flex-wrap:wrap; gap:6px; }
+    .chip{ padding:2px 8px; font-size:11px; }
+  }
+
+  main{ padding:16px; max-width:1180px; margin:0 auto; }
+
+  #stageServer{ display:grid; place-items:center; min-height:52vh; }
+  .server{ width:min(440px,92vw); text-align:center; padding:26px; border:1px solid var(--line); border-radius:16px;
+    background:linear-gradient(180deg,var(--panel2),var(--panel)); cursor:pointer; position:relative; overflow:hidden; }
+  .server:hover{ border-color:var(--cy); box-shadow:0 0 40px rgba(34,211,238,.15); }
+  .server .rack{ font-size:54px; filter:drop-shadow(0 0 12px rgba(34,211,238,.5)); }
+  .server h2{ letter-spacing:3px; margin:10px 0 2px; }
+  .server .meta{ color:var(--dim); font-size:12.5px; }
+  .server .go{ margin-top:16px; color:var(--cy); letter-spacing:2px; font-size:13px; }
+  .server .go .blink{ animation:blink 1s steps(1) infinite; }
+  @keyframes blink{ 50%{opacity:0} }
+  .server .halo{ position:absolute; inset:auto; left:50%; top:34px; width:120px; height:120px; transform:translateX(-50%);
+    border-radius:50%; background:radial-gradient(circle,rgba(34,211,238,.25),transparent 70%);
+    animation:halo 2.4s ease-in-out infinite; }
+  @keyframes halo{ 0%,100%{opacity:.5; transform:translateX(-50%) scale(.9)} 50%{opacity:1; transform:translateX(-50%) scale(1.15)} }
+
+  #scan{ position:fixed; inset:0; z-index:20; background:rgba(3,6,9,.94); display:none; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px; padding:24px; }
+  .radarwrap{ width:260px; height:260px; position:relative; }
+  .radarwrap .ring{ position:absolute; inset:0; border:1px solid rgba(34,211,238,.25); border-radius:50%; }
+  .radarwrap .ring.r2{ inset:32px } .radarwrap .ring.r3{ inset:74px } .radarwrap .ring.r4{ inset:116px }
+  .sweep{ position:absolute; inset:0; border-radius:50%; overflow:hidden; }
+  .sweep::before{ content:""; position:absolute; inset:0;
+    background:conic-gradient(from 0deg, rgba(34,211,238,.55), transparent 28%); animation:spin 1.6s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
+  #scanLog{ width:min(560px,92vw); height:150px; overflow:hidden; color:var(--gr); font-size:12.5px; white-space:pre-wrap; }
+  #scanTitle{ color:var(--cy); letter-spacing:3px; }
+
+  .cols{ display:grid; grid-template-columns:minmax(0,360px) minmax(0,1fr); gap:16px; }
+  @media(max-width:820px){ .cols{ grid-template-columns:1fr; } }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .panel h3{ margin:0 0 10px; font-size:12px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; display:flex; justify-content:space-between; }
+  svg#radar{ width:100%; height:auto; display:block; background:#04070a; border-radius:10px; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .dev{ border:1px solid var(--line); border-left-width:4px; border-radius:10px; padding:10px; background:var(--panel2);
+    cursor:pointer; transition:.12s; position:relative; }
+  .dev:hover{ transform:translateY(-2px); border-color:var(--cy); box-shadow:0 6px 22px rgba(0,0,0,.4); }
+  .dev.red{ border-left-color:var(--red) } .dev.yellow{ border-left-color:var(--yel) }
+  .dev.green{ border-left-color:var(--grn) } .dev.unknown{ border-left-color:var(--unk) }
+  .dev .id{ color:var(--dim); font-size:11px; }
+  .dev .nm{ font-weight:700; margin:2px 0; word-break:break-word; }
+  .dev .sub{ color:var(--dim); font-size:11.5px; }
+  .dev .live{ position:absolute; top:9px; right:9px; width:8px; height:8px; border-radius:50%; background:#334155; }
+  .dev .live.on{ background:var(--gr); box-shadow:0 0 8px var(--gr); animation:blink 1.6s infinite; }
+  .bars{ display:inline-flex; gap:2px; align-items:flex-end; height:12px; vertical-align:middle; }
+  .bars i{ width:3px; background:#31465c; border-radius:1px; }
+  .bars i.on{ background:var(--cy); }
+  .empty{ color:var(--dim); font-size:12.5px; padding:18px 4px; grid-column:1/-1; text-align:center; }
+
+  .back{ margin-bottom:12px; }
+  .dossier{ display:grid; grid-template-columns:1fr; gap:0 16px; }
+  @media(min-width:561px) and (max-width:820px){ .dossier{ grid-template-columns:1fr 1fr } }
+  .kv{ border-bottom:1px dashed var(--line); padding:6px 0; display:flex; justify-content:space-between; gap:10px; }
+  .kv .k{ color:var(--dim); } .kv .v{ text-align:right; word-break:break-word; }
+  .v.big{ color:var(--cy); font-weight:700; }
+  .transcript{ margin-top:12px; max-height:260px; overflow:auto; }
+  .tline{ padding:5px 0; border-bottom:1px solid var(--line); white-space:pre-wrap; word-break:break-word; }
+  .tline .r{ font-size:11px; color:var(--dim); margin-right:6px; }
+  .r-user{ color:#93c5fd } .r-assistant{ color:var(--cy) } .r-advice{ color:var(--yel) } .r-rescuer{ color:var(--gr) }
+  .statusbtns{ display:flex; gap:6px; flex-wrap:wrap; margin:12px 0; }
+  .statusbtns .on{ border-color:var(--gr); color:var(--gr); }
+  .flag{ display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .tag{ display:inline-block; background:#14202c; border:1px solid var(--line); border-radius:6px; padding:1px 7px; margin:2px 4px 0 0; font-size:11.5px; }
+  .hint{ color:var(--dim); font-size:11.5px; margin-top:6px; }
+  #replyForm input, #bcForm input{ flex:1; min-width:0; }
+
+  .eb{ display:inline-block; font-size:10px; line-height:15px; padding:0 6px; border-radius:8px; border:1px solid; margin-right:6px;
+    vertical-align:1px; letter-spacing:.4px; white-space:nowrap; }
+  .eb-cloud{ color:var(--vio); border-color:rgba(167,139,250,.45); background:rgba(167,139,250,.1); }
+  .eb-local{ color:var(--cy); border-color:rgba(34,211,238,.4); background:rgba(34,211,238,.08); }
+  .eb-reserve{ color:#94a3b8; border-color:rgba(148,163,184,.35); background:rgba(148,163,184,.07); }
+
+  .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--unk); flex:none; }
+  .st-ok .dot, .dot.st-ok{ background:var(--gr); box-shadow:0 0 8px rgba(52,211,153,.75); }
+  .st-warn .dot, .dot.st-warn{ background:var(--yel); box-shadow:0 0 8px rgba(245,184,58,.65); }
+  .st-bad .dot, .dot.st-bad{ background:var(--red); box-shadow:0 0 8px rgba(244,63,94,.65); }
+  .st-off .dot, .dot.st-off{ background:var(--off); }
+  .st-unk .dot, .dot.st-unk{ background:transparent; border:1px solid var(--unk); }
+  .aichip{ display:inline-flex; align-items:center; gap:6px; cursor:pointer; padding:2px 8px; margin:-2px -8px;
+    border-radius:20px; border:1px solid transparent; }
+  .aichip:hover{ border-color:var(--line); background:rgba(34,211,238,.05); }
+
+  .linkbar{ margin-bottom:12px; padding:8px 12px; border-radius:10px; border:1px solid rgba(244,63,94,.45);
+    background:rgba(244,63,94,.08); color:var(--red); font-size:12.5px; letter-spacing:.4px; display:flex; gap:8px; flex-wrap:wrap; }
+  .linkbar span{ color:var(--dim); }
+
+  .pwr{ display:flex; gap:12px; align-items:flex-start; padding:10px 12px; margin-bottom:12px; border-radius:12px;
+    border:1px solid rgba(245,184,58,.45); background:linear-gradient(90deg,rgba(245,184,58,.12),rgba(245,184,58,.02) 70%); }
+  .pwr.off{ border-color:rgba(244,63,94,.5); background:linear-gradient(90deg,rgba(244,63,94,.14),rgba(244,63,94,.02) 70%); }
+  .pwr-ico{ font-size:18px; line-height:1.25; color:var(--yel); text-shadow:0 0 12px rgba(245,184,58,.6); }
+  .pwr.off .pwr-ico{ color:var(--red); text-shadow:0 0 12px rgba(244,63,94,.6); }
+  .pwr-body{ flex:1; min-width:0; font-size:13px; }
+  .pwr-body b{ display:block; color:var(--yel); letter-spacing:.5px; }
+  .pwr.off .pwr-body b{ color:var(--red); }
+  .pwr-sub{ display:block; color:var(--dim); font-size:12px; margin-top:3px; }
+  .pwr-sub code{ white-space:nowrap; color:var(--ink); background:#0a1118; border:1px solid var(--line); border-radius:5px; padding:0 5px; }
+  .pwr-x{ padding:2px 9px; font-size:12px; background:transparent; border-color:var(--line); color:var(--dim); }
+
+  .aibox{ margin-bottom:14px; padding:10px 12px; position:relative; }
+  .ai-head{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
+  .ai-title{ font-size:12px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; white-space:nowrap; }
+  .ai-title b{ color:var(--cy); font-weight:700; }
+  .route{ display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 7px; font-size:12px; color:var(--dim); }
+  .route .hop{ display:inline-flex; align-items:center; gap:5px; }
+  .route .hop.on{ color:var(--cy); font-weight:700; }
+  .route .sep{ color:#2e4154; }
+  .pill{ display:inline-block; font-size:10.5px; line-height:16px; padding:0 7px; border-radius:9px; border:1px solid var(--line);
+    color:var(--dim); white-space:nowrap; letter-spacing:.4px; flex:none; }
+  .pill.p-ok{ color:var(--gr); border-color:rgba(52,211,153,.35); }
+  .pill.p-warn{ color:var(--yel); border-color:rgba(245,184,58,.4); }
+  .pill.p-bad{ color:var(--red); border-color:rgba(244,63,94,.45); }
+  .ai-last{ order:3; flex-basis:100%; font-size:12px; color:var(--dim); display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; }
+  .ai-last:empty{ display:none; }
+  .ai-last b{ color:var(--ink); font-weight:400; }
+  .ai-last .eb{ margin-right:0; }
+  .ai-tools{ order:2; margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+  .ai-tools button, .ai-tools a.btn{ padding:6px 10px; font-size:12px; }
+  #aiFold{ padding:6px 9px; min-width:32px; }
+  .spin::before{ content:""; display:inline-block; width:9px; height:9px; margin-right:7px; border:1.5px solid currentColor;
+    border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; vertical-align:-1px; }
+  .ai-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:10px; transition:opacity .3s, filter .3s; }
+  @media(max-width:900px){ .ai-grid{ grid-template-columns:1fr; gap:8px; } }
+  .eng{ border:1px solid var(--line); border-left-width:4px; border-radius:10px; padding:8px 10px 9px; background:var(--panel2);
+    min-width:0; position:relative; overflow:hidden; transition:border-color .25s, box-shadow .25s; }
+  .eng.st-ok{ border-left-color:var(--gr) } .eng.st-warn{ border-left-color:var(--yel) } .eng.st-bad{ border-left-color:var(--red) }
+  .eng.st-off{ border-left-color:var(--off) } .eng.st-unk{ border-left-color:var(--unk) }
+  .eng.active{ border-top-color:rgba(34,211,238,.5); border-right-color:rgba(34,211,238,.5); border-bottom-color:rgba(34,211,238,.5);
+    background:linear-gradient(180deg,rgba(34,211,238,.06),rgba(34,211,238,0) 60%),var(--panel2);
+    box-shadow:0 0 22px rgba(34,211,238,.1); }
+  .eng.active::after{ content:""; position:absolute; left:0; right:0; top:0; height:1px;
+    background:linear-gradient(90deg,transparent,var(--cy),transparent); background-size:50% 100%; background-repeat:no-repeat;
+    animation:scanx 3.2s linear infinite; }
+  @keyframes scanx{ from{ background-position:-100% 0 } to{ background-position:200% 0 } }
+  .eng.active.st-ok .dot{ animation:pulse 1.8s ease-out infinite; }
+  @keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(52,211,153,.7) } 70%{ box-shadow:0 0 0 7px rgba(52,211,153,0) } 100%{ box-shadow:0 0 0 0 rgba(52,211,153,0) } }
+  .eng-top{ display:flex; align-items:center; gap:7px; min-width:0; }
+  .eng-name{ font-weight:700; letter-spacing:1.5px; font-size:12px; text-transform:uppercase; white-space:nowrap; }
+  .eng-state{ font-size:11.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .st-ok .eng-state{ color:var(--gr) } .st-warn .eng-state{ color:var(--yel) } .st-bad .eng-state{ color:var(--red) }
+  .eng-act{ margin-left:auto; font-size:10px; letter-spacing:1px; color:var(--cy); border:1px solid rgba(34,211,238,.45);
+    background:rgba(34,211,238,.08); border-radius:10px; padding:0 7px; line-height:16px; white-space:nowrap; flex:none; }
+  .eng-model{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; margin-top:5px; font-size:12.5px; min-width:0; }
+  .eng-model .mn{ flex:0 1 auto; min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .eng-model .mn b{ color:var(--vio); }
+  .eng-reason{ font-size:12px; color:var(--dim); margin-top:3px; min-height:17px; overflow:hidden; display:-webkit-box;
+    -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+  .st-bad .eng-reason{ color:#c9a0aa; } .st-warn .eng-reason{ color:#c8b48a; }
+  .eng-meta{ display:flex; flex-wrap:wrap; gap:2px 12px; margin-top:6px; font-size:11px; color:var(--mute); font-variant-numeric:tabular-nums; }
+  .eng-meta b{ color:#aebdcc; font-weight:400; }
+  .eng-meta .cd{ color:var(--yel); }
+  .eng.skel .eng-reason{ color:var(--mute); }
+  .ai-foot{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin-top:8px; font-size:11px; color:var(--mute); }
+  .ai-foot .bad{ color:var(--red); } .ai-foot .warn{ color:var(--yel); } .ai-foot .good{ color:var(--gr); }
+  .aibox.stale .ai-grid{ opacity:.5; filter:saturate(.5); }
+  .aibox.fold .ai-grid, .aibox.fold .ai-foot{ display:none; }
+  @media(max-width:640px){
+    .aibox{ padding:10px; }
+    .ai-head{ gap:8px 10px; }
+    .ai-tools{ order:4; margin-left:0; width:100%; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 34px; }
+    .ai-tools button, .ai-tools a.btn{ font-size:11px; padding:7px 6px; text-align:center; white-space:normal; min-width:0; }
+    #aiFold{ min-width:0; padding:7px 0; }
+  }
+  @media(prefers-reduced-motion:reduce){
+    .eng.active::after, .eng.active.st-ok .dot, .spin::before, .server .halo, .sweep::before{ animation:none; }
+  }
+</style>
+</head>
+<body class="scan-lines">
+
+<section id="login">
+  <h1>STELLA · RESCUE</h1>
+  <p>Автономный узел координации. Вход для спасателей.</p>
+  <form class="field" id="loginForm"><input id="pin" type="password" inputmode="numeric" placeholder="PIN-код" autocomplete="off" maxlength="64"><button id="enter">ВОЙТИ</button></form>
+  <div class="err" id="loginErr" role="alert"></div>
+  <a class="vlink" href="/verify" target="_blank" rel="noopener">◈ Верификация узла ↗</a>
+</section>
+
+<div id="app" hidden>
+  <header>
+    <span class="brand">STELLA<b>//</b>RESCUE</span>
+    <span class="stat">узел <b id="hHost">—</b></span>
+    <span class="stat">SSID <b id="hSsid">—</b></span>
+    <span class="stat">онлайн <b id="hOnline">0</b></span>
+    <span class="stat">аптайм <b id="hUp">—</b></span>
+    <span class="stat">нагрузка <b id="hLoad">—</b></span>
+    <span class="stat aichip" id="hAi" role="button" tabindex="0" title="Состояние ИИ-диспетчера">ИИ <i class="dot st-unk"></i><b>…</b></span>
+    <span class="modebox" id="modeBox">
+      <b id="modeLbl">РЕЖИМ: ОЖИДАНИЕ</b>
+      <button id="btnQuake" type="button">⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ</button>
+      <button id="btnStandby" type="button" hidden>ВЕРНУТЬ ОЖИДАНИЕ</button>
+    </span>
+    <div class="counts">
+      <span class="chip c-red" id="c-red">0</span>
+      <span class="chip c-yellow" id="c-yellow">0</span>
+      <span class="chip c-unknown" id="c-unknown">0</span>
+      <span class="chip c-green" id="c-green">0</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="linkbar" id="linkBar" role="alert" hidden>● СВЯЗЬ С УЗЛОМ ПОТЕРЯНА <span>повторяю каждые 4 с · данные на экране могут быть устаревшими · последний ответ узла <i id="linkAgo" data-cago="0">—</i></span></div>
+
+    <div class="pwr" id="pwrBanner" role="alert" hidden>
+      <span class="pwr-ico" aria-hidden="true">⚡</span>
+      <div class="pwr-body"><b id="pwrTitle"></b><span id="pwrText"></span><span class="pwr-sub" id="pwrSub"></span></div>
+      <button type="button" class="pwr-x" id="pwrClose" title="Скрыть до конца сессии" aria-label="Скрыть предупреждение">✕</button>
+    </div>
+
+    <section class="panel aibox" id="aiBox" aria-label="ИИ-диспетчер">
+      <div class="ai-head">
+        <span class="ai-title">ИИ<b>-</b>ДИСПЕТЧЕР</span>
+        <span class="route" id="aiRoute" title="Если движок недоступен, отвечает следующий по цепочке"></span>
+        <span class="ai-last" id="aiLast"></span>
+        <span class="ai-tools">
+          <button type="button" id="aiProbe">ПРОВЕРИТЬ СЕЙЧАС</button>
+          <a class="btn" id="aiVerify" href="/verify" target="_blank" rel="noopener">ВЕРИФИКАЦИЯ УЗЛА ↗</a>
+          <button type="button" id="aiFold" aria-expanded="true" aria-controls="aiGrid" title="Свернуть панель">▾</button>
+        </span>
+      </div>
+      <div class="ai-grid" id="aiGrid"></div>
+      <div class="ai-foot"><span id="aiMsg" role="status"></span><span id="aiUpd" class="mono"></span></div>
+    </section>
+
+    <div id="stageServer">
+      <div class="server" id="serverNode">
+        <div class="halo"></div>
+        <div class="rack">🖥️</div>
+        <h2>УЗЕЛ STELLA-01</h2>
+        <div class="meta" id="serverMeta">Orange Pi · Wi-Fi точка доступа</div>
+        <div class="go">▷ НАЖМИТЕ, ЧТОБЫ ПОДКЛЮЧИТЬСЯ<span class="blink">_</span></div>
+      </div>
+    </div>
+
+    <div id="stageGrid" class="cols" hidden>
+      <div class="panel">
+        <h3>Радар <span id="radarNote" class="mono"></span></h3>
+        <svg id="radar" viewBox="0 0 320 320" role="img" aria-label="Радар подключений"></svg>
+        <div class="hint">Точки без GPS расставлены по силе Wi-Fi сигнала (кольцо = расстояние до узла).</div>
+      </div>
+      <div class="panel">
+        <h3>Подключённые устройства <span id="devCount" class="mono"></span></h3>
+        <div class="grid" id="devGrid"></div>
+      </div>
+    </div>
+
+    <div id="stageDetail" hidden>
+      <button class="back" id="backBtn">◀ К списку устройств</button>
+      <div class="cols">
+        <div class="panel" id="dossier"></div>
+        <div class="panel">
+          <h3>Переписка и управление</h3>
+          <div class="statusbtns" id="statusBtns"></div>
+          <form class="field" id="replyForm"><input id="replyText" maxlength="500" placeholder="Написать пострадавшему напрямую"><button>ОТПР.</button></form>
+          <div class="err" id="replyErr" role="alert"></div>
+          <div class="transcript" id="transcript"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <form class="field" id="bcForm">
+        <input id="bcText" maxlength="500" placeholder="📢 Объявление всем подключённым (пункт сбора, вода, медики)">
+        <button>ОТПРАВИТЬ ВСЕМ</button>
+      </form>
+      <div class="err" id="bcErr" role="alert"></div>
+    </div>
+  </main>
+</div>
+
+<div id="scan">
+  <div id="scanTitle">УСТАНОВКА СОЕДИНЕНИЯ С УЗЛОМ</div>
+  <div class="radarwrap"><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div><div class="sweep"></div></div>
+  <pre id="scanLog"></pre>
+</div>
+
+<script>
+(function(){
+  var pin='', selected=null, data=null, revealed=false, timer=null, authed=false, logging=false, refreshing=false;
+  var detailSeq=0, opening=null, netFails=0, lastLink=0, skew=0, modeBusy=false;
+  var LABEL={ red:'КРИТИЧНО', yellow:'СРОЧНО', green:'ЛЁГКИЙ', unknown:'НЕТ ДАННЫХ' };
+  var STATUS={ new:'новый', assigned:'группа выехала', resolved:'закрыт' };
+  var ROLE={ user:'Пострадавший', assistant:'Оператор', advice:'Первая помощь', rescuer:'Спасатель' };
+  var ENGINES=['cloud','local','reserve'];
+  var ENG={ cloud:'Claude', local:'локальная', reserve:'резерв' };
+  var ENG_HINT={ cloud:'Ответил облачный ИИ Claude', local:'Ответила локальная модель на плате', reserve:'Ответ по правилам триажа (резерв без ИИ)' };
+  var ENG_TITLE={ cloud:'Облако', local:'Локальная модель', reserve:'Резерв' };
+  var STATE_CLS={ ok:'st-ok', loading:'st-warn', cooldown:'st-warn', offline:'st-bad', down:'st-bad', error:'st-bad', disabled:'st-off', unknown:'st-unk' };
+  var STATE_RU={ ok:'работает', loading:'загружается', cooldown:'пауза после сбоя', offline:'нет интернета', down:'не запущена', error:'ошибка', disabled:'отключено', unknown:'ожидает проверки' };
+  var STATE_LOCAL={ disabled:'отключена' };
+  var ROUTES={ auto:['cloud','local','reserve'], cloud:['cloud','reserve'], local:['local','reserve'], offline:['reserve'] };
+  var MODE_RU={ auto:'АВТО', cloud:'ТОЛЬКО ОБЛАКО', local:'ТОЛЬКО ПЛАТА', offline:'ОФЛАЙН' };
+  var POWER_RU={ normal:'обычное', safe:'щадящее', off:'ИИ выключен' };
+  var POWER_CLS={ normal:'p-ok', safe:'p-warn', off:'p-bad' };
+  var POWER_RANK={ normal:1, safe:2, off:3 };
+  var ai={ hinted:null, data:null, power:null, hw:null, at:0, next:0, seq:0, shown:0, busy:false, probing:false, timer:null, fails:0, wait:10000, err:null, errCls:'bad', note:null, noteTimer:null };
+  var PWR_KEY='stella_pwr_hide', FOLD_KEY='stella_ai_fold';
+  try{ pin=sessionStorage.getItem('stella_pin')||''; }catch(e){}
+
+  function $(id){ return document.getElementById(id); }
+  function el(t,a,x){ var e=document.createElement(t); for(var k in(a||{})) e.setAttribute(k,a[k]); if(x!==undefined) e.textContent=x; return e; }
+  function isObj(v){ return !!v && typeof v==='object' && !Array.isArray(v); }
+  function num(v){ return typeof v==='number' && isFinite(v) ? v : null; }
+  function txt(v,max){ max=max||300; return typeof v==='string' ? (v.length>max ? v.slice(0,max-1)+'…' : v) : ''; }
+  function pick(map,k,def){ return typeof k==='string' && Object.prototype.hasOwnProperty.call(map,k) ? map[k] : def; }
+  function plural(n,a,b,c){ var m=Math.abs(n)%100, d=m%10; return m>10&&m<20 ? c : d===1 ? a : d>=2&&d<=4 ? b : c; }
+  function store(kind,k,v){ try{ var s=kind==='local'?localStorage:sessionStorage; if(v===undefined) return s.getItem(k); if(v===null) s.removeItem(k); else s.setItem(k,v); }catch(e){} return null; }
+  function netErr(e){ return !e || !e.status; }
+
+  function noteClock(r){ try{ var h=r.headers.get('Date'), t=h?Date.parse(h):NaN; if(!isNaN(t)){ var s=t/1000+0.5-Date.now()/1000; skew=Math.abs(s)<2?0:s; } }catch(e){} }
+  function serverNow(){ return Date.now()/1000+skew; }
+  function span(sec){ sec=Math.max(0,Math.floor(sec)); if(sec<60) return sec+' с'; var m=Math.floor(sec/60); if(m<60) return m+' мин';
+    var h=Math.floor(m/60); if(h<48) return h+' ч'+(m%60?' '+(m%60)+' мин':''); return Math.floor(h/24)+' сут'; }
+  function ago(ts){ ts=num(ts); if(ts==null) return '—'; var d=serverNow()-ts; return d<10 ? 'только что' : span(d)+' назад'; }
+  function cago(ms){ ms=num(ms); if(!ms) return '—'; var d=(Date.now()-ms)/1000; return d<3 ? 'только что' : span(d)+' назад'; }
+  function until(ts){ ts=num(ts); if(ts==null) return ''; var d=ts-serverNow(); return d<=1 ? 'повтор вот-вот' : 'повтор через '+span(d); }
+  function clock(ts){ ts=num(ts); if(ts==null) return ''; try{ return new Date((ts-skew)*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }catch(e){ return ''; } }
+  function fmtMs(ms){ ms=num(ms); if(ms==null||ms<0) return null; if(ms<1) return '<1 мс'; return ms<1000 ? Math.round(ms)+' мс' : (ms/1000).toFixed(ms<10000?1:0).replace('.',',')+' с'; }
+
+  function api(m,u,b,ms){
+    var ctl=null, t=null;
+    try{ ctl=new AbortController(); t=setTimeout(function(){ ctl.abort(); }, ms||15000); }catch(e){ ctl=null; }
+    function done(){ if(t){ clearTimeout(t); t=null; } }
+    return fetch(u,{method:m,cache:'no-store',headers:{'Content-Type':'application/json','X-Rescuer-Pin':pin},body:b?JSON.stringify(b):undefined,signal:ctl?ctl.signal:undefined})
+      .then(function(r){ noteClock(r); return r.text().then(function(s){ done(); var j=null; try{ j=s?JSON.parse(s):null; }catch(e){}
+        if(!r.ok){ var e=new Error(isObj(j)&&typeof j.error==='string'&&j.error ? j.error : 'код '+r.status); e.status=r.status; throw e; }
+        if(!isObj(j)){ var bad=new Error('узел прислал некорректный ответ'); bad.status=r.status; throw bad; }
+        return j; }); })
+      .catch(function(x){ done(); if(x && x.status) throw x;
+        var e=new Error(x && x.name==='AbortError' ? 'Узел не ответил вовремя' : 'Нет связи с узлом'); e.status=0; throw e; });
+  }
+  function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); var h=Math.floor(s/3600),m=Math.floor(s%3600/60); return (h?h+'ч ':'')+m+'м'; }
+
+  function login(){
+    if(logging) return;
+    var v=($('pin').value||'').trim(); if(v) pin=v;
+    if(!pin){ $('loginErr').textContent='Введите PIN'; return; }
+    logging=true; $('enter').disabled=true; $('loginErr').textContent='';
+    api('GET','/api/rescuer/incidents',null,12000).then(function(d){
+      store('session','stella_pin',pin);
+      $('pin').value=''; $('login').hidden=true; $('app').hidden=false; authed=true;
+      linkOk(); apply(d); startPolling();
+    }).catch(function(e){
+      if(e.status===401) forgetPin();
+      $('loginErr').textContent = e.status===429 ? 'Заблокировано на 5 минут (много попыток)' : e.status===401 ? 'Неверный PIN'
+        : netErr(e) ? e.message+'. Проверьте подключение к Wi‑Fi SOS-STELLA-RESCUE и повторите.' : 'Ошибка узла: '+e.message;
+    }).then(function(){ logging=false; $('enter').disabled=false; });
+  }
+  function forgetPin(){ pin=''; store('session','stella_pin',null); }
+  function startPolling(){ clearInterval(timer); timer=setInterval(refresh,4000); ai.next=0; aiPoll(); }
+  function authLost(msg){
+    if(!authed) return;
+    authed=false; clearInterval(timer); timer=null; clearTimeout(ai.timer); ai.timer=null;
+    ai.data=null; ai.power=null; ai.hw=null; ai.err=null; forgetPin();
+    $('scan').style.display='none'; $('app').hidden=true; $('login').hidden=false;
+    $('pwrBanner').hidden=true; $('linkBar').hidden=true; netFails=0; renderAi();
+    $('loginErr').textContent=msg||'Сессия завершена — войдите снова'; try{ $('pin').focus(); }catch(e){}
+  }
+  function authGuard(e){ if(e && e.status===401){ authLost('PIN изменён или больше не подходит — войдите снова'); return true; } return false; }
+  $('loginForm').onsubmit=function(e){ e.preventDefault(); login(); };
+  if(pin) login();
+
+  function refresh(){
+    if(!authed) return;
+    if(!refreshing){ refreshing=true;
+      api('GET','/api/rescuer/incidents',null,10000).then(function(d){ linkOk(); apply(d); })
+        .catch(function(e){ if(authGuard(e)) return; if(netErr(e)) linkFail(); })
+        .then(function(){ refreshing=false; }); }
+    if(revealed && selected && (!document.activeElement || document.activeElement.id!=='replyText')) showDetail(selected,true);
+  }
+  function linkOk(){ netFails=0; lastLink=Date.now(); $('linkAgo').setAttribute('data-cago',lastLink); $('linkBar').hidden=true; }
+  function linkFail(){ netFails++; if(netFails>=2){ $('linkAgo').textContent=cago(lastLink); $('linkBar').hidden=false; } }
+
+  function applyMode(m){
+    if(!isObj(m)) return;
+    var em = m.mode === 'emergency', box = $('modeBox');
+    box.classList.toggle('em', em); document.body.classList.toggle('em', em);
+    $('modeLbl').textContent = em ? ('РЕЖИМ ЧС' + (m.source==='drill'?' · УЧЕНИЯ':m.source==='sensor'?' · ДАТЧИК':'')) : 'РЕЖИМ: ОЖИДАНИЕ';
+    $('btnQuake').hidden = em; $('btnStandby').hidden = !em;
+    if(!authed || !ai.data || !pick(ENG,m.ai)) return;
+    if(m.ai===ai.data.active){ ai.hinted=null; return; }
+    if(m.ai!==ai.hinted && !ai.err && !ai.busy && !ai.probing && !document.hidden && Date.now()-ai.at>3000){ ai.hinted=m.ai; aiPoll(); }
+  }
+  function pollMode(){ if(modeBusy) return; modeBusy=true; fetch('/api/status',{cache:'no-store'}).then(function(r){ noteClock(r); return r.json(); }).then(applyMode).catch(function(){}).then(function(){ modeBusy=false; }); }
+  setInterval(pollMode, 3000); pollMode();
+  function modeFail(e){ if(authGuard(e)) return; $('modeLbl').textContent='НЕ УДАЛОСЬ: '+txt(e.message,60); setTimeout(pollMode,3000); }
+  $('btnQuake').onclick = function(){
+    var b = this; if(b.dataset.arm !== '1'){ b.dataset.arm = '1'; b.textContent = 'НАЖМИТЕ ЕЩЁ РАЗ ДЛЯ ПОДТВЕРЖДЕНИЯ';
+      setTimeout(function(){ b.dataset.arm=''; b.textContent='⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ'; }, 4000); return; }
+    b.dataset.arm = ''; b.textContent = '⚠ ИМИТИРОВАТЬ ЗЕМЛЕТРЯСЕНИЕ';
+    api('POST','/api/rescuer/mode',{mode:'emergency',source:'drill'}).then(applyMode).catch(modeFail);
+  };
+  $('btnStandby').onclick = function(){ api('POST','/api/rescuer/mode',{mode:'standby'}).then(applyMode).catch(modeFail); };
+
+  function prio(it){ return pick(LABEL,it.priority) ? it.priority : 'unknown'; }
+  function apply(d){
+    if(!isObj(d)) return;
+    d.incidents=(Array.isArray(d.incidents)?d.incidents:[]).filter(isObj);
+    if(!isObj(d.counts)) d.counts={};
+    data=d;
+    var on = d.incidents.filter(function(i){return i.online;}).length;
+    $('hHost').textContent = (isObj(d.hub)&&typeof d.hub.mode==='string'&&d.hub.mode)||'field';
+    $('hSsid').textContent = 'SOS-STELLA-RESCUE';
+    $('hOnline').textContent = on;
+    $('hUp').textContent = fmtDur(isObj(d.server)?num(d.server.uptime_s):null);
+    $('hLoad').textContent = (isObj(d.server)&&d.server.load!=null)?String(d.server.load):'—';
+    ['red','yellow','unknown','green'].forEach(function(p){ $('c-'+p).textContent=LABEL[p]+' '+(num(d.counts[p])||0); });
+    $('serverMeta').textContent='Orange Pi · '+d.incidents.length+' устройств · '+on+' онлайн';
+    if(revealed){ renderGrid(); drawRadar(); }
+  }
+
+  var SCAN=['[ok] link up wlan0 · SOS-STELLA-RESCUE','[ok] hostapd: точка доступа активна',
+    '[..] опрос станций: iw dev wlan0 station dump','[ok] чтение аренд DHCP (MAC ↔ IP)',
+    '[..] расчёт близости по RSSI (модель затухания)','[ok] синхронизация карточек вызовов',
+    '[ok] триаж-очередь загружена','[ok] соединение установлено'];
+  var scanning=false;
+  $('serverNode').onclick=function(){ if(revealed) return goGrid(); runScan(); };
+  function runScan(){
+    if(scanning) return; scanning=true;
+    var sc=$('scan'), log=$('scanLog'); sc.style.display='flex'; log.textContent='';
+    var i=0; (function step(){
+      if(i<SCAN.length){ var c=data?data.incidents.length:0;
+        log.textContent += SCAN[i].replace('устройств', c+' устройств') + '\n'; log.scrollTop=log.scrollHeight; i++; setTimeout(step, 3000/SCAN.length); }
+      else { setTimeout(function(){ sc.style.display='none'; scanning=false; revealed=true; goGrid(); apply(data); }, 260); }
+    })();
+  }
+  function goGrid(){ $('stageServer').hidden=true; $('stageDetail').hidden=true; $('stageGrid').hidden=false; }
+
+  function bars(sig){
+    var lv = sig==null?0 : sig>=-55?4 : sig>=-67?3 : sig>=-78?2 : sig>=-88?1 : 0;
+    var w=document.createElement('span'); w.className='bars';
+    for(var i=1;i<=4;i++){ var b=el('i'); b.style.height=(4+i*2)+'px'; if(i<=lv) b.className='on'; w.appendChild(b); }
+    return w;
+  }
+
+  function renderGrid(){
+    if(!data) return;
+    var g=$('devGrid'); g.textContent='';
+    $('devCount').textContent=data.incidents.length;
+    if(!data.incidents.length) g.appendChild(el('div',{'class':'empty'},'Пока никто не подключился. Устройства появятся здесь, как только пострадавшие напишут в чат.'));
+    data.incidents.forEach(function(it){
+      var p=prio(it), c=el('div',{'class':'dev '+p});
+      var live=el('span',{'class':'live'+(it.online?' on':'')}); c.appendChild(live);
+      c.appendChild(el('div',{'class':'id'},'#'+it.id+' · '+LABEL[p]));
+      c.appendChild(el('div',{'class':'nm'}, it.device||'устройство'));
+      var sub=el('div',{'class':'sub'});
+      sub.appendChild(document.createTextNode((it.proximity?it.proximity+' · ':'')+(it.signal!=null?it.signal+' dBm ':'')));
+      sub.appendChild(bars(it.signal));
+      c.appendChild(sub);
+      c.appendChild(el('div',{'class':'sub'}, (num(it.battery)!=null?'🔋'+Math.round(it.battery*100)+'% · ':'')+pick(STATUS,it.status,'—')));
+      c.onclick=function(){ selected=it.id; showDetail(it.id); };
+      g.appendChild(c);
+    });
+  }
+
+  function drawRadar(){
+    if(!data) return;
+    var NS='http://www.w3.org/2000/svg', svg=$('radar'); svg.textContent='';
+    var cx=160,cy=160,Rmax=140;
+    function A(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); svg.appendChild(e); return e; }
+    var live=data.incidents.filter(function(i){ return i.status!=='resolved'; });
+    var gps=live.filter(function(i){ return num(i.lat)!=null && num(i.lon)!=null; });
+    var hub=isObj(data.hub)&&num(data.hub.lat)!=null&&num(data.hub.lon)!=null?data.hub:(gps.length?{lat:avg(gps,'lat'),lon:avg(gps,'lon')}:null);
+    var maxD=Math.max(30, Math.max.apply(null, live.map(function(i){return num(i.distance_m)||0;}).concat([0]))*1.1);
+    if(gps.length&&hub){ maxD=Math.max(maxD, Math.max.apply(null, gps.map(function(p){ return dist(hub,p); }))*1.1||maxD); }
+    [0.33,0.66,1].forEach(function(f){ A('circle',{cx:cx,cy:cy,r:Rmax*f,fill:'none',stroke:'#12202c'});
+      var t=A('text',{x:cx+4,y:cy-Rmax*f+12,fill:'#3a5266','font-size':9}); t.textContent=Math.round(maxD*f)+' м'; });
+    A('line',{x1:cx,y1:cy-Rmax,x2:cx,y2:cy+Rmax,stroke:'#0f1c26'}); A('line',{x1:cx-Rmax,y1:cy,x2:cx+Rmax,y2:cy,stroke:'#0f1c26'});
+    A('circle',{cx:cx,cy:cy,r:5,fill:'#22d3ee'}); var ht=A('text',{x:cx+8,y:cy+4,fill:'#22d3ee','font-size':10}); ht.textContent='УЗЕЛ';
+    $('radarNote').textContent = gps.length? gps.length+' по GPS' : (hub?'':'нет данных о месте');
+    live.forEach(function(p){
+      var x,y,hasGps=num(p.lat)!=null&&num(p.lon)!=null;
+      if(hasGps&&hub){ var dx=(p.lon-hub.lon)*111320*Math.cos(hub.lat*Math.PI/180), dy=(p.lat-hub.lat)*110540;
+        x=cx+dx/maxD*Rmax; y=cy-dy/maxD*Rmax; }
+      else { var d=num(p.distance_m)||maxD; var ang=hash(p.id)%360*Math.PI/180; var r=Math.min(Rmax, d/maxD*Rmax);
+        x=cx+Math.cos(ang)*r; y=cy+Math.sin(ang)*r; }
+      if(!isFinite(x)||!isFinite(y)) return;
+      var col={red:'#f43f5e',yellow:'#f5b83a',green:'#34d399',unknown:'#64748b'}[prio(p)];
+      if(!hasGps){ A('circle',{cx:cx,cy:cy,r:Math.hypot(x-cx,y-cy),fill:'none',stroke:col,'stroke-opacity':.15,'stroke-dasharray':'3 4'}); }
+      var dot=A('circle',{cx:x,cy:y,r:p.id===selected?7:5,fill:col,stroke:p.online?'#fff':'#0b1016','stroke-width':p.online?1.5:1});
+      dot.style.cursor='pointer'; dot.onclick=function(){ selected=p.id; showDetail(p.id); };
+      var t=A('text',{x:x+8,y:y+4,fill:'#9fb3c6','font-size':10}); t.textContent='#'+p.id;
+    });
+  }
+  function avg(a,k){ return a.reduce(function(s,x){return s+x[k];},0)/a.length; }
+  function dist(a,b){ var dx=(b.lon-a.lon)*111320*Math.cos(a.lat*Math.PI/180), dy=(b.lat-a.lat)*110540; return Math.hypot(dx,dy); }
+  function hash(n){ n=((+n||0)*2654435761)>>>0; return n%997; }
+
+  function kv(box,k,v,big){ var d=el('div',{'class':'kv'}); d.appendChild(el('span',{'class':'k'},k));
+    d.appendChild(el('span',{'class':'v'+(big?' big':'')}, v==null||v===''?'—':String(v))); box.appendChild(d); }
+  function badge(engine){ return el('span',{'class':'eb eb-'+engine,title:ENG_HINT[engine]},ENG[engine]); }
+
+  function showDetail(id,keep){
+    var tok=++detailSeq; if(!keep) opening=id;
+    api('GET','/api/rescuer/incidents/'+encodeURIComponent(id)+'/messages',null,10000).then(function(d){
+      if(tok!==detailSeq || selected!==id || !authed) return;
+      var it=isObj(d.incident)?d.incident:{}, di=isObj(it.device_info)?it.device_info:{}, p=prio(it), show=!keep || opening===id;
+      if(show){ opening=null; $('stageGrid').hidden=true; $('stageServer').hidden=true; $('stageDetail').hidden=false; $('replyErr').textContent=''; }
+      var box=$('dossier'); box.textContent='';
+      box.appendChild(el('h3',{},'Досье устройства #'+it.id));
+      var flag=el('div',{'class':'flag c-'+p}); flag.style.marginBottom='8px'; flag.textContent=LABEL[p]+(it.panic?' · ПАНИКА':'');
+      box.appendChild(flag);
+      var g=el('div',{'class':'dossier'});
+      kv(g,'Устройство', it.device, true);
+      kv(g,'Близость', it.proximity? it.proximity+(it.distance_m!=null?' (~'+it.distance_m+' м)':'') : '—', true);
+      kv(g,'Сигнал Wi-Fi', it.signal!=null?it.signal+' dBm':'—');
+      kv(g,'В сети', it.online?'да':'нет');
+      kv(g,'Заряд', num(it.battery)!=null?Math.round(it.battery*100)+'%'+(it.charging?' (заряжается)':''):'—');
+      kv(g,'Координаты', num(it.lat)!=null&&num(it.lon)!=null?it.lat.toFixed(5)+', '+it.lon.toFixed(5)+(num(it.accuracy)?' (±'+Math.round(it.accuracy)+'м)':''):'нет GPS');
+      kv(g,'Адрес/ориентир', it.location_text);
+      kv(g,'Людей', it.people);
+      kv(g,'Ждёт', num(it.waiting_min)!=null?it.waiting_min+' мин':'—');
+      kv(g,'IP / MAC', (it.client_ip||'—')+(it.mac?' · '+it.mac:''));
+      kv(g,'Платформа', di.platform);
+      kv(g,'Экран', (di.screen||'')+(di.dpr?' @'+di.dpr:''));
+      kv(g,'Ядра / память', (di.cores||'?')+' / '+(di.memory_gb?di.memory_gb+' ГБ':'?'));
+      kv(g,'Сеть телефона', (di.net_type||'—')+(di.downlink?' · '+di.downlink+' Мбит':''));
+      kv(g,'Язык / зона', (di.lang||'')+(di.tz?' · '+di.tz:''));
+      box.appendChild(g);
+      if(Array.isArray(it.tags)&&it.tags.length){ var tg=el('div',{}); tg.style.marginTop='8px'; it.tags.forEach(function(t){ tg.appendChild(el('span',{'class':'tag'},String(t))); }); box.appendChild(tg); }
+      if(di.ua){ var ua=el('div',{'class':'hint'}); ua.textContent='UA: '+di.ua; box.appendChild(ua); }
+
+      var sb=$('statusBtns'); sb.textContent='';
+      ['new','assigned','resolved'].forEach(function(s){ var b=el('button',{type:'button'},STATUS[s]); if(it.status===s) b.className='on';
+        b.onclick=function(){ b.disabled=true; api('PATCH','/api/rescuer/incidents/'+encodeURIComponent(id),{status:s})
+          .then(function(){ showDetail(id,true); refresh(); })
+          .catch(function(e){ if(!authGuard(e)) $('replyErr').textContent='Статус не изменён: '+e.message; })
+          .then(function(){ b.disabled=false; }); }; sb.appendChild(b); });
+
+      var tr=$('transcript'), atEnd=show || tr.scrollHeight-tr.scrollTop-tr.clientHeight<40, top=tr.scrollTop;
+      tr.textContent='';
+      (Array.isArray(d.messages)?d.messages:[]).forEach(function(m){ if(!isObj(m)) return; var l=el('div',{'class':'tline'});
+        var role=typeof m.role==='string'?m.role:'';
+        l.appendChild(el('span',{'class':'r r-'+role}, pick(ROLE,role,role)));
+        if(role==='assistant' && pick(ENG,m.engine)) l.appendChild(badge(m.engine));
+        l.appendChild(document.createTextNode(m.text==null?'':String(m.text))); tr.appendChild(l); });
+      tr.scrollTop=atEnd?tr.scrollHeight:top;
+
+      $('replyForm').onsubmit=function(e){ e.preventDefault(); var t=$('replyText'), btn=this.querySelector('button'); if(!t.value.trim()||btn.disabled) return;
+        btn.disabled=true; $('replyErr').textContent='';
+        api('POST','/api/rescuer/incidents/'+encodeURIComponent(id)+'/reply',{text:t.value})
+          .then(function(){ t.value=''; showDetail(id,true); })
+          .catch(function(e){ if(!authGuard(e)) $('replyErr').textContent='Не отправлено: '+e.message+'. Текст сохранён — повторите.'; })
+          .then(function(){ btn.disabled=false; }); };
+    }).catch(function(e){
+      if(authGuard(e) || tok!==detailSeq) return;
+      if(e.status===404 && selected===id){ selected=null; opening=null; goGrid(); refresh(); return; }
+      if(!keep || opening===id){ opening=null; $('replyErr').textContent='Не удалось открыть вызов: '+e.message; }
+    });
+  }
+  $('backBtn').onclick=function(){ selected=null; opening=null; detailSeq++; goGrid(); };
+
+  $('bcForm').onsubmit=function(e){ e.preventDefault(); var t=$('bcText'), btn=this.querySelector('button'); if(!t.value.trim()||btn.disabled) return;
+    btn.disabled=true; $('bcErr').textContent='';
+    api('POST','/api/rescuer/broadcast',{text:t.value})
+      .then(function(){ t.value=''; t.placeholder='✓ отправлено всем'; })
+      .catch(function(e){ if(!authGuard(e)) $('bcErr').textContent='Объявление не отправлено: '+e.message+'. Текст сохранён — повторите.'; })
+      .then(function(){ btn.disabled=false; }); };
+
+  function engState(k,e){ return k==='reserve' ? 'ok' : pick(STATE_CLS,isObj(e)?e.state:null) ? e.state : 'unknown'; }
+  function stateText(k,st){ if(k==='reserve') return 'всегда готов'; return (k==='local'&&pick(STATE_LOCAL,st))||STATE_RU[st]; }
+  function powerProfile(){ var p=isObj(ai.power)&&typeof ai.power.profile==='string'?ai.power.profile:null;
+    if(!p && ai.data && isObj(ai.data.local)) p=ai.data.local.power; return pick(POWER_RU,p)?p:null; }
+  function freshHw(){ var h=ai.hw; if(!isObj(h)) return null; var ts=num(h.ts); return ts!=null && Math.abs(serverNow()-ts)<90 ? h : null; }
+
+  function aiSchedule(ms){ clearTimeout(ai.timer); ai.timer=null; ai.next=Date.now()+ms; if(authed && !document.hidden) ai.timer=setTimeout(aiPoll, ms); }
+  function aiPoll(){
+    if(!authed || document.hidden || ai.busy || ai.probing) return;
+    clearTimeout(ai.timer); ai.timer=null; ai.busy=true; var s=++ai.seq;
+    api('GET','/api/rescuer/ai',null,9000)
+      .then(function(d){ aiTake(s,d.ai,d); })
+      .catch(aiFail)
+      .then(function(){ ai.busy=false; if(!ai.probing) aiSchedule(ai.wait); });
+  }
+  function aiTake(s,snap,full){
+    if(s<ai.shown) return;
+    ai.shown=s;
+    if(full){ ai.power=isObj(full.power)?full.power:null; ai.hw=isObj(full.hw)?full.hw:null; }
+    ai.fails=0; ai.wait=10000;
+    if(isObj(snap)){ ai.data=snap; ai.at=Date.now(); ai.err=null; }
+    else { ai.err='Узел прислал неполные данные о ИИ — показано последнее известное состояние'; ai.errCls='warn'; }
+    renderAi();
+  }
+  function aiFail(e){
+    if(authGuard(e)) return;
+    ai.fails++; ai.errCls='bad';
+    if(e.status===429){ ai.err='С этого адреса было много неверных PIN — узел временно блокирует запросы, повтор через минуту'; ai.errCls='warn'; ai.wait=60000; }
+    else if(e.status===404){ ai.err='Узел не отдаёт состояние ИИ (нужна прошивка 2.0)'; ai.wait=60000; }
+    else if(netErr(e)){ ai.err=e.message+(ai.data?' — показано последнее известное состояние':''); ai.wait=Math.min(30000,10000+5000*(ai.fails-1)); }
+    else { ai.err='Ошибка узла: '+txt(e.message,120); ai.wait=15000; }
+    renderAi();
+  }
+  function aiProbe(){
+    if(ai.probing || !authed) return;
+    ai.probing=true; probeBtn('run'); clearTimeout(ai.timer); ai.timer=null;
+    var s=++ai.seq, fresh=false;
+    api('POST','/api/rescuer/ai/probe',null,30000).then(function(d){
+      aiTake(s,d.ai,null); fresh=isObj(d.ai);
+      if(typeof d.error==='string' && d.error){ ai.err=txt(d.error,160); ai.errCls='warn'; renderAiMsg(); probeBtn(); }
+      else { note('Проверка завершена · облако и локальная модель опрошены'); probeBtn('done'); }
+    }).catch(function(e){ aiFail(e); probeBtn(); })
+      .then(function(){ ai.probing=false; if(authed) aiSchedule(fresh?400:ai.wait); else probeBtn(); });
+  }
+  function probeBtn(st){
+    var b=$('aiProbe'); b.classList.toggle('spin',st==='run'); b.disabled=st==='run';
+    b.textContent = st==='run' ? 'ПРОВЕРЯЮ…' : st==='done' ? '✓ ПРОВЕРЕНО' : 'ПРОВЕРИТЬ СЕЙЧАС';
+    if(st==='done') setTimeout(function(){ if(!ai.probing) probeBtn(); }, 2500);
+  }
+  function note(msg){ ai.note=msg; renderAiMsg(); clearTimeout(ai.noteTimer); ai.noteTimer=setTimeout(function(){ ai.note=null; renderAiMsg(); }, 5000); }
+  $('aiProbe').onclick=aiProbe;
+
+  function renderAi(){
+    $('aiBox').classList.toggle('stale', !!ai.err && !!ai.data);
+    renderChip(); renderRoute(); renderLast(); renderGridAi(); renderAiMsg(); renderPower();
+  }
+  function renderChip(){
+    var a=ai.data, k=a&&pick(ENG,a.active)?a.active:null, chip=$('hAi'), dot=chip.querySelector('.dot'), b=chip.querySelector('b');
+    if(!k){ dot.className='dot st-unk'; b.textContent=ai.err?'нет данных':'…'; chip.title=ai.err||'Состояние ИИ-диспетчера загружается'; return; }
+    dot.className='dot '+STATE_CLS[engState(k,a[k])]; b.textContent=ENG[k];
+    chip.title='Сейчас отвечает: '+ENG_TITLE[k]+(ai.err?' (данные устарели)':'')+'. Нажмите, чтобы открыть панель ИИ.';
+  }
+  function renderRoute(){
+    var a=ai.data, r=$('aiRoute'); r.textContent='';
+    if(!a){ r.appendChild(el('span',{'class':'pill'},ai.err?'нет данных':'опрос…')); return; }
+    var mode=pick(ROUTES,a.mode)?a.mode:'auto';
+    r.appendChild(el('span',{'class':'pill'},'РЕЖИМ '+MODE_RU[mode]));
+    ROUTES[mode].forEach(function(k,i){
+      if(i) r.appendChild(el('span',{'class':'sep','aria-hidden':'true'},'›'));
+      var h=el('span',{'class':'hop'+(a.active===k?' on':''),title:ENG_TITLE[k]+': '+stateText(k,engState(k,a[k]))});
+      h.appendChild(el('i',{'class':'dot '+STATE_CLS[engState(k,a[k])]})); h.appendChild(document.createTextNode(ENG[k])); r.appendChild(h);
+    });
+  }
+  function renderLast(){
+    var a=ai.data, l=$('aiLast'), lr=a&&isObj(a.last_reply)?a.last_reply:null; l.textContent='';
+    if(!a) return;
+    if(!lr || !pick(ENG,lr.engine)){ l.appendChild(document.createTextNode('ответов пострадавшим ещё не было')); return; }
+    l.appendChild(document.createTextNode('последний ответ'));
+    l.appendChild(badge(lr.engine));
+    var t=clock(lr.ts); if(t) l.appendChild(el('b',{},t));
+    if(num(lr.ts)!=null) l.appendChild(el('span',{'data-ago':lr.ts,'data-pre':'· '},'· '+ago(lr.ts)));
+    var ms=fmtMs(lr.ms); if(ms) l.appendChild(el('span',{},'· за '+ms));
+  }
+  function item(box,label,val,cls){ var s=el('span',cls?{'class':cls}:{}); s.appendChild(document.createTextNode(label+' ')); s.appendChild(el('b',{},val)); box.appendChild(s); return s; }
+  function engModel(k,e,st){
+    var m=el('div',{'class':'eng-model'}), mn=el('span',{'class':'mn'}), full;
+    if(k==='cloud'){
+      var model=txt(e.model,80);
+      mn.appendChild(el('b',{},'Claude')); mn.appendChild(document.createTextNode(' · '+(model||(e.configured===false?'ключ API не задан':'модель не выбрана'))));
+      full='Claude · '+(model||'—'); m.appendChild(mn);
+      if(e.online===true) m.appendChild(el('span',{'class':'pill p-ok',title:'api.anthropic.com доступен'},'интернет есть'));
+      else if(e.online===false) m.appendChild(el('span',{'class':'pill p-bad',title:'api.anthropic.com недоступен'},'нет интернета'));
+    } else if(k==='local'){
+      var lm=txt(e.model,120);
+      mn.textContent=lm||(st==='loading'?'модель ещё не в памяти':st==='off'?'модель не используется':'модель не загружена');
+      full=lm||mn.textContent; m.appendChild(mn);
+      var pp=powerProfile(); if(pp) m.appendChild(el('span',{'class':'pill '+POWER_CLS[pp],title:'Профиль питания платы'},'питание: '+POWER_RU[pp]));
+      var h=freshHw(), temps=h&&isObj(h.temps)?h.temps:null, soc=temps?num(temps.soc):null;
+      if(soc!=null) m.appendChild(el('span',{'class':'pill'+(soc>=80?' p-bad':soc>=70?' p-warn':''),title:'Температура процессора'},'SoC '+Math.round(soc)+'°'));
+    } else {
+      mn.textContent='правила триажа · без сети и нейросети'; full=mn.textContent; m.appendChild(mn);
+    }
+    mn.setAttribute('title',full);
+    return m;
+  }
+  function reasonText(k,e,st){
+    var r=txt(e.reason,240); if(r) return r;
+    if(k==='reserve') return 'Отвечает по правилам, если ИИ недоступен — пострадавший ответ получит всегда';
+    if(st==='ok') return k==='cloud' ? (e.online===true?'Интернет есть — Claude на связи':'Claude на связи') : 'Модель загружена и отвечает';
+    if(st==='unknown') return k==='cloud' ? 'Проверяю связь с облаком…' : 'Проверяю локальную модель…';
+    if(st==='cooldown') return 'Пауза после сбоя, затем повторная попытка';
+    if(st==='loading') return 'Модель загружается в память';
+    return STATE_RU[st]||'';
+  }
+  function engMeta(k,e,st){
+    var m=el('div',{'class':'eng-meta'});
+    if(k==='reserve'){ item(m,'ответ','мгновенно'); item(m,'зависимости','нет'); return m; }
+    var lat=fmtMs(e.latency_ms); if(lat) item(m,'ответ',lat);
+    var pr=fmtMs(e.probe_ms); if(pr) item(m,k==='cloud'?'сеть':'проверка',pr);
+    if(k==='cloud' && typeof e.effort==='string' && e.effort) item(m,'effort',txt(e.effort,12)).setAttribute('title','Глубина рассуждений модели');
+    var cu=num(e.cooldown_until); if(cu!=null) m.appendChild(el('span',{'class':'cd','data-until':cu},until(cu)));
+    var ok=num(e.last_ok);
+    if(ok!=null){ var s=item(m,'последний успех',ago(ok)); s.lastChild.setAttribute('data-ago',ok); }
+    else if(STATE_CLS[st]!=='st-off') m.appendChild(el('span',{},'успешных ответов ещё не было'));
+    var calls=num(e.calls)||0, fl=num(e.failures)||0;
+    if(calls||fl) item(m,'вызовов',calls+(fl?' · сбоев '+fl:''));
+    if(!m.childNodes.length) m.appendChild(el('span',{},'не используется'));
+    return m;
+  }
+  function engCard(k,a){
+    var e=isObj(a[k])?a[k]:{}, st=engState(k,e), on=a.active===k;
+    var c=el('div',{'class':'eng '+STATE_CLS[st]+(on?' active':''),'data-engine':k});
+    var top=el('div',{'class':'eng-top'});
+    top.appendChild(el('i',{'class':'dot','aria-hidden':'true'}));
+    top.appendChild(el('span',{'class':'eng-name'},ENG_TITLE[k]));
+    top.appendChild(el('span',{'class':'eng-state'},stateText(k,st)));
+    if(on) top.appendChild(el('span',{'class':'eng-act',title:'Этот движок ответит на следующее сообщение'},'▶ АКТИВЕН'));
+    c.appendChild(top);
+    c.appendChild(engModel(k,e,STATE_CLS[st]==='st-off'?'off':st));
+    var why=reasonText(k,e,st), w=el('div',{'class':'eng-reason'},why), le=txt(e.last_error,400);
+    w.setAttribute('title', le && st!=='ok' ? why+'\nПоследняя ошибка: '+le : why);
+    c.appendChild(w);
+    c.appendChild(engMeta(k,e,st));
+    return c;
+  }
+  function renderGridAi(){
+    var g=$('aiGrid'), a=ai.data; g.textContent='';
+    ENGINES.forEach(function(k){
+      if(a){ g.appendChild(engCard(k,a)); return; }
+      var c=el('div',{'class':'eng skel st-unk'}), top=el('div',{'class':'eng-top'});
+      top.appendChild(el('i',{'class':'dot'})); top.appendChild(el('span',{'class':'eng-name'},ENG_TITLE[k]));
+      c.appendChild(top); c.appendChild(el('div',{'class':'eng-reason'},ai.err?'нет данных':'опрашиваю узел…')); g.appendChild(c);
+    });
+  }
+  function renderAiMsg(){
+    var m=$('aiMsg'), a=ai.data; m.className='';
+    if(ai.err){ m.className=ai.errCls; m.textContent=ai.err; }
+    else if(a && typeof a.error==='string' && a.error){ m.className='warn'; m.textContent=txt(a.error,160); }
+    else if(ai.note){ m.className='good'; m.textContent='✓ '+ai.note; }
+    else m.textContent='Если движок недоступен, следующий по цепочке ответит сам — без участия спасателя.';
+    var u=$('aiUpd');
+    if(ai.at){ u.setAttribute('data-cago',ai.at); u.textContent='обновлено '+cago(ai.at); } else { u.removeAttribute('data-cago'); u.textContent=''; }
+  }
+  function renderPower(){
+    var b=$('pwrBanner'), p=isObj(ai.power)?ai.power:{}, prof=powerProfile(), n=Math.max(0,Math.floor(num(p.unclean_boots)||0));
+    var show=authed && (prof==='off' || n>0), rank=pick(POWER_RANK,prof,0), seen=(store('session',PWR_KEY)||'').split('|');
+    if(!show || (seen.length===2 && rank<=(+seen[0]||0) && n<=(+seen[1]||0))){ b.hidden=true; return; }
+    b.setAttribute('data-sig',rank+'|'+n); b.classList.toggle('off',prof==='off');
+    var manual=p.setting==='off' && n===0;
+    $('pwrTitle').textContent = n>0 ? 'Плата перезагружалась из‑за питания ('+n+' '+plural(n,'раз','раза','раз')+')'
+      : manual ? 'Локальный ИИ выключен вручную' : 'Локальный ИИ выключен сторожем питания';
+    $('pwrText').textContent = prof==='off'
+      ? (manual ? 'Профиль питания «выключен». Отвечают облако (если есть интернет) и резерв.' : 'Локальный ИИ выключен, чтобы плата не перезагружалась. Отвечают облако (если есть интернет) и резерв.')
+      : prof==='safe' ? 'Локальный ИИ работает в щадящем режиме: одно ядро, сниженная частота, лёгкая модель.'
+      : prof==='normal' ? 'Локальный ИИ работает в обычном режиме — при новых перезагрузках включите щадящий.'
+      : 'Локальный ИИ под наблюдением сторожа питания.';
+    var sub=$('pwrSub'); sub.textContent='';
+    var reason=txt(p.reason,200); if(reason && reason!==$('pwrTitle').textContent){ sub.appendChild(document.createTextNode(reason+'. ')); }
+    var last=num(p.last_unclean); if(last!=null && n>0){ sub.appendChild(document.createTextNode('Последний раз ')); sub.appendChild(el('span',{'data-ago':last},ago(last))); sub.appendChild(document.createTextNode('. ')); }
+    if(manual){ sub.appendChild(document.createTextNode('Включить обратно: ')); sub.appendChild(el('code',{},'stella power auto')); }
+    else { sub.appendChild(document.createTextNode('Нужен блок питания 5V 3–4A и короткий толстый кабель. После замены: ')); sub.appendChild(el('code',{},'stella power reset')); }
+    b.hidden=false;
+  }
+  $('pwrClose').onclick=function(){ var b=$('pwrBanner'); store('session',PWR_KEY,b.getAttribute('data-sig')||''); b.hidden=true; };
+
+  function setFold(f){ $('aiBox').classList.toggle('fold',f); var b=$('aiFold'); b.textContent=f?'▸':'▾';
+    b.setAttribute('aria-expanded',f?'false':'true'); b.title=f?'Развернуть панель ИИ':'Свернуть панель ИИ'; store('local',FOLD_KEY,f?'1':null); }
+  $('aiFold').onclick=function(){ setFold(!$('aiBox').classList.contains('fold')); };
+  setFold(store('local',FOLD_KEY)==='1');
+  function openAi(){ setFold(false); try{ $('aiBox').scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){ $('aiBox').scrollIntoView(); } }
+  $('hAi').onclick=openAi;
+  $('hAi').addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openAi(); } });
+
+  function tick(){
+    var app=$('app'), i, n;
+    n=app.querySelectorAll('[data-ago]'); for(i=0;i<n.length;i++) n[i].textContent=(n[i].getAttribute('data-pre')||'')+ago(+n[i].getAttribute('data-ago'));
+    n=app.querySelectorAll('[data-until]'); for(i=0;i<n.length;i++) n[i].textContent=until(+n[i].getAttribute('data-until'));
+    var u=$('aiUpd'); if(u.hasAttribute('data-cago')) u.textContent='обновлено '+cago(+u.getAttribute('data-cago'));
+    if(!$('linkBar').hidden) $('linkAgo').textContent=cago(lastLink);
+  }
+  setInterval(function(){ if(authed && !document.hidden) tick(); }, 1000);
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden){ clearTimeout(ai.timer); ai.timer=null; return; }
+    if(!authed) return;
+    tick(); refresh();
+    var left=ai.next-Date.now(); if(left<=0) aiPoll(); else aiSchedule(left);
+  });
+  renderAi();
+})();
+</script>
+</body>
+</html>
