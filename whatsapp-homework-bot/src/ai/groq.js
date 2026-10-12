@@ -33,8 +33,12 @@ export function reasoningParams(model, effort) {
 }
 
 export class GroqClient {
-  constructor({ apiKey, baseUrl = 'https://api.groq.com/openai/v1', timeoutMs = 60000, logger, fetchImpl }) {
-    this.apiKey = apiKey;
+  // keys — KeyRing (несколько ключей с автозаменой нерабочего); apiKey — один ключ.
+  // plain — «чистый» OpenAI-совместимый API (запасной провайдер): без параметров рассуждений Groq.
+  constructor({ apiKey, keys = null, baseUrl = 'https://api.groq.com/openai/v1', timeoutMs = 60000, logger, fetchImpl, plain = false }) {
+    this.staticKey = apiKey;
+    this.keys = keys;
+    this.plain = plain;
     this.baseUrl = baseUrl;
     this.timeoutMs = timeoutMs;
     this.logger = logger;
@@ -42,17 +46,25 @@ export class GroqClient {
     this.authBroken = false;
   }
 
-  async post(path, body, { isForm = false } = {}) {
+  get apiKey() {
+    return this.keys ? this.keys.current() : this.staticKey;
+  }
+
+  get hasKey() {
+    return Boolean(this.apiKey);
+  }
+
+  async post(path, body, { isForm = false, method = 'POST', key = this.apiKey } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetch(`${this.baseUrl}${path}`, {
-        method: 'POST',
+        method,
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          ...(isForm ? {} : { 'Content-Type': 'application/json' }),
+          Authorization: `Bearer ${key}`,
+          ...(isForm || method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
         },
-        body: isForm ? body : JSON.stringify(body),
+        ...(method === 'GET' ? {} : { body: isForm ? body : JSON.stringify(body) }),
         signal: controller.signal,
       });
       const text = await response.text();
@@ -64,12 +76,15 @@ export class GroqClient {
       }
       if (!response.ok) {
         const err = json?.error || {};
-        throw new GroqError(err.message || `Groq HTTP ${response.status}`, {
+        const error = new GroqError(err.message || `Groq HTTP ${response.status}`, {
           status: response.status,
           code: err.code || err.type || '',
           retryAfterMs: retryAfter(response.headers),
         });
+        error.key = key;
+        throw error;
       }
+      if (this.keys && key) this.keys.markOk(key);
       return json;
     } catch (error) {
       if (error instanceof GroqError) throw error;
@@ -82,7 +97,7 @@ export class GroqClient {
 
   // Выполнить запрос с повторами; при недоступности модели — следующая из списка
   async withFallback(models, run) {
-    if (!this.apiKey) throw new GroqError('GROQ_API_KEY не задан', { status: 401, code: 'no_key' });
+    if (!this.apiKey) throw new GroqError('Нет рабочего ключа Groq (GROQ_API_KEY)', { status: 401, code: 'no_key' });
     let lastError;
     for (const model of [...new Set(models.filter(Boolean))]) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -94,6 +109,8 @@ export class GroqClient {
           lastError = error;
           if (!(error instanceof GroqError)) throw error;
           if (error.status === 401 || error.status === 403) {
+            // ключ отозван/неверный — переходим на запасной ключ того же аккаунта, если он есть
+            if (this.keys?.markInvalid(error.key, error.message)) continue;
             this.authBroken = true;
             throw error;
           }
@@ -120,8 +137,7 @@ export class GroqClient {
         model: current,
         messages,
         temperature,
-        max_completion_tokens: maxTokens,
-        ...reasoningParams(current, reasoningEffort),
+        ...(this.plain ? { max_tokens: maxTokens } : { max_completion_tokens: maxTokens, ...reasoningParams(current, reasoningEffort) }),
         ...(json ? { response_format: { type: 'json_object' } } : {}),
       };
       const data = await this.post('/chat/completions', body);
@@ -144,5 +160,16 @@ export class GroqClient {
       const data = await this.post('/audio/transcriptions', form, { isForm: true });
       return (data?.text || '').trim();
     });
+  }
+
+  // Проверить ключ (для панели): список моделей доступен — ключ рабочий
+  async testKey(key = this.apiKey) {
+    if (!key) return { ok: false, status: 401, message: 'ключ не задан' };
+    try {
+      const data = await this.post('/models', null, { method: 'GET', key });
+      return { ok: true, status: 200, models: (data?.data || []).map((m) => m.id).filter(Boolean) };
+    } catch (error) {
+      return { ok: false, status: error.status || 0, message: error.message };
+    }
   }
 }

@@ -1,7 +1,9 @@
 // Команды бота: !дз, !расписание, !помощь, админ-команды.
 import { formatDay, formatSchedule, formatSubject, formatWeek } from '../homework/format.js';
 import { BilimAuthError } from '../bilimclass/client.js';
-import { addDays, mondayOf, nowParts, onDay, parseDayArg, formatClock } from '../utils/dates.js';
+import { ConfigError, parseClock } from '../config.js';
+import { isPaused } from '../settings.js';
+import { addDays, mondayOf, nowParts, onDay, parseDayArg, formatClock, toDM, WEEKDAYS_ACC, weekdayOf } from '../utils/dates.js';
 import { truncate } from '../utils/text.js';
 
 const TODAY_CUTOFF_MINUTES = 12 * 60; // до полудня "!дз" показывает задания на сегодня
@@ -24,10 +26,25 @@ const COMMANDS = {
   remove: ['удалить', 'remove', 'del'],
   groups: ['группы', 'groups'],
   id: ['id', 'ид', 'чат'],
+  plan: ['график', 'plan', 'когда'],
+  pause: ['пауза', 'pause', 'стоп'],
+  resume: ['продолжить', 'resume', 'старт-рассылки'],
+  skip: ['пропустить', 'skip'],
+  panel: ['панель', 'panel', 'админка'],
 };
 
 const LOOKUP = new Map(Object.entries(COMMANDS).flatMap(([name, aliases]) => aliases.map((a) => [a, name])));
-const ADMIN_ONLY = new Set(['status', 'refresh', 'digest', 'bind', 'unbind', 'auto', 'autodigest', 'add', 'remove', 'groups', 'id']);
+const ADMIN_ONLY = new Set(['status', 'refresh', 'digest', 'bind', 'unbind', 'auto', 'autodigest', 'add', 'remove', 'groups', 'id', 'plan', 'pause', 'resume', 'skip', 'panel']);
+
+// «пн», «будни», «выходные», «все», «пн,ср,пт» → [1, 3, 5]
+const DAY_GROUPS = { будни: [1, 2, 3, 4, 5], все: [1, 2, 3, 4, 5, 6, 7], каждый: [1, 2, 3, 4, 5, 6, 7], выходные: [6, 7] };
+const DAY_NAMES = [['пн', 'понедельник'], ['вт', 'вторник'], ['ср', 'среда', 'среду'], ['чт', 'четверг'], ['пт', 'пятница', 'пятницу'], ['сб', 'суббота', 'субботу'], ['вс', 'воскресенье']];
+export function parseWeekdays(word) {
+  const w = String(word || '').toLowerCase();
+  if (DAY_GROUPS[w]) return DAY_GROUPS[w];
+  const list = w.split(/[,+]/).map((part) => DAY_NAMES.findIndex((names) => names.includes(part.trim())) + 1);
+  return list.length && list.every((d) => d > 0) ? [...new Set(list)] : null;
+}
 
 export function parseCommand(text, prefix = '!') {
   const trimmed = String(text || '').trim();
@@ -49,7 +66,9 @@ function uptime(ms) {
 }
 
 export class Commands {
-  constructor({ core, homework, wa, scheduler, config, logger }) {
+  constructor({ core, homework, wa, scheduler, config, logger, settings = null, panel = null }) {
+    this.settings = settings;
+    this.panel = panel; // одноразовые ссылки для входа в панель
     this.core = core;
     this.homework = homework;
     this.wa = wa;
@@ -86,10 +105,14 @@ export class Commands {
         `${p}автоответ вкл|выкл — ИИ отвечает сам на вопросы в группе`,
         `${p}авторассылка вкл|выкл — ежедневная рассылка ДЗ в эту группу`,
         `${p}рассылка — проверить дневник и прислать новые ДЗ сейчас`,
+        `${p}график — когда присылать ДЗ по дням (${p}график вс выкл, ${p}график пт 15:00, ${p}график будни после уроков)`,
+        `${p}пауза [3 дня | до 20.10] / ${p}продолжить — остановить и вернуть рассылки`,
+        `${p}пропустить [завтра | 20.10] — без рассылки в этот день`,
         `${p}обновить — проверить дневник на изменения`,
         `${p}добавить завтра Алгебра: №250 — добавить ДЗ вручную`,
         `${p}удалить N — удалить добавленное вручную`,
         `${p}статус — состояние бота · ${p}группы — список групп · ${p}id — id чата`,
+        `${p}панель — ссылка для входа в панель управления`,
       );
     }
     return lines.join('\n');
@@ -164,6 +187,18 @@ export class Commands {
         case 'id':
           await this.reply(ctx, `ID этого чата: ${ctx.chat}`);
           return true;
+        case 'plan':
+          return await this.planCommand(ctx, args);
+        case 'pause':
+          return await this.pauseCommand(ctx, args);
+        case 'resume':
+          this.needSettings().resume();
+          await this.reply(ctx, `▶️ Рассылки снова включены.\n\n${this.scheduler.weekPlanLines().join('\n')}`);
+          return true;
+        case 'skip':
+          return await this.skipCommand(ctx, args);
+        case 'panel':
+          return await this.panelCommand(ctx);
         default:
           return false;
       }
@@ -171,7 +206,9 @@ export class Commands {
       this.logger.error({ err: error.message, command: name }, 'Ошибка команды');
       const text = error instanceof BilimAuthError
         ? '😔 Не могу войти в BilimClass — проверьте логин и пароль в настройках бота.'
-        : `😔 Не получилось: ${truncate(error.message, 200)}. Попробуйте позже.`;
+        : error instanceof ConfigError
+          ? `⚠️ ${error.message}`
+          : `😔 Не получилось: ${truncate(error.message, 200)}. Попробуйте позже.`;
       await this.reply(ctx, text);
       return true;
     }
@@ -347,29 +384,116 @@ export class Commands {
     return true;
   }
 
+  needSettings() {
+    if (!this.settings) throw new Error('настройки недоступны');
+    return this.settings;
+  }
+
+  // !график — показать план; !график <дни> <после уроков | ЧЧ:ММ | выкл | только завтра | все новые>
+  async planCommand(ctx, args) {
+    const p = this.config.features.commandPrefix;
+    if (!args) {
+      await this.reply(ctx, [
+        '🗓 *Когда я присылаю ДЗ в группу:*',
+        ...this.scheduler.weekPlanLines().map((l) => `• ${l}`),
+        '',
+        this.digestStatus(),
+        '',
+        `Изменить: ${p}график вс выкл · ${p}график пт 15:00 · ${p}график будни после уроков · ${p}график вс только завтра`,
+      ].join('\n'));
+      return true;
+    }
+    const [first, ...rest] = args.split(/\s+/);
+    const days = parseWeekdays(first);
+    const what = rest.join(' ').toLowerCase().trim();
+    let change = null;
+    if (/^(выкл|off|нет|не присылать|не надо)$/.test(what)) change = { mode: 'off' };
+    else if (/^после\s*урок/.test(what)) change = { mode: 'lessons' };
+    else if (/^(только\s*)?(на\s*)?завтра$/.test(what)) change = { scope: 'tomorrow' };
+    else if (/^(все|всё)(\s*новое|\s*новые)?$/.test(what)) change = { scope: 'new' };
+    else if (/^(в\s*)?\d{1,2}[:.]\d{2}$/.test(what)) change = { mode: 'time', time: parseClock(what.replace(/^в\s*/, '').replace('.', ':')) };
+    if (!days || !change) {
+      await this.reply(ctx, `Не понял. Примеры:\n${p}график вс выкл\n${p}график пт 15:00\n${p}график будни после уроков\n${p}график вс только завтра\n${p}график все все новые`);
+      return true;
+    }
+    this.needSettings().setDay(days, change);
+    await this.reply(ctx, `✅ Готово.\n\n${this.scheduler.weekPlanLines().map((l) => `• ${l}`).join('\n')}`);
+    return true;
+  }
+
+  // !пауза — до отмены; !пауза 3 (дня); !пауза до 20.10
+  async pauseCommand(ctx, args) {
+    const today = this.homework.today();
+    let until = 'forever';
+    const days = /^(\d{1,3})(\s*(д|дн|дня|дней|day|days))?$/i.exec(args.trim());
+    if (days) until = addDays(today, Number(days[1]) - 1);
+    else if (args.trim()) {
+      const date = parseDayArg(args.replace(/^(до|по)\s+/i, ''), today);
+      if (!date || date < today) {
+        await this.reply(ctx, 'Не понял срок. Пример: !пауза, !пауза 3, !пауза до 20.10');
+        return true;
+      }
+      until = date;
+    }
+    this.needSettings().pause(until);
+    await this.reply(ctx, `⏸ Рассылки на паузе ${until === 'forever' ? 'до команды !продолжить' : `по ${toDM(until)} включительно`}. ` +
+      'Новые ДЗ я запоминаю и пришлю после паузы. Команды (!дз) и ответы на вопросы работают как обычно.');
+    return true;
+  }
+
+  // !пропустить — сегодня; !пропустить завтра / пт / 20.10; повторно — отменить пропуск
+  async skipCommand(ctx, args) {
+    const today = this.homework.today();
+    const date = args ? parseDayArg(args, today) : today;
+    if (!date || date < today) {
+      await this.reply(ctx, 'Не понял день. Пример: !пропустить, !пропустить завтра, !пропустить 20.10');
+      return true;
+    }
+    const skipped = this.config.schedule.skipDates.includes(date);
+    this.needSettings().skipDate(date, !skipped);
+    const when = date === today ? 'сегодня' : `в ${WEEKDAYS_ACC[weekdayOf(date) - 1]}, ${toDM(date)}`;
+    await this.reply(ctx, skipped ? `↩️ Пропуск отменён: ${when} рассылка будет как обычно.` : `⏭ ${when[0].toUpperCase()}${when.slice(1)} рассылки не будет. Отменить: !пропустить ${args || ''}`.trim());
+    return true;
+  }
+
+  async panelCommand(ctx) {
+    if (ctx.isGroup) {
+      await this.reply(ctx, 'Ссылку на панель пришлю только в личные сообщения — напишите мне !панель в личку.');
+      return true;
+    }
+    if (!this.panel) {
+      await this.reply(ctx, 'Панель управления выключена (ADMIN_PANEL=false).');
+      return true;
+    }
+    const link = this.panel.oneTimeLink(ctx.sender || ctx.chat);
+    await this.reply(ctx, `🔐 Вход в панель управления (ссылка одноразовая, действует 10 минут):\n${link}\n\n` +
+      'Если панель открыта через SSH-туннель — откройте ссылку на том же компьютере. Никому не пересылайте её.');
+    return true;
+  }
+
   digestDescription() {
-    const { digestMode, digestDelayMinutes, digestTime } = this.config.schedule;
-    if (digestMode === 'off') return '';
-    const when = digestMode === 'after_lessons'
-      ? `после уроков (через ${digestDelayMinutes} мин после последнего урока)`
-      : `в ${formatClock(digestTime)}`;
-    return `Каждый учебный день ${when} проверю дневник и пришлю новые ДЗ — только то, что ещё не присылал.`;
+    const days = this.config.schedule.days || {};
+    if (Object.values(days).every((d) => d.mode === 'off')) return '';
+    const lessons = Object.values(days).some((d) => d.mode === 'lessons');
+    return `${lessons ? `Каждый учебный день после уроков (через ${this.config.schedule.digestDelayMinutes} мин после последнего урока)` : 'По графику'} ` +
+      'проверю дневник и пришлю новые ДЗ — только то, что ещё не присылал. График: !график';
   }
 
   digestStatus() {
-    if (this.config.schedule.digestMode === 'off') return '🕕 Рассылка выключена';
-    const plan = this.scheduler.plan;
+    const { schedule } = this.config;
     const today = this.homework.today();
+    if (isPaused(schedule, today)) return `⏸ Рассылки на паузе${schedule.pausedUntil === 'forever' ? '' : ` по ${toDM(schedule.pausedUntil)}`} (!продолжить)`;
+    const plan = this.scheduler.plan;
     const last = this.core.store.data.jobs.digest;
     let todayText = '';
     if (last === today) todayText = 'сегодня уже отправлена';
+    else if (plan?.date === today && plan.quiet) todayText = `сегодня нет: ${plan.quiet}`;
     else if (plan?.date === today && plan.at != null) {
       todayText = plan.source === 'lessons'
         ? `сегодня в ${formatClock(plan.at)} (уроки до ${formatClock(plan.lessonsEnd)})`
         : `сегодня в ${formatClock(plan.at)}`;
     }
-    return `🕕 Рассылка: ${this.config.schedule.digestMode === 'after_lessons' ? 'после уроков' : formatClock(this.config.schedule.digestTime)}` +
-      `${todayText ? `, ${todayText}` : ''}${last && last !== today ? `, последняя: ${last}` : ''}`;
+    return `🕕 Рассылка: ${todayText || 'по графику'}${last && last !== today ? `, последняя: ${last}` : ''}`;
   }
 
   async statusText() {
@@ -384,7 +508,7 @@ export class Commands {
       `📘 BilimClass: ${s.lastError ? `ошибка — ${truncate(s.lastError, 120)}` : 'ок'} (обновлено ${lastSync})`,
       session.className ? `🏫 Класс: ${session.className}${session.schoolName ? `, ${truncate(session.schoolName, 60)}` : ''}` : '',
       `👥 Группы для ДЗ: ${targets.length ? targets.join(', ') : 'нет — напишите !привязать в группе'}`,
-      `🧠 ИИ: ${this.config.ai.mode === 'off' ? 'выключен' : `${this.config.ai.mode}, ответов сегодня: ${this.core.usage('ai')}/${this.config.ai.dailyLimit}`}`,
+      `🧠 ИИ: ${this.config.ai.mode === 'off' || !this.core.aiReady?.() ? 'выключен' : `${this.config.ai.mode}, ответов сегодня: ${this.core.usage('ai')}/${this.config.ai.dailyLimit}`}`,
       `📬 В очереди сообщений: ${this.wa.queue.length}`,
       this.digestStatus(),
     ].filter(Boolean).join('\n');

@@ -134,6 +134,7 @@ export class WhatsAppConnection extends EventEmitter {
             const code = await sock.requestPairingCode(pairingNumber);
             this.pairingCode = code?.match(/.{1,4}/g)?.join('-') || code;
             this.status = 'qr';
+            this.emit('state');
             // печатаем напрямую в консоль, чтобы код было легко увидеть в логах
             console.log(
               `\n========================================\n` +
@@ -150,6 +151,7 @@ export class WhatsAppConnection extends EventEmitter {
       } else {
         this.qr = qr;
         this.status = 'qr';
+        this.emit('state');
         const terminalQr = await QRCode.toString(qr, { type: 'terminal', small: true });
         console.log(
           `\nОтсканируйте QR-код в WhatsApp на телефоне бота: Настройки → Связанные устройства → Привязка устройства\n${terminalQr}` +
@@ -169,6 +171,7 @@ export class WhatsAppConnection extends EventEmitter {
       this.me = { id: jidNormalizedUser(user.id), lid: user.lid ? jidNormalizedUser(user.lid) : null, name: user.name || '' };
       this.logger.info({ me: this.me.id }, '✅ WhatsApp подключён');
       this.emit('open');
+      this.emit('state');
       this.pump();
       return;
     }
@@ -178,6 +181,7 @@ export class WhatsAppConnection extends EventEmitter {
       const code = lastDisconnect?.error?.output?.statusCode;
       this.lastDisconnect = { code, at: Date.now(), message: lastDisconnect?.error?.message };
       this.emit('close', code);
+      this.emit('state');
       if (this.stopped) return;
 
       if (code === DisconnectReason.loggedOut) {
@@ -233,9 +237,10 @@ export class WhatsAppConnection extends EventEmitter {
   }
 
   // Поставить сообщение в очередь. persist — сохранить на диск до отправки (для рассылок).
-  send(jid, content, options = {}, { persist = false, maxAgeMs = 6 * 3600 * 1000 } = {}) {
+  // meta — пометки для журнала переписки (например, { by: 'admin' } — ответ из панели)
+  send(jid, content, options = {}, { persist = false, maxAgeMs = 6 * 3600 * 1000, meta = null } = {}) {
     return new Promise((resolve, reject) => {
-      const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, jid, content, options, resolve, reject, attempts: 0, createdAt: Date.now(), maxAgeMs };
+      const item = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, jid, content, options, resolve, reject, attempts: 0, createdAt: Date.now(), maxAgeMs, meta };
       if (persist && typeof content.text === 'string') {
         item.persisted = true;
         this.store.update((s) => s.outbox.push({ id: item.id, jid, text: content.text, createdAt: item.createdAt, maxAgeMs }));
@@ -257,8 +262,8 @@ export class WhatsAppConnection extends EventEmitter {
     });
   }
 
-  sendText(jid, text, { quoted, mentions, persist, maxAgeMs } = {}) {
-    return this.send(jid, { text, ...(mentions?.length ? { mentions } : {}) }, quoted ? { quoted } : {}, { persist, maxAgeMs });
+  sendText(jid, text, { quoted, mentions, persist, maxAgeMs, meta } = {}) {
+    return this.send(jid, { text, ...(mentions?.length ? { mentions } : {}) }, quoted ? { quoted } : {}, { persist, maxAgeMs, meta });
   }
 
   dropFromOutbox(item) {
@@ -292,6 +297,7 @@ export class WhatsAppConnection extends EventEmitter {
           this.queue.shift();
           this.dropFromOutbox(item);
           item.resolve(sent);
+          this.emit('sent', { jid: item.jid, content: item.content, meta: item.meta || null, id: sent?.key?.id || null, at: Date.now() });
         } catch (error) {
           // связь пропала во время отправки — ждём переподключения, попытку не засчитываем
           if (!this.isOpen) continue;
@@ -310,6 +316,70 @@ export class WhatsAppConnection extends EventEmitter {
     } finally {
       this.pumping = false;
     }
+  }
+
+  // Отметить сообщение прочитанным (синие галочки) — как живой человек, прежде чем ответить
+  async markRead(key) {
+    if (!this.isOpen || !key) return;
+    try {
+      await this.sock.readMessages([key]);
+    } catch {
+      /* не критично */
+    }
+  }
+
+  // Переподключиться (кнопка в панели): старая сессия сохраняется
+  reconnect() {
+    this.logger.warn('WhatsApp: переподключение по запросу');
+    try {
+      this.sock?.end(new Error('manual reconnect'));
+    } catch {
+      /* уже закрыт */
+    }
+    if (!this.isOpen) this.scheduleReconnect(500);
+  }
+
+  // Привязать заново (другой номер / сессия сломалась): старая сессия отвязывается, появится новый QR или код
+  async relink({ pairingNumber } = {}) {
+    if (pairingNumber !== undefined) this.config.whatsapp.pairingNumber = pairingNumber;
+    this.logger.warn('WhatsApp: новая привязка по запросу из панели');
+    const old = this.sock;
+    this.sock = null;
+    this.status = 'starting';
+    this.qr = null;
+    this.pairingCode = null;
+    try {
+      if (old && this.connectedSince) await Promise.race([old.logout(), sleep(5000)]);
+    } catch {
+      /* сессия уже недействительна */
+    }
+    try {
+      old?.end(undefined);
+    } catch {
+      /* уже закрыт */
+    }
+    try {
+      fs.renameSync(this.config.whatsapp.authDir, `${this.config.whatsapp.authDir}.replaced-${Date.now()}`);
+    } catch {
+      /* папки ещё нет */
+    }
+    this.connectedSince = 0;
+    this.me = null;
+    this.emit('state');
+    this.scheduleReconnect(1000);
+  }
+
+  info() {
+    return {
+      status: this.status,
+      me: this.me,
+      qr: Boolean(this.qr),
+      pairingCode: this.pairingCode,
+      pairingNumber: this.config.whatsapp.pairingNumber || '',
+      connectedSince: this.connectedSince || null,
+      lastDisconnect: this.lastDisconnect,
+      queue: this.queue.length,
+    };
   }
 
   async typing(jid, on = true) {

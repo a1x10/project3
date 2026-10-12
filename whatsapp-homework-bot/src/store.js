@@ -16,6 +16,7 @@ const DEFAULT_STATE = () => ({
   outbox: [], // неотправленные сообщения (переживают перезапуск)
   usage: {}, // 'YYYY-MM-DD' -> { ai: n, voice: n, vision: n }
   alerts: {}, // ключ -> timestamp последнего уведомления админу
+  alertLog: [], // журнал технических уведомлений для панели (последние 200)
   nextManualId: 1,
 });
 
@@ -97,6 +98,7 @@ export class Store {
         if (Date.parse(`${date}T00:00:00Z`) < today - 60 * DAY) delete s.usage[date];
       }
       s.outbox = s.outbox.filter((m) => m.createdAt > Date.now() - 2 * DAY);
+      s.alertLog = (s.alertLog || []).filter((a) => a.at > Date.now() - 30 * DAY);
     });
   }
 }

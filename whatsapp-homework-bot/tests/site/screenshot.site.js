@@ -57,9 +57,10 @@ describe('скриншот дневника на сайте BilimClass', { skip:
     const core = new BotCore({ config, store, wa, logger });
     const photos = new HomeworkPhotos({ config, screenshotter: shooter, logger });
     const scheduler = new Scheduler({ config, store, homework, wa, core, logger, photos, clock: () => ({ iso: '2026-10-12', minutes: 900, weekday: 1 }) });
+    store.data.announcedReady = true; // не первая рассылка: всё в дневнике — новое
     await scheduler.sendDigest({ targets: ['g@g.us'] });
-    const captions = wa.sent.map((s) => s.content.caption);
-    assert.deepEqual(captions, ['📚 Домашнее задание на завтра', '📚 Домашнее задание на среду, 14.10', '📚 Домашнее задание на понедельник, 19.10']);
+    const captions = wa.sent.map((s) => s.content.caption.split('\n')[0]);
+    assert.deepEqual(captions, ['📚 Домашнее задание на завтра', '🆕 Новое домашнее задание на среду, 14.10', '🆕 Новое домашнее задание на понедельник, 19.10']);
     // карточка бота шириной 1080, скриншот сайта — уже (мобильная вёрстка)
     for (const s of wa.sent) assert.ok((await loadImage(s.content.image)).width <= 824, 'это скриншот сайта, а не карточка');
   });

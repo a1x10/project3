@@ -62,6 +62,21 @@ export function normalizePhone(value) {
   return /^8\d{10}$/.test(digits) ? `7${digits.slice(1)}` : digits;
 }
 
+// План рассылки на каждый день недели (1 = пн ... 7 = вс) из настроек .env.
+// mode: lessons — после уроков (в день без уроков — в time), time — в time, off — не присылать.
+// scope: new — «на завтра» + новые ДЗ на другие дни; tomorrow — только на завтра.
+// Воскресенье по умолчанию — только «ДЗ на завтра», без заданий на всю неделю.
+export function defaultDays(schedule) {
+  const days = {};
+  for (let d = 1; d <= 7; d += 1) {
+    if (schedule.digestMode === 'off') days[d] = { mode: 'off', time: schedule.digestTime, scope: 'new' };
+    else if (schedule.digestMode === 'fixed') days[d] = { mode: 'time', time: schedule.digestTime, scope: d === 7 ? 'tomorrow' : 'new' };
+    else if (d === 7) days[d] = { mode: 'time', time: schedule.digestTime ?? 18 * 60, scope: 'tomorrow' };
+    else days[d] = { mode: 'lessons', time: schedule.digestTime, scope: 'new' };
+  }
+  return days;
+}
+
 export function buildConfig(env = process.env) {
   const timezone = str(env, 'BOT_TIMEZONE', 'Asia/Almaty');
   try {
@@ -133,6 +148,10 @@ export function buildConfig(env = process.env) {
       // сколько секунд можно переиспользовать ответ дневника для команд и ИИ (0 = всегда спрашивать заново).
       // Рассылка и проверка изменений всегда берут данные напрямую из BilimClass.
       cacheSeconds: int(env, 'CACHE_SECONDS', 60, { min: 0, max: 3600 }),
+      // заполняются ниже / из панели: план по дням недели, пауза, пропущенные дни
+      days: null,
+      pausedUntil: null,
+      skipDates: [],
     },
 
     features: {
@@ -160,6 +179,25 @@ export function buildConfig(env = process.env) {
       dailyLimit: int(env, 'AI_DAILY_LIMIT', 400, { min: 1, max: 100000 }),
       historySize: int(env, 'AI_HISTORY_SIZE', 14, { min: 0, max: 60 }),
       maxAnswerChars: int(env, 'AI_MAX_ANSWER_CHARS', 1800, { min: 300, max: 20000 }),
+      // отвечать как живой человек: «печатает…» с паузой по длине ответа, длинный ответ — несколькими сообщениями
+      humanLike: bool(env, 'AI_HUMAN_LIKE', true),
+    },
+
+    notify: {
+      // технические уведомления (BilimClass недоступен, ключ не работает…) админам в личку WhatsApp
+      whatsapp: bool(env, 'NOTIFY_ADMINS', true),
+      // вечерний отчёт админу: что было отправлено за день, ошибки
+      dailyReport: bool(env, 'DAILY_REPORT', false),
+    },
+
+    panel: {
+      // пароль для входа в панель управления (можно не задавать — тогда вход по коду из WhatsApp)
+      password: env.ADMIN_PANEL_PASSWORD ?? '',
+      // адрес панели снаружи (для ссылок в сообщениях), например https://bot.example.kz
+      publicUrl: str(env, 'PANEL_PUBLIC_URL').replace(/\/+$/, ''),
+      enabled: bool(env, 'ADMIN_PANEL', true),
+      // панель за HTTPS-прокси (Caddy/nginx на этом же сервере): доверять X-Forwarded-For/Proto
+      trustProxy: bool(env, 'TRUST_PROXY', false),
     },
 
     screenshot: {
@@ -173,12 +211,14 @@ export function buildConfig(env = process.env) {
       port: int(env, 'HTTP_PORT', 3000, { min: 0, max: 65535 }),
       host: str(env, 'HTTP_HOST', '127.0.0.1'),
       token: str(env, 'HTTP_TOKEN'),
+      // порт на самом сервере (в Docker отличается от внутреннего) — для ссылок вида http://localhost:ПОРТ
+      publicPort: int(env, 'BOT_HTTP_PORT', 0, { min: 0, max: 65535 }) || null,
     },
   };
 
   config.whatsapp.authDir = path.join(config.dataDir, 'wa-auth');
   config.features.homeworkImage = config.features.homeworkPhoto !== 'text';
-  if (config.ai.mode !== 'off' && !config.groq.apiKey) config.ai.mode = 'off';
+  config.schedule.days = defaultDays(config.schedule);
   return config;
 }
 
@@ -190,10 +230,10 @@ export function validateForStart(config) {
     fatal.push('Не заданы BILIM_LOGIN и BILIM_PASSWORD (логин и пароль от BilimClass)');
   }
   if (!config.groq.apiKey) {
-    warnings.push('GROQ_API_KEY не задан — ИИ-ответы выключены (ключ: https://console.groq.com/keys)');
+    warnings.push('GROQ_API_KEY не задан — ключ можно добавить в панели («Ключи и доступ») или в .env (ключ: https://console.groq.com/keys)');
   }
   if (!config.whatsapp.admins.length) {
-    warnings.push('ADMIN_NUMBERS не задан — админ-команды доступны только админам группы, уведомления об ошибках не отправляются');
+    warnings.push('ADMIN_NUMBERS не задан — админ-команды доступны только админам группы, уведомления об ошибках не отправляются, вход в панель по коду из WhatsApp выключен');
   }
   return { fatal, warnings };
 }

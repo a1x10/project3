@@ -128,7 +128,7 @@ function dayTitle(iso, todayIso) {
 
 // Ежедневное сообщение после уроков: только новые/изменённые задания + короткое напоминание на завтра
 // fresh: [{ ...entry, kind: 'new' | 'changed' }], data: результат HomeworkService.digestData()
-export function formatNewHomework({ fresh, data, remindTomorrow = true, checkedAt }) {
+export function formatNewHomework({ fresh, data, remindTomorrow = true, checkedAt, firstTime = false }) {
   const { today } = data;
   const lines = [`📚 *Домашнее задание · ${WEEKDAYS_SHORT[weekdayOf(today) - 1]} ${toDM(today)}*`];
   lines.push(`_Проверил дневник BilimClass${checkedAt != null ? ` в ${formatClock(checkedAt)}` : ''} — данные свежие_`);
@@ -141,6 +141,8 @@ export function formatNewHomework({ fresh, data, remindTomorrow = true, checkedA
       const note = e.kind === 'changed' ? ' ✏️ _изменено_' : '';
       lines.push('', `*${e.subject}* — ${onDay(e.dueDate, today)}${note}`, entryBody(e, 1500));
     }
+  } else if (firstTime) {
+    lines.push('', '👋 Теперь каждый день после уроков буду присылать сюда новые задания из дневника.');
   } else {
     lines.push('', '✅ Новых заданий в дневнике с прошлой проверки нет.');
   }
@@ -159,23 +161,6 @@ export function formatNewHomework({ fresh, data, remindTomorrow = true, checkedA
       lines.push('', `📌 ${capital(onDay(data.next, today))} — ДЗ в дневнике нет 🎉`);
     }
   }
-  lines.push('', QUESTION_HINT);
-  return lines.join('\n');
-}
-
-// Самая первая рассылка: полная картина на неделю вперёд (дальше — только новое)
-export function formatWeekAhead(data) {
-  const { today } = data;
-  const lines = ['📚 *Домашнее задание на неделю вперёд*', '_Дальше буду присылать после уроков только новые задания._'];
-  for (const day of data.days) {
-    lines.push('', `━━ *${dayTitle(day.date, today)}* ━━`);
-    if (!day.entries.length) {
-      lines.push('ДЗ пока нет');
-      continue;
-    }
-    day.entries.forEach((e, i) => lines.push(`*${i + 1}. ${e.subject}*`, entryBody(e, 800)));
-  }
-  if (!data.days.length) lines.push('', 'В ближайшие дни уроков в дневнике нет.');
   lines.push('', QUESTION_HINT);
   return lines.join('\n');
 }

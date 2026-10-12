@@ -1,70 +1,9 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { Assistant, looksLikeStudyQuestion } from '../src/ai/assistant.js';
-import { BotCore } from '../src/core.js';
-import { HomeworkService } from '../src/homework/service.js';
-import { Scheduler } from '../src/scheduler.js';
-import { Commands, parseCommand } from '../src/whatsapp/commands.js';
-import { MessageHandler } from '../src/whatsapp/handler.js';
-import { FakeBilimClient, FakeWA, incoming, memoryStore, rawWeek, testConfig, TUESDAY_10AM } from './helpers.js';
-
-const GROUP = '120363000000000001@g.us';
-const OTHER_GROUP = '120363000000000999@g.us';
-const ADMIN = '77015556677@s.whatsapp.net';
-const STUDENT = '77011112233@s.whatsapp.net';
-
-const WEEKS = {
-  '2025-10-13': rawWeek('2025-10-13', {
-    1: [['Алгебра', '№ 1']],
-    2: [['Физика', '§ 12']],
-    3: [['Алгебра', '№ 250'], ['Русский язык', 'Упр. 5']],
-    4: [['История', null]],
-    5: [['Литература', 'Читать стр. 40-55']],
-  }),
-  '2025-10-20': rawWeek('2025-10-20', { 1: [['Алгебра', '№ 300']] }),
-};
-
-// Фейковая нейросеть: запоминает запросы, отвечает заданным текстом
-class FakeGroq {
-  constructor() {
-    this.calls = [];
-    this.classifierAnswer = '{"respond": true, "reason": "вопрос по ДЗ"}';
-    this.fail = null;
-  }
-
-  async chat(req) {
-    this.calls.push(req);
-    if (this.fail) throw this.fail;
-    if (req.json) return { text: this.classifierAnswer, model: req.model };
-    return { text: '**Ответ:** реши уравнение по шагам', model: req.model };
-  }
-
-  async transcribe() {
-    return 'что задали по физике';
-  }
-}
-
-function setup(env = {}) {
-  // по умолчанию в тестах — текстовый режим (проверять содержимое проще); фото проверяются отдельно
-  const config = testConfig({ ADMIN_NUMBERS: '77015556677', WA_GROUP_IDS: GROUP, HOMEWORK_AS_IMAGE: 'false', ...env });
-  const store = memoryStore();
-  const wa = new FakeWA();
-  wa.groups[GROUP] = { id: GROUP, subject: '7А класс', participants: [{ id: STUDENT }, { id: ADMIN, admin: 'admin' }] };
-  wa.groups[OTHER_GROUP] = { id: OTHER_GROUP, subject: 'Футбол', participants: [{ id: STUDENT }] };
-  const client = new FakeBilimClient(structuredClone(WEEKS)); // копия: тесты меняют дневник
-  const homework = new HomeworkService({ client, store, config, now: TUESDAY_10AM });
-  homework.today = () => '2025-10-14';
-  const groq = new FakeGroq();
-  const warnings = [];
-  const logger = { info() {}, warn(...args) { warnings.push(args); }, error() {}, debug() {}, child() { return this; } };
-  const core = new BotCore({ config, store, wa, logger });
-  core.today = () => '2025-10-14';
-  const assistant = new Assistant({ groq, homework, config, logger });
-  const scheduler = new Scheduler({ config, store, homework, wa, core, logger });
-  const commands = new Commands({ core, homework, wa, scheduler, config, logger });
-  const handler = new MessageHandler({ config, core, wa, homework, assistant, commands, logger });
-  return { config, store, wa, client, homework, groq, core, assistant, scheduler, commands, handler, warnings };
-}
+import { looksLikeStudyQuestion } from '../src/ai/assistant.js';
+import { parseCommand } from '../src/whatsapp/commands.js';
+import { incoming } from './helpers.js';
+import { ADMIN, GROUP, OTHER_GROUP, setup, STUDENT } from './setup.js';
 
 describe('распознавание команд', () => {
   it('команды с префиксами и алиасами', () => {
@@ -255,10 +194,15 @@ describe('планировщик', () => {
     // среда: два урока, последний до 09:45 → 10:00
     plan = await t.scheduler.digestPlan(at('2025-10-15', 7));
     assert.equal(plan.at, 10 * 60);
-    // воскресенье: уроков нет → DIGEST_TIME (18:00)
-    plan = await t.scheduler.digestPlan(at('2025-10-19', 7));
+    // суббота: уроков нет → время дня (DIGEST_TIME, 18:00)
+    plan = await t.scheduler.digestPlan(at('2025-10-18', 7));
     assert.equal(plan.source, 'fallback');
     assert.equal(plan.at, 18 * 60);
+    // воскресенье: в 18:00 и только «на завтра»
+    plan = await t.scheduler.digestPlan(at('2025-10-19', 7));
+    assert.equal(plan.source, 'fixed');
+    assert.equal(plan.at, 18 * 60);
+    assert.equal(plan.scope, 'tomorrow');
   });
 
   it('режим fixed и своя задержка после уроков', async () => {
@@ -276,16 +220,17 @@ describe('планировщик', () => {
     assert.equal(plan.at, 18 * 60);
   });
 
-  it('первая рассылка — ДЗ на каждый день недели вперёд', async () => {
+  it('первая рассылка — только ДЗ на завтра, без заданий на всю неделю', async () => {
     const t = setup();
     await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.equal(t.wa.sent.length, 1);
     const text = t.wa.texts()[0];
-    assert.match(text, /Домашнее задание на неделю вперёд/);
-    assert.match(text, /Завтра \(среда, 15\.10\)[\s\S]*№ 250[\s\S]*Упр\. 5/);
-    assert.match(text, /Послезавтра \(четверг, 16\.10\)\* ━━\nДЗ пока нет/);
-    assert.match(text, /Пятница, 17\.10[\s\S]*Читать стр\. 40-55/);
-    assert.match(text, /Понедельник, 20\.10[\s\S]*№ 300/);
-    assert.ok(!/№ 1\b/.test(text), 'прошедшие дни не показываются');
+    assert.match(text, /Теперь каждый день после уроков буду присылать/);
+    assert.match(text, /Не забудьте на завтра, среду, 15\.10:\*\n• \*Алгебра:\* № 250\n• \*Русский язык:\* Упр\. 5/);
+    assert.ok(!/стр\. 40-55|№ 300/.test(text), 'дальние дни не вываливаются');
+    // всё, что уже было в дневнике, запомнено — следующая рассылка не повторит это как «новое»
+    await t.scheduler.sendDigest({ targets: [GROUP] });
+    assert.match(t.wa.texts()[1], /Новых заданий в дневнике с прошлой проверки нет/);
   });
 
   it('дальше — только новые ДЗ, без повторов старых + напоминание на завтра', async () => {
@@ -343,7 +288,7 @@ describe('планировщик', () => {
     t.scheduler.clock = () => at('2025-10-14', 9, 1);
     await t.scheduler.tick();
     assert.equal(t.wa.sent.length, 1);
-    assert.match(t.wa.texts()[0], /Домашнее задание на неделю вперёд/);
+    assert.match(t.wa.texts()[0], /Домашнее задание · Вт 14\.10/);
     assert.equal(t.store.data.jobs.digest, '2025-10-14');
     t.scheduler.clock = () => at('2025-10-14', 9, 30);
     await t.scheduler.tick();
@@ -446,15 +391,11 @@ describe('ДЗ фотографией', () => {
     assert.equal(t.wa.texts()[0], '📚 Домашнего задания на четверг, 16.10 в дневнике нет 🎉');
   });
 
-  it('первая рассылка — по фото на каждый день с ДЗ', async () => {
+  it('первая рассылка — одно фото «на завтра», без всей недели', async () => {
     const t = photo();
     await t.scheduler.sendDigest({ targets: [GROUP] });
-    assert.deepEqual(captions(t.wa), [
-      '📚 Домашнее задание на завтра',
-      '📚 Домашнее задание на пятницу, 17.10',
-      '📚 Домашнее задание на понедельник, 20.10',
-    ]);
-    assert.ok(t.wa.sent.every((s) => isJpeg(s.content.image)));
+    assert.deepEqual(captions(t.wa), ['📚 Домашнее задание на завтра']);
+    assert.ok(isJpeg(t.wa.sent[0].content.image));
   });
 
   it('дальше: фото на завтра + фото дней, где появилось новое ДЗ', async () => {

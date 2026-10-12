@@ -72,17 +72,21 @@ export class FakeWA extends EventEmitter {
     this.sock = { signalRepository: { lidMapping: { getPNForLID: async () => null } }, updateMediaMessage: async () => {} };
   }
 
-  async send(jid, content, options = {}) {
+  async send(jid, content, options = {}, extra = {}) {
     const msg = { key: { id: `BOT${this.sent.length}`, remoteJid: jid, fromMe: true }, message: content };
-    this.sent.push({ jid, content, options });
+    this.sent.push({ jid, content, options, meta: extra.meta || null });
     return msg;
   }
 
-  sendText(jid, text, { quoted } = {}) {
-    return this.send(jid, { text }, quoted ? { quoted } : {});
+  sendText(jid, text, { quoted, meta } = {}) {
+    return this.send(jid, { text }, quoted ? { quoted } : {}, { meta });
   }
 
   async typing() {}
+
+  async markRead(key) {
+    this.read = [...(this.read || []), key?.id];
+  }
 
   async groupMetadata(jid) {
     if (!this.groups[jid]) throw new Error('no group');
@@ -91,6 +95,14 @@ export class FakeWA extends EventEmitter {
 
   async allGroups() {
     return Object.values(this.groups);
+  }
+
+  info() {
+    return { status: this.status, me: this.me, qr: false, pairingCode: null, pairingNumber: '', connectedSince: Date.now() - 60000, lastDisconnect: null, queue: 0 };
+  }
+
+  reconnect() {
+    this.reconnected = (this.reconnected || 0) + 1;
   }
 
   texts() {
