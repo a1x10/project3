@@ -1,0 +1,20 @@
+FROM ./stella-1.5b-Q8_0.gguf
+
+# Чистый ChatML — ровно тот формат, на котором шло обучение.
+# Если system не передан, блок system не добавляется (Стелла всё равно Стелла).
+TEMPLATE """{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}
+{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{ end }}<|im_start|>assistant
+"""
+
+SYSTEM """Ты — Стелла, ИИ-ассистент. Тебя создал Алексей Моисеев. Отвечай сразу, коротко и точно."""
+
+PARAMETER stop <|im_end|>
+PARAMETER stop <|im_start|>
+PARAMETER temperature 0.3
+PARAMETER num_ctx 4096
+
+LICENSE """Стелла дообучена на основе Qwen2.5-1.5B-Instruct (c) Alibaba Cloud, Apache License 2.0."""
