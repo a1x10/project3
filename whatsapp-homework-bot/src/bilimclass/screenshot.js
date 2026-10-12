@@ -95,8 +95,51 @@ export class DiaryScreenshotter {
       else todo.push(day);
     }
     if (!todo.length) return result;
-    if (!this.executable) throw new Error('Chromium не найден — укажите CHROMIUM_PATH или установите chromium');
 
+    const byWeek = new Map();
+    for (const day of todo) {
+      const monday = mondayOf(day.date);
+      if (!byWeek.has(monday)) byWeek.set(monday, []);
+      byWeek.get(monday).push(day);
+    }
+    const started = Date.now();
+    await this.withSite(async (site) => {
+      for (const [monday, weekDays] of byWeek) {
+        await site.open(monday);
+        for (const day of weekDays) {
+          try {
+            const buffer = await this.shootDay(site.page, day);
+            result.set(day.date, buffer);
+            this.cache.set(`${day.date}|${day.key || ''}`, { at: Date.now(), buffer });
+          } catch (error) {
+            this.logger?.warn({ date: day.date, err: error.message }, 'Скриншот дня не получился');
+          }
+        }
+      }
+    });
+    this.logger?.info({ days: result.size, seconds: Math.round((Date.now() - started) / 1000) }, 'Скриншоты дневника готовы');
+    return result;
+  }
+
+  // Запасной способ получить дневник: открыть его на сайте и взять ответ, который сайт сам получил от сервера.
+  // Работает, даже если у API поменялись правила, — сайт BilimClass всегда знает актуальные.
+  // mondays: ['YYYY-MM-DD'] → Map(monday → data как у /clientoffice/diary)
+  fetchWeeks(mondays) {
+    const run = this.queue.then(() => this.withSite(async (site) => {
+      const result = new Map();
+      for (const monday of [...new Set(mondays)]) {
+        const json = await site.open(monday, { render: false });
+        result.set(monday, json?.data ?? json ?? {});
+      }
+      return result;
+    }));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  // Открыть браузер, войти на сайт и выполнить task({ page, open(monday) })
+  async withSite(task) {
+    if (!this.executable) throw new Error('Chromium не найден — укажите CHROMIUM_PATH или установите chromium');
     const { chromium } = await import('playwright-core');
     const proxy = this.config.screenshot.proxy;
     const browser = await chromium.launch({
@@ -104,7 +147,6 @@ export class DiaryScreenshotter {
       args: ['--disable-dev-shm-usage', '--no-first-run', '--mute-audio', '--disable-gpu'],
       ...(proxy ? { proxy: { server: proxy } } : {}),
     });
-    const started = Date.now();
     try {
       const context = await browser.newContext({
         viewport: { width: 412, height: 915 },
@@ -136,28 +178,13 @@ export class DiaryScreenshotter {
 
       const page = await context.newPage();
       const year = await this.login(page);
-
-      const byWeek = new Map();
-      for (const day of todo) {
-        const monday = mondayOf(day.date);
-        if (!byWeek.has(monday)) byWeek.set(monday, []);
-        byWeek.get(monday).push(day);
-      }
-      for (const [monday, weekDays] of byWeek) {
-        targetMonday = monday;
-        await this.openDiary(page, year);
-        for (const day of weekDays) {
-          try {
-            const buffer = await this.shootDay(page, day);
-            result.set(day.date, buffer);
-            this.cache.set(`${day.date}|${day.key || ''}`, { at: Date.now(), buffer });
-          } catch (error) {
-            this.logger?.warn({ date: day.date, err: error.message }, 'Скриншот дня не получился');
-          }
-        }
-      }
-      this.logger?.info({ days: result.size, seconds: Math.round((Date.now() - started) / 1000) }, 'Скриншоты дневника готовы');
-      return result;
+      return await task({
+        page,
+        open: (monday, opts) => {
+          targetMonday = monday;
+          return this.openDiary(page, year, monday, opts);
+        },
+      });
     } finally {
       await browser.close().catch(() => {});
     }
@@ -166,6 +193,13 @@ export class DiaryScreenshotter {
   // Вход через обычную форму на сайте. Возвращает учебный год из адреса (/2026/schedule)
   async login(page) {
     const site = this.config.bilim.siteUrl;
+    // ответ сервера на вход — в нём профиль ученика (класс, школа); пригодится, если API недоступно
+    page.waitForResponse((r) => /\/api\/v2\/os\/login/.test(r.url()) && r.request().method() === 'POST', { timeout: 60000 })
+      .then((r) => r.json())
+      .then((body) => {
+        if (body?.user_info) this.siteUserInfo = body.user_info;
+      })
+      .catch(() => {});
     await page.goto(`${site}/login`, { waitUntil: 'domcontentloaded' });
     await page.locator('input[type=password]').first().waitFor();
     await page.locator('input[type=text]').first().fill(this.config.bilim.login);
@@ -180,13 +214,29 @@ export class DiaryScreenshotter {
     return /^\d{4}$/.test(segment) ? segment : String(this.eduYear() || '');
   }
 
-  async openDiary(page, year) {
+  // render: true — дождаться, пока сайт нарисует дневник (для скриншота);
+  // render: false — вернуть сам ответ сервера (JSON дневника), рисовать не нужно
+  async openDiary(page, year, monday, { render = true } = {}) {
     const site = this.config.bilim.siteUrl;
-    const loaded = page.waitForResponse((r) => /\/clientoffice\/diary\?/.test(r.url()), { timeout: this.config.screenshot.timeoutMs });
-    await page.goto(`${site}/${year ? `${year}/` : ''}diary`, { waitUntil: 'domcontentloaded' });
-    await loaded;
-    await page.locator('.bc-diary-day').first().waitFor();
-    await page.waitForTimeout(1500); // даём дорисовать ДЗ и иконки
+    const date = toDMY(monday);
+    for (let attempt = 0; ; attempt += 1) {
+      const loaded = page.waitForResponse(
+        (r) => /\/clientoffice\/diary\?/.test(r.url()) && r.status() === 200 && new URL(r.url()).searchParams.get('date') === date,
+        { timeout: this.config.screenshot.timeoutMs },
+      );
+      await page.goto(`${site}/${year ? `${year}/` : ''}diary`, { waitUntil: 'domcontentloaded' });
+      const response = await loaded;
+      if (render) {
+        await page.locator('.bc-diary-day').first().waitFor();
+        await page.waitForTimeout(1500); // даём дорисовать ДЗ и иконки
+        return null;
+      }
+      try {
+        return await response.json(); // читаем сразу, пока страница не ушла дальше
+      } catch (error) {
+        if (attempt >= 1) throw error;
+      }
+    }
   }
 
   async prepare(page) {

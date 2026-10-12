@@ -124,7 +124,8 @@ export class Scheduler {
     if (error instanceof BilimAuthError) {
       this.core.notifyAdmins('bilim-auth', `Не могу войти в BilimClass: ${errText(error)}`);
     } else if (this.failures >= 3) {
-      this.core.notifyAdmins('bilim-down', `BilimClass не отвечает уже ${this.failures} попытки подряд: ${errText(error)}`);
+      // одно сообщение, когда сломалось, и напоминание не чаще раза в сутки; когда починится — сообщение «восстановлено»
+      this.core.notifyAdmins('bilim-down', `Не получается получить дневник BilimClass: ${errText(error)}. Бот пробует снова каждые несколько минут.`, 24 * 3600 * 1000);
     }
   }
 

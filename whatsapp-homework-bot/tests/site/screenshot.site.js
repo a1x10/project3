@@ -37,6 +37,14 @@ describe('скриншот дневника на сайте BilimClass', { skip:
     assert.ok(img.width > 700 && img.width <= 824, `мобильная ширина (412 × 2 без полей), получено ${img.width}`);
   });
 
+  it('запасной способ: дневник через сайт (если API сломалось)', async () => {
+    const weeks = await shooter.fetchWeeks(['2026-10-12', '2026-10-19']);
+    assert.deepEqual([...weeks.keys()], ['2026-10-12', '2026-10-19']);
+    assert.equal(weeks.get('2026-10-12').days[1].subjects[0].label, 'Алгебра');
+    assert.equal(weeks.get('2026-10-19').days[0].subjects[0].label, 'История');
+    assert.equal(shooter.siteUserInfo?.group?.name, '7 «А»', 'профиль ученика взят из ответа на вход');
+  });
+
   it('рассылка после уроков приходит скриншотом дневника', async () => {
     const store = memoryStore();
     const wa = new FakeWA();

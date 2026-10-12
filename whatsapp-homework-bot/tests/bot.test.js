@@ -421,7 +421,7 @@ describe('планировщик', () => {
     const t = setup();
     t.client.fail = new Error('ECONNRESET');
     for (let i = 0; i < 3; i += 1) await t.scheduler.runPoll();
-    assert.ok(t.wa.sent.some((s) => s.jid === ADMIN && /BilimClass не отвечает/.test(s.content.text)));
+    assert.ok(t.wa.sent.some((s) => s.jid === ADMIN && /Не получается получить дневник BilimClass/.test(s.content.text)));
   });
 });
 
