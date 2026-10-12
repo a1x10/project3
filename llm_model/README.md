@@ -8,10 +8,36 @@
 | `build_dataset.py` | датасет: личность (300–1000), честность, защита, общие ответы; 15% без system |
 | `train_sft.py` | LoRA (или `--full`) SFT, loss только по ответам ассистента + `<|im_end|>` |
 | `export.py` | слияние LoRA, чистый ChatML-шаблон, eos = `<|im_end|>`, карточка модели |
+| `local_pipeline.py` | всё локально на CPU: датасет → обучение 0.5B → GGUF → Modelfile |
 | `chat.py` | контрольные вопросы / интерактивный чат |
 | `Modelfile`, `to_ollama.sh` | конвертация в GGUF Q8/Q4 и запуск в Ollama |
 
-## Без видеокарты
+## Полностью локально: ноутбук без видеокарты → Raspberry Pi 4
+
+Одна команда делает всё на CPU — без облака и без компиляции. Берётся модель **0.5B**:
+её реально обучить на ноутбуке и запускать на Pi 4.
+
+```bash
+pip install -r requirements.txt
+python local_pipeline.py            # ~1,5–3 часа на 4-ядерном ноутбуке, нужно 8 ГБ RAM
+```
+
+На выходе папка `out/`: `stella-0.5b-Q8_0.gguf` (~530 МБ) и `Modelfile`.
+Проверка на ноутбуке: `cd out`, `ollama create stella -f Modelfile`, `ollama run stella`.
+
+**На Raspberry Pi 4** (нужна 64-битная Raspberry Pi OS, 2+ ГБ RAM):
+
+```bash
+scp -r out pi@raspberrypi.local:~/stella       # или скопировать флешкой
+ssh pi@raspberrypi.local
+sudo apt install -y zstd                         # без него установщик Ollama падает
+curl -fsSL https://ollama.com/install.sh | sh
+cd ~/stella && ollama create stella -f Modelfile && ollama run stella
+```
+
+Обучать на самом Pi не нужно (и бессмысленно — это дни), только запускать.
+
+## Без видеокарты, но через облако (модель 1.5B)
 
 Обучать — в бесплатном облаке, запускать — у себя на ноутбуке. Ollama на CPU работает нормально.
 

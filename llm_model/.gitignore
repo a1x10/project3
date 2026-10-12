@@ -4,3 +4,5 @@ stella-1.5b/
 *.gguf
 Modelfile.q4
 __pycache__/
+out/
+stella-0.5b/
