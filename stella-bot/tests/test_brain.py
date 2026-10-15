@@ -79,11 +79,11 @@ async def test_duplicate_webhook_processed_once(brain):
 
 async def test_pause_and_resume(brain):
     await feed(brain, upsert("стелла помолчи 10"))
-    assert "молчу 10" in brain.evo.texts()[-2]
+    assert "помолчу 10" in brain.evo.texts()[-2]
     await feed(brain, upsert("стелла привет"))
     assert brain.llm.calls == []
     await feed(brain, upsert("стелла вернись"))
-    assert "тут" in brain.evo.texts()[-1]
+    assert "здесь" in brain.evo.texts()[-1]
     brain.llm.queue = ["о, привет"]
     await feed(brain, upsert("стелла привет"))
     assert len(brain.llm.calls) == 1

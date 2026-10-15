@@ -141,7 +141,7 @@ async def test_delete_command_rules(brain):
     # своё — удаляет по просьбе любого
     await feed(brain, upsert("стелла удали", quoted={"stanzaId": mine, "participant": BOT,
                                                       "quotedMessage": {"conversation": "моё сообщение"}}))
-    assert brain.evo.sent[-2]["type"] == "delete" and brain.evo.sent[-1]["text"] == "удалила 🫡"
+    assert brain.evo.sent[-2]["type"] == "delete" and brain.evo.sent[-1]["text"] == "удалила"
     # чужое — не по просьбе обычного участника
     q = {"stanzaId": "PETYA1", "participant": PETYA, "quotedMessage": {"conversation": "спам"}}
     await feed(brain, upsert("стелла удали", quoted=q))
@@ -305,3 +305,31 @@ async def test_non_admin_cannot_delete_owner_typed_message(brain):
     await feed(brain, upsert("стелла удали", sender=owner, name="Алекс", quoted=q))
     delete = [m for m in brain.evo.sent if m["type"] == "delete"][-1]
     assert delete["key"] == {"id": "OWNERMSG", "remoteJid": GROUP, "fromMe": True}
+
+
+def test_calm_plain_style(settings, monkeypatch):
+    from bot.config import Settings
+
+    sp = system_prompt(settings)
+    assert "простыми словами, спокойно" in sp
+    assert "без мата, грубых слов и сленга" in sp
+    import re as _re
+
+    assert not _re.search(r"\bбля\b|\bбл\b", sp) and "поугорать" not in sp and "дерзост" not in sp
+    monkeypatch.delenv("SWEAR_LEVEL", raising=False)
+    assert Settings().swear_level == 0
+    settings.swear_level = 1  # старый .env со SWEAR_LEVEL=1 тоже даёт спокойный стиль
+    assert "без мата, грубых слов и сленга" in system_prompt(settings)
+
+
+def test_canned_phrases_have_no_slang():
+    import re as _re
+
+    from bot import brain, casino, commands
+
+    text = " ".join(brain.VOICE_REPLIES + brain.FALLBACK_REPLIES + brain.REFUSAL_REPLIES)
+    for mod in (casino, commands):
+        text += open(mod.__file__, encoding="utf-8").read()
+    for word in ("ееее", "лаки", "красава", "хитро)", "🫡", "🫠", "🤐", "🙃"):
+        assert word not in text, word
+    assert not _re.search(r"\bщас\b|\bбл\b|\bчет я\b", text)

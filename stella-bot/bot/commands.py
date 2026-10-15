@@ -69,18 +69,18 @@ class Commands:
         if m:
             minutes = min(int(m.group(2) or 30), 24 * 60)
             await self.db.update_chat(chat_id, paused_until=utcnow() + timedelta(minutes=minutes))
-            return CasinoResult([f"ладно-ладно, молчу {minutes} мин 🤐", "позовёте — «стелла вернись»"])
+            return CasinoResult([f"хорошо, помолчу {minutes} мин", "если понадоблюсь, напишите «стелла вернись»"])
         if re.fullmatch(UNPAUSE, t):
             was_paused = bool(chat.get("paused_until") and chat["paused_until"] > utcnow())
             if was_paused or t != "ты тут":  # «ты тут?» без паузы — обычный вопрос для модели
                 await self.db.update_chat(chat_id, paused_until=None)
-                return CasinoResult(["я тут 😌" if was_paused else "я и не уходила)"])
+                return CasinoResult(["я снова здесь" if was_paused else "я здесь"])
 
         # --- режим «встревания» в разговор ---
         m = re.fullmatch(r"режим\s+(\S+)", t)
         if m and m.group(1) in CHIME_LEVELS:
             if not admin:
-                return CasinoResult(["режим меняет только админ 😌"])
+                return CasinoResult(["режим может поменять только админ"])
             await self.db.update_chat(chat_id, chime_level=CHIME_LEVELS[m.group(1)])
             return CasinoResult([f"ок, режим «{m.group(1)}»"])
 
@@ -138,7 +138,7 @@ class Commands:
         mine = await self.db.is_stella_message(inc.quoted_id)
         from_me = mine or await self.db.is_bot_message(inc.quoted_id)  # набранное владельцем с её телефона
         if not mine and not admin:
-            return CasinoResult(["чужие сообщения удаляю только по просьбе админа 🙃"])
+            return CasinoResult(["чужие сообщения я удаляю только по просьбе админа"])
         key: dict[str, Any] = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": from_me}
         if not from_me and inc.quoted_sender:
             key["participant"] = inc.quoted_sender
@@ -146,9 +146,9 @@ class Commands:
             await self.evo.delete_message(key)
         except EvolutionError:
             log.warning("не удалось удалить сообщение", exc_info=True)
-            return CasinoResult(["не получилось удалить 😔" + ("" if mine else " (меня надо сделать админом группы)")])
+            return CasinoResult(["не получилось удалить" + ("" if mine else ", для этого меня нужно сделать админом группы")])
         await self.db.mark_deleted(chat["id"], inc.quoted_id)
-        return CasinoResult(["удалила 🫡"])
+        return CasinoResult(["удалила"])
 
     async def _learn_sticker(self, inc: Incoming, mood: str) -> CasinoResult:
         if inc.quoted_kind != "sticker" or not inc.quoted_id:
@@ -170,6 +170,6 @@ class Commands:
             except EvolutionError:
                 log.warning("не смогла скачать стикер", exc_info=True)
         if not data:
-            return CasinoResult(["не получилось скачать стикер 😔 перешли его ещё раз и попробуй"])
+            return CasinoResult(["не получилось сохранить стикер, перешли его ещё раз"])
         await self.stickers.learn(data, mood, inc.quoted_id)
-        return CasinoResult([f"запомнила, это стикер «{mood.strip()}» 😌"])
+        return CasinoResult([f"запомнила, это стикер «{mood.strip()}»"])

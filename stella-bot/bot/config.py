@@ -75,7 +75,7 @@ class Settings:
     bot_model_name: str = field(default_factory=lambda: _str("BOT_MODEL_NAME", "Stells"))
     bot_creator: str = field(default_factory=lambda: _str("BOT_CREATOR", "Алексей"))
     bot_project: str = field(default_factory=lambda: _str("BOT_PROJECT", "Codex"))
-    swear_level: int = field(default_factory=lambda: _int("SWEAR_LEVEL", 1))
+    swear_level: int = field(default_factory=lambda: _int("SWEAR_LEVEL", 0))
     timezone: str = field(default_factory=lambda: _str("BOT_TIMEZONE", "Asia/Almaty"))
 
     # --- люди ---
