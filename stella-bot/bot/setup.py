@@ -25,9 +25,7 @@ async def main() -> int:
 
     evo = Evolution(settings.evolution_url, settings.evolution_api_key, settings.evolution_instance)
     try:
-        instances = await evo.fetch_instances()
-        names = {(i.get("name") or i.get("instanceName")) for i in instances}
-        if settings.evolution_instance not in names:
+        if await evo.find_own_instance() is None:
             await evo.create_instance()
             print(f"создан инстанс «{settings.evolution_instance}»")
         await evo.set_webhook(settings.webhook_url, settings.webhook_secret)
