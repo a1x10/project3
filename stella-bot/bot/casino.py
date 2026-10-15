@@ -178,7 +178,7 @@ class Casino:
             if amount is None:
                 return CasinoResult(["а сколько ставишь?", f"у тебя {money(bal)}"], balance=bal)
             if bal <= 0:
-                return CasinoResult([f"{name}, у тебя 0 🍌", "возьми «стелла бонус» и отыграешься)"], balance=bal)
+                return CasinoResult([f"{name}, у тебя 0 🍌", "можно взять «стелла бонус»"], balance=bal)
             if amount < self.min_bet:
                 return CasinoResult([f"минималка {money(self.min_bet)}"], balance=bal)
             if amount > bal:
@@ -201,15 +201,15 @@ class Casino:
         if mult == 1:
             lines.append(f"ничья, ставка вернулась. у {name} {money(new_bal)}")
         elif win > 0:
-            cheer = self.rng.choice(["ееее", "красава", "везунчик", "воу", "ну ты даёшь", "лаки"])
-            lines.append(f"{cheer} {name} +{money(win)}")
+            cheer = self.rng.choice(["поздравляю", "повезло", "отлично", "хороший выигрыш"])
+            lines.append(f"{name}, {cheer}: +{money(win)}")
             lines.append(f"теперь {money(new_bal)}")
             if mult >= 10:
                 mood = "победа"
         else:
-            sad = self.rng.choice(["эх", "мимо 😅", "казино не дремлет", "не повезло", "ну бывает"])
+            sad = self.rng.choice(["не повезло", "в этот раз мимо", "бывает"])
             lines.append(f"{sad}, {name} −{money(amount)}")
-            lines.append(f"осталось {money(new_bal)}" if new_bal else "всё, ноль 🫠 бери «стелла бонус»")
+            lines.append(f"осталось {money(new_bal)}" if new_bal else "баланс закончился. можно взять «стелла бонус»")
             if new_bal == 0 or amount >= 5000:
                 mood = "проигрыш"
         return CasinoResult(lines, mood=mood, delta=win, balance=new_bal, pause_after_first=True)
@@ -233,10 +233,10 @@ class Casino:
                 mult = 36 if n == int(c) else 0
             else:
                 mult = 2 if hit else 0
-            return mult, [self.rng.choice(["кручу 🎡", "крутим-вертим 🎡", "шарик пошёл 🎡"]), f"выпало {n} {emoji} {colour}"]
+            return mult, [self.rng.choice(["кручу рулетку 🎡", "запускаю рулетку 🎡"]), f"выпало {n} {emoji} {colour}"]
         if bet.game == "slots":
             reels = [self.rng.choice(SLOT_SYMBOLS) for _ in range(3)]
-            show = [self.rng.choice(["дёргаю рычаг 🎰", "крутим слоты 🎰"]), " | ".join(reels)]
+            show = ["запускаю слоты 🎰", " | ".join(reels)]
             if reels[0] == reels[1] == reels[2]:
                 return SLOT_TRIPLE[reels[0]], show
             if len(set(reels)) == 2:
@@ -245,11 +245,11 @@ class Casino:
         if bet.game == "coin":
             side = self.rng.choice(["heads", "tails"])
             label = "орёл 🦅" if side == "heads" else "решка 🪙"
-            return (2 if side == bet.choice else 0), ["подкидываю монетку 🪙", f"{label}"]
+            return (2 if side == bet.choice else 0), ["подбрасываю монетку 🪙", f"{label}"]
         if bet.game == "dice":
             you = self.rng.randint(1, 6) + self.rng.randint(1, 6)
             me = self.rng.randint(1, 6) + self.rng.randint(1, 6)
-            show = ["кидаем кости 🎲", f"у тебя {you}, у меня {me}"]
+            show = ["бросаю кости 🎲", f"у тебя {you}, у меня {me}"]
             return (2 if you > me else 1 if you == me else 0), show
         raise ValueError(bet.game)
 
@@ -261,10 +261,10 @@ class Casino:
             if last and now - last < timedelta(hours=self.bonus_hours):
                 left = timedelta(hours=self.bonus_hours) - (now - last)
                 h, m = divmod(int(left.total_seconds()) // 60, 60)
-                return CasinoResult([f"бонус уже был) следующий через {h}ч {m}м"], balance=int(w["balance"]))
+                return CasinoResult([f"бонус уже получен, следующий через {h} ч {m} мин"], balance=int(w["balance"]))
             new_bal = int(w["balance"]) + self.bonus_amount
             await self.db.update_wallet(chat_id, person.id, balance=new_bal, last_bonus_at=now)
-        return CasinoResult([f"держи +{money(self.bonus_amount)} 🎁", f"у {person.name} теперь {money(new_bal)}"],
+        return CasinoResult([f"держи бонус: +{money(self.bonus_amount)}", f"у {person.name} теперь {money(new_bal)}"],
                             delta=self.bonus_amount, balance=new_bal)
 
     async def top(self, chat_id: int, limit: int = 10) -> CasinoResult:
@@ -280,7 +280,7 @@ class Casino:
 
     async def transfer(self, chat_id: int, src: Person, dst: Person, amount: int) -> CasinoResult:
         if src.id == dst.id:
-            return CasinoResult(["самой себе переводить, хитро) нет"])
+            return CasinoResult(["самому себе перевести не получится"])
         if amount <= 0:
             return CasinoResult(["сумма должна быть больше нуля"])
         async with self._lock(chat_id):

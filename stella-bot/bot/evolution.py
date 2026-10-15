@@ -97,7 +97,7 @@ class Evolution:
                 "readStatus": False,
                 "syncFullHistory": False,
                 "rejectCall": True,
-                "msgCall": "я не могу говорить, напиши лучше)",
+                "msgCall": "сейчас не могу ответить на звонок, напишите, пожалуйста",
             },
         )
 
