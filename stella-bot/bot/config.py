@@ -56,6 +56,8 @@ class Settings:
     llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 90))
     llm_max_turns: int = field(default_factory=lambda: _int("LLM_MAX_TURNS", 5))
     daily_budget_usd: float = field(default_factory=lambda: _float("DAILY_BUDGET_USD", 12.0))
+    # сколько ответов модель готовит одновременно (каждый — отдельный процесс; больше — нужна память и лимиты API)
+    llm_concurrency: int = field(default_factory=lambda: _int("LLM_CONCURRENCY", 3))
 
     # --- Evolution API ---
     evolution_url: str = field(default_factory=lambda: _str("EVOLUTION_URL", "http://evolution:8080").rstrip("/"))
@@ -103,6 +105,10 @@ class Settings:
     continue_window: float = field(default_factory=lambda: _float("CONTINUE_WINDOW", 120))
     history_window: int = field(default_factory=lambda: _int("HISTORY_WINDOW", 40))
     owner_takeover_minutes: int = field(default_factory=lambda: _int("OWNER_TAKEOVER_MINUTES", 30))
+    # сообщения старше этого (пришли пачкой после переподключения) — только в историю, без ответа
+    reply_stale_minutes: float = field(default_factory=lambda: _float("REPLY_STALE_MINUTES", 30))
+    # если к ней обратились сразу несколько человек — отвечает каждому отдельно (не больше стольких за раз)
+    reply_each_max: int = field(default_factory=lambda: _int("REPLY_EACH_MAX", 5))
 
     # --- сама пишет в группы ---
     initiative_per_week: float = field(default_factory=lambda: _float("INITIATIVE_PER_WEEK", 2))

@@ -161,7 +161,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
             raise ToolError("опросы здесь недоступны")
         question = str(args.get("question") or "").strip()[:250]
         options = [str(o).strip()[:100] for o in (args.get("options") or []) if str(o).strip()]
-        options = list(dict.fromkeys(options))[:12]
+        options = list(dict.fromkeys(options))[:10]
         if not question or len(options) < 2:
             raise ToolError("нужен вопрос и минимум 2 варианта")
         if ctx.polls_queued >= 1:
@@ -207,7 +207,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         return f"простила {person.name}" if await db.clear_grudge(ctx.chat_id, person.id) else "обиды и не было"
 
     person_hint = "кто: p12 из контекста, имя/ник или «я» (автор сообщения)"
-    return [
+    specs = [
         ToolSpec(
             "remember",
             "Запомнить факт о человеке из чата (долговременная память).",
@@ -302,7 +302,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
                 "type": "object",
                 "properties": {
                     "question": {"type": "string"},
-                    "options": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 12},
+                    "options": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 10},
                     "multiple": {"type": "boolean", "description": "можно выбрать несколько вариантов"},
                 },
                 "required": ["question", "options"],
@@ -350,3 +350,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
             forgive,
         ),
     ]
+    if settings.prompt_style == "minimal":
+        # просто ассистент: не обижается и не игнорирует людей
+        specs = [t for t in specs if t.name not in ("take_offense", "forgive")]
+    return specs

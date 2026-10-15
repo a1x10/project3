@@ -36,7 +36,8 @@ def parse_json_block(text: str) -> dict[str, Any] | None:
 
 
 class Memory:
-    def __init__(self, db: DB, llm: LLM, settings: Settings, on_cost=None, spawn=None):
+    def __init__(self, db: DB, llm: LLM, settings: Settings, on_cost=None, spawn=None,
+                 limiter: asyncio.Semaphore | None = None):
         self.db = db
         self.llm = llm
         self.s = settings
@@ -44,6 +45,7 @@ class Memory:
         self._running: set[int] = set()
         self._tasks: set[asyncio.Task] = set()
         self._spawn = spawn or self._own_spawn
+        self._limiter = limiter or asyncio.Semaphore(1)  # общий с ответами лимит одновременных вызовов модели
 
     def _own_spawn(self, coro) -> None:
         # держим ссылку на задачу, иначе сборщик мусора может прибить её посреди работы
@@ -93,8 +95,9 @@ class Memory:
             + "\n\nПереписка:\n" + "\n".join(transcript)
         )
         try:
-            reply = await self.llm.ask(system=EXTRACT_SYSTEM, prompt=prompt, model=self.s.llm_memory_model,
-                                       max_turns=1)
+            async with self._limiter:
+                reply = await self.llm.ask(system=EXTRACT_SYSTEM, prompt=prompt, model=self.s.llm_memory_model,
+                                           max_turns=1)
         except LLMError as exc:
             log.warning("memory: модель недоступна: %s", exc)
             return 0

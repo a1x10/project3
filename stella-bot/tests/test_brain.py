@@ -78,7 +78,8 @@ async def test_duplicate_webhook_processed_once(brain):
 
 
 async def test_pause_and_resume(brain):
-    await feed(brain, upsert("стелла помолчи 10"))
+    owner = f"{OWNER}@s.whatsapp.net"  # в группе ставить на паузу могут только админы
+    await feed(brain, upsert("стелла помолчи 10", sender=owner, name="Алексей"))
     assert "помолчу 10" in brain.evo.texts()[-2]
     await feed(brain, upsert("стелла привет"))
     assert brain.llm.calls == []
@@ -134,7 +135,7 @@ async def test_casino_through_model_tool_sends_result_first(brain):
 
 async def test_llm_failure_sends_fallback_and_notifies_owner(brain):
     brain.connection_state = "open"
-    brain.llm.queue = [LLMError("boom")]
+    brain.llm.queue = [LLMError("boom"), LLMError("boom again")]  # вторая попытка тоже не удалась
     await feed(brain, upsert("стелла ты тут?"))
     to_group = [m for m in brain.evo.sent if m["to"] == GROUP]
     to_owner = [m for m in brain.evo.sent if m["to"] == OWNER]

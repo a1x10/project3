@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .casino import HELP, Casino, CasinoResult, parse_bet
 from .config import Settings
@@ -32,7 +32,9 @@ def _parse_amount(s: str) -> int:
 
 
 class Commands:
-    def __init__(self, db: DB, casino: Casino, stickers: StickerLibrary, evo: Evolution, settings: Settings):
+    def __init__(self, db: DB, casino: Casino, stickers: StickerLibrary, evo: Evolution, settings: Settings,
+                 group_admin: Callable[[dict[str, Any], Person], Awaitable[bool]] | None = None):
+        self.group_admin = group_admin  # админ группы в WhatsApp (проверяет Brain по списку участников)
         self.db = db
         self.casino = casino
         self.stickers = stickers
@@ -66,6 +68,8 @@ class Commands:
 
         # --- пауза ---
         m = re.fullmatch(r"(помолчи|замолчи|заткнись|не пиши|отдохни|тихо|стоп)(?:\s+(\d+)\s*(?:мин\w*|м)?)?", t)
+        if m and chat["is_group"] and not await self._is_admin(chat, sender, admin):
+            return None  # в группе выключить её для всех могут только админы; остальным она ответит сама
         if m:
             minutes = min(int(m.group(2) or 30), 24 * 60)
             await self.db.update_chat(chat_id, paused_until=utcnow() + timedelta(minutes=minutes))
@@ -79,14 +83,14 @@ class Commands:
         # --- режим «встревания» в разговор ---
         m = re.fullmatch(r"режим\s+(\S+)", t)
         if m and m.group(1) in CHIME_LEVELS:
-            if not admin:
+            if not await self._is_admin(chat, sender, admin):
                 return CasinoResult(["режим может поменять только админ"])
             await self.db.update_chat(chat_id, chime_level=CHIME_LEVELS[m.group(1)])
             return CasinoResult([f"ок, режим «{m.group(1)}»"])
 
         # --- удалить сообщение (ответом на него) ---
         if re.fullmatch(r"(удали|удаляй|снеси)( это| его| сообщение| это сообщение)?( пожалуйста| пж| плиз| плз)?", t):
-            return await self._delete_quoted(inc, chat, admin)
+            return await self._delete_quoted(inc, chat, admin or await self._is_admin(chat, sender, admin))
 
         # --- стикеры ---
         m = re.fullmatch(r"запомни\s+стикер\s+(.{2,40})", t)
@@ -130,6 +134,17 @@ class Commands:
             return await self.casino.grant(chat_id, target, amount)
 
         return None
+
+    async def _is_admin(self, chat: dict[str, Any], sender: Person, admin: bool) -> bool:
+        if admin:
+            return True
+        if self.group_admin is None or not chat.get("is_group"):
+            return False
+        try:
+            return await self.group_admin(chat, sender)
+        except Exception:
+            log.warning("не удалось проверить админов группы", exc_info=True)
+            return False
 
     async def _delete_quoted(self, inc: Incoming, chat: dict[str, Any], admin: bool) -> CasinoResult:
         """Своё сообщение Стелла удаляет по просьбе любого, чужое — только по просьбе админа."""

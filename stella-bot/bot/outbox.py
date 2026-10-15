@@ -81,16 +81,17 @@ class Outbox:
 
     # ---------- упоминания ----------
     @staticmethod
-    def apply_mentions(text: str, people: list[Person]) -> tuple[str, list[str], bool]:
+    def apply_mentions(text: str, people: list[Person], prefer_lid: bool = False) -> tuple[str, list[str], bool]:
         """«@Вася» -> «@77771234567» + mentioned, чтобы WhatsApp подсветил человека.
-        Если номера нет (LID) — отмечаем по LID. «@все» — отметить всех участников."""
+        В LID-группах (prefer_lid) и если номера нет — отмечаем по LID. «@все» — отметить всех участников."""
         everyone = bool(EVERYONE_RE.search(text))
         mentioned: list[str] = []
         for p in sorted(people, key=lambda x: len(x.name), reverse=True):
-            if p.phone:
+            lid = next((j for j in (p.jid, p.alt_jid) if j and j.endswith("@lid")), None)
+            if lid and (prefer_lid or not p.phone):
+                visible, mention_id = jid_digits(lid), lid
+            elif p.phone:
                 visible, mention_id = p.phone, p.phone
-            elif p.jid.endswith("@lid"):
-                visible, mention_id = jid_digits(p.jid), p.jid
             else:
                 continue
             for name in {p.name, p.push_name, p.nickname or ""}:
@@ -105,11 +106,12 @@ class Outbox:
 
     # ---------- отправка ----------
     async def _send_text(self, chat: dict[str, Any], text: str, delay_ms: int,
-                         quoted: Incoming | None = None, people: list[Person] | None = None) -> str | None:
-        if not await self.limiter.acquire(chat["jid"]):
+                         quoted: Incoming | None = None, people: list[Person] | None = None,
+                         prefer_lid: bool = False) -> str | None:
+        if not await self.limiter.acquire(chat["jid"], max_wait=120.0):
             log.warning("rate limit: пропускаю сообщение в %s", mask_phone(chat["jid"]))
             return None
-        text, mentioned, everyone = self.apply_mentions(text, people or [])
+        text, mentioned, everyone = self.apply_mentions(text, people or [], prefer_lid)
         quoted_payload = None
         if quoted is not None:
             msg = {"conversation": quoted.text} if quoted.kind == "text" else quoted.raw_message
@@ -152,7 +154,7 @@ class Outbox:
 
     async def send_segments(self, chat: dict[str, Any], segments: list[Segment], *, reply_to: Incoming | None,
                             quote_first: bool, people: list[Person], already_typing_s: float = 0.0,
-                            humanize: bool = True) -> int:
+                            humanize: bool = True, prefer_lid: bool = False) -> int:
         """Отправить ответ модели. Возвращает число отправленных сообщений."""
         sent = 0
         first_text = True
@@ -178,7 +180,8 @@ class Outbox:
                         if first_text and already_typing_s:
                             delay = max(int(delay - already_typing_s * 1000 * 0.6), 500)
                         quoted = reply_to if (first_text and quote_first) else None
-                        if await self._send_text(chat, text, delay, quoted=quoted, people=people):
+                        if await self._send_text(chat, text, delay, quoted=quoted, people=people,
+                                                 prefer_lid=prefer_lid):
                             sent += 1
                         first_text = False
                         if correction and self.rng.random() < self.s.typo_fix_rate:
