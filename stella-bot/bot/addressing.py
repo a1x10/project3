@@ -20,13 +20,15 @@ AMBIENT = "ambient"
 _WORD = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
 _SUFFIXES = (
     "", "а", "ы", "е", "у", "ой", "ою", "очка", "очки", "очке", "очку", "очкой", "ка", "ки", "ке", "ку", "кой",
-    "ечка", "ечке", "ечку", "юша", "юшка", "ик", "я", "ей", "ька", "ьки", "ьке", "ьку", "ькой",
+    "ечка", "ечке", "ечку", "юша", "юшка", "ик", "я", "ей",
     "чка", "чки", "чке", "чку", "уля", "уся", "ус", "ушка", "аа", "ааа", "ах", "ичка", "ички", "ичке", "ичку", "ичкой",
 )
 _LATIN = {"stella", "stela", "stells", "stels", "stellka", "stelka", "stel", "stelll", "stelochka", "stelocka"}
 # латинские буквы, которые выглядят как русские: «Cтелла» с английской C
 _HOMOGLYPHS = str.maketrans({"a": "а", "c": "с", "e": "е", "o": "о", "p": "р", "x": "х", "y": "у", "k": "к",
                              "m": "м", "t": "т", "h": "н", "b": "в"})
+# «стелька» — и обращение, и стелька в обуви: считаем обращением только первым словом сообщения
+_LEADING_ONLY = ("ька",)
 _CYR = re.compile(r"[а-яё]")
 _LAT = re.compile(r"[a-z]")
 
@@ -54,18 +56,20 @@ def _squeeze(word: str) -> str:
     return re.sub(r"([la])\1+", r"\1", word)
 
 
-def mentions_name(text: str, stems: list[str]) -> bool:
+def mentions_name(text: str, stems: list[str], leading: bool = False) -> bool:
+    """leading — проверяем только первое слово-обращение: тогда годится и «стелька»."""
+    suffixes = _SUFFIXES + _LEADING_ONLY if leading else _SUFFIXES
     squeezed_stems = sorted({_squeeze(s) for s in stems}, key=len, reverse=True)
     for word in _WORD.findall(norm(text)):
         word = _fix_mixed(word)
         if word in _LATIN or _squeeze(word) in _LATIN:
             return True
         for stem in stems:
-            if word.startswith(stem) and word[len(stem):] in _SUFFIXES:
+            if word.startswith(stem) and word[len(stem):] in suffixes:
                 return True
         short = _squeeze(word)
         for stem in squeezed_stems:
-            if short.startswith(stem) and short[len(stem):] in _SUFFIXES:
+            if short.startswith(stem) and short[len(stem):] in suffixes:
                 return True
     return False
 
@@ -73,7 +77,7 @@ def mentions_name(text: str, stems: list[str]) -> bool:
 def strip_name_prefix(text: str, stems: list[str]) -> tuple[bool, str]:
     """«Стелла, красное 500» -> (True, «красное 500»)."""
     m = re.match(r"^\s*@?([a-zа-яё]+)[\s,!:.\-—]*(.*)$", text, re.IGNORECASE | re.DOTALL)
-    if m and mentions_name(m.group(1), stems):
+    if m and mentions_name(m.group(1), stems, leading=True):
         return True, m.group(2).strip()
     return False, text.strip()
 
@@ -104,27 +108,32 @@ def classify(
         return DIRECT
     if bot_digits and any(f"@{d}" in inc.text for d in bot_digits if d):
         return DIRECT
-    if inc.text and mentions_name(inc.text, stems):
+    if inc.text and (mentions_name(inc.text, stems) or strip_name_prefix(inc.text, stems)[0]):
         return DIRECT
     addressed_elsewhere = bool(inc.mentioned) or (inc.quoted_id is not None)
     if talking_with_sender and not addressed_elsewhere:
         return CONTINUE
     # она только что говорила в чате, и кто-то другой спрашивает «а ты…?» — возможно, ей (модель решит сама)
-    if bot_spoke_recently and not addressed_elsewhere and inc.text and looks_like_question_to_her(inc.text):
+    if bot_spoke_recently and not addressed_elsewhere and inc.text and looks_like_question_to_her(inc.text, stems):
         return CONTINUE
     return AMBIENT
 
 
 _TO_HER = re.compile(r"(^|[^а-яё])(ты|тебя|тебе|тобой|твой|твоя|твое|твои|твою|твоего|сама)([^а-яё]|$)")
-# «объясни ещё раз», «а мне?» — просьба к тому, кто только что отвечал
-_ASK_HER = re.compile(r"^(а |ну |и |так )?(объясни|расскажи|помоги|скажи|покажи|продолжай|продолжи|напиши|повтори|"
-                      r"переведи|реши|подскажи|посоветуй|придумай|сделай|проверь|давай)([^а-яё]|$)"
-                      r"|(^|[^а-яё])(а мне|мне тоже|и мне)([^а-яё]|$)")
+# «объясни ещё раз» — просьба к тому, кто только что отвечал
+_ASK_HER = re.compile(r"^(а |ну |и |так )?(объясни|расскажи|помоги|покажи|продолжай|продолжи|повтори|"
+                      r"переведи|реши|подскажи|посоветуй|придумай|проверь)([^а-яё]|$)")
+_VOCATIVE = re.compile(r"^\s*@?([a-zа-яё]+)\s*[,!:]")
 
 
-def looks_like_question_to_her(text: str) -> bool:
+def looks_like_question_to_her(text: str, stems: list[str] | None = None) -> bool:
+    """Сразу после её ответа: «а ты сама как думаешь?», «объясни ещё раз». Не «коля, ты придёшь?»."""
     t = norm(text)
-    return bool(_TO_HER.search(t) or _ASK_HER.search(t)) or t.rstrip(" )!").endswith("?")
+    m = _VOCATIVE.match(t)
+    if m and not mentions_name(m.group(1), stems or [], leading=True):
+        return False  # начинается с обращения к другому человеку
+    question = t.rstrip(" )!").endswith("?")
+    return bool(_TO_HER.search(t) and question) or bool(_ASK_HER.search(t))
 
 
 ARGUMENT_MARKERS = re.compile(

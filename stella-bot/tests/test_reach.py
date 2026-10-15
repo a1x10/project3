@@ -121,6 +121,7 @@ async def test_reply_each_max_merges_the_rest(brain):
 
 
 async def test_follow_up_from_another_person_is_considered(brain):
+    brain.s.chime_default = "normal"  # в режиме «выкл» в чужие разговоры не встревает вовсе
     brain.llm.queue = ["4", "я ИИ-ассистент, отвечаю на вопросы"]
     await feed(brain, upsert("стелла сколько будет 2+2"))
     await feed(brain, upsert("а ты вообще кто?", sender=PETYA, name="Петя"))
@@ -317,6 +318,7 @@ async def test_known_person_quoted_by_lid_is_not_duplicated(brain):
 
 
 async def test_follow_up_and_new_question_in_one_batch_both_handled(brain):
+    brain.s.chime_default = "normal"
     brain.llm.queue = ["4"]
     await feed(brain, upsert("стелла сколько будет 2+2"))
     brain.s.batch_window_min = brain.s.batch_window_max = 0.3
@@ -445,3 +447,85 @@ async def test_messages_api_keeps_text_before_empty_last_turn():
     llm = MessagesApiLLM("claude-haiku-5-5", client=NS(messages=fake, beta=NS(messages=fake)))
     reply = await llm.ask(system="s", prompt="p", tools=[ToolSpec("remember", "d", {"type": "object"}, remember)])
     assert reply.text == "Привет, Аня!"
+
+
+# ---------- третий круг: после независимой проверки ----------
+
+async def test_owner_takeover_in_dm_is_not_ended_by_everyday_words(brain):
+    await feed(brain, upsert("я сам отвечу", chat=DM, from_me=True, sender=BOT, msg_id="OWN1"))
+    await feed(brain, upsert("ну не говори маме пожалуйста", chat=DM))
+    await feed(brain, upsert("ау", chat=DM))
+    chat = await brain.db.get_chat_by_jid("stella", DM)
+    assert chat["paused_until"] and brain.llm.calls == [] and brain.evo.texts() == []
+
+
+def test_insoles_are_not_her_name():
+    kw = dict(stems=name_stems("Стелла"), bot=BotIdentity({BOT}), quoted_is_bot=False, talking_with_sender=False)
+    for text in ["купила новые стельки", "стельку порвал", "со стелькой", "в стельке дырка"]:
+        assert classify(parse_upsert(upsert(text)), **kw) != DIRECT, text
+    assert classify(parse_upsert(upsert("Стелька, привет")), **kw) == DIRECT
+
+
+def test_follow_up_rule_is_narrow():
+    from bot.addressing import looks_like_question_to_her
+
+    stems = name_stems("Стелла")
+    assert looks_like_question_to_her("а ты вообще кто?", stems)
+    assert looks_like_question_to_her("объясни ещё раз", stems)
+    for text in ["коля, ты придёшь завтра?", "кто идёт в кино?", "давай в кино", "мне тоже", "ты где"]:
+        assert not looks_like_question_to_her(text, stems), text
+
+
+async def test_casino_bets_do_not_turn_chatter_into_model_calls(brain):
+    await feed(brain, upsert("стелла красное 100"))
+    await feed(brain, upsert("блин опять проиграл"), upsert("ладно пофиг"))
+    assert brain.llm.calls == []
+
+
+async def test_no_retry_after_delete_tool(brain):
+    brain.llm.queue = ["первый ответ"]
+    await feed(brain, upsert("стелла привет"))
+
+    async def delete_then_fail(tools, prompt):
+        await tools["delete_my_last_message"].handler({})
+        raise LLMError("overloaded")
+
+    brain.llm.queue = [delete_then_fail, "второй раз удалять нельзя"]
+    await feed(brain, upsert("стелла удали своё последнее сообщение пожалуйста"))
+    assert len([m for m in brain.evo.sent if m["type"] == "delete"]) == 1
+    assert len(brain.llm.calls) == 2
+
+
+def test_pn_group_is_not_flagged_as_lid():
+    p = upsert("ку", sender=VASYA)
+    p["data"]["key"]["participantAlt"] = "999@lid"
+    p["data"]["key"]["addressingMode"] = "pn"
+    assert parse_upsert(p).lid_addressing is False
+    q = upsert("ку", sender="999@lid")
+    q["data"]["key"]["participantAlt"] = VASYA
+    assert parse_upsert(q).lid_addressing is True
+
+
+async def test_duplicate_rows_for_one_person_are_merged(brain):
+    db = brain.db
+    chat = await db.get_or_create_chat("stella", GROUP, True)
+    by_phone = await db.upsert_person(PETYA, "Петя", "77022222222")
+    by_lid = await db.upsert_person("888000@lid", "")
+    assert by_phone.id != by_lid.id
+    await db.touch_member(chat["id"], by_phone.id)
+    await db.touch_member(chat["id"], by_phone.id)
+    await db.touch_member(chat["id"], by_lid.id)
+    await db.update_profile(by_phone.id, chat["id"], {"увлечения": "футбол"})
+    await db.update_profile(by_lid.id, chat["id"], {"учёба": "7в"})
+    await db.add_fact(by_lid.id, chat["id"], "любит пиццу", "auto", 50)
+    await brain.casino.grant(chat["id"], by_lid, 3000)
+    rich = await brain.casino.balance(chat["id"], by_lid)
+
+    merged = await db.upsert_person(PETYA, "Петя", "77022222222", "888000@lid")
+    assert merged.id == by_phone.id and merged.alt_jid == "888000@lid"
+    assert (await db.find_person_by_jid("888000@lid")).id == by_phone.id
+    assert await db.get_profile(by_phone.id, chat["id"]) == {"увлечения": "футбол", "учёба": "7в"}
+    assert "любит пиццу" in await db.get_facts(by_phone.id, chat["id"], 10)
+    members = await db.chat_members(chat["id"], limit=10)
+    assert [m.id for m in members] == [by_phone.id]
+    assert await brain.casino.balance(chat["id"], merged) == rich  # бананы не потерялись
