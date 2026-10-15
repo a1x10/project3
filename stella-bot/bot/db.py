@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -61,6 +62,22 @@ chats = Table(
     Column("about", Text),  # что владелец рассказал про этот чат (python -m bot.notes), не вытесняется
     UniqueConstraint("instance", "jid", name="uq_chat"),
 )
+
+profiles = Table(  # анкета человека в чате, которую Стелла заполняет сама
+    "profiles",
+    metadata,
+    Column("person_id", Integer, ForeignKey("people.id"), primary_key=True),
+    Column("chat_id", Integer, ForeignKey("chats.id"), primary_key=True),
+    Column("data", Text, nullable=False, default="{}"),  # JSON: поле анкеты -> значение
+    Column("updated_at", DateTime, nullable=False, default=utcnow),
+)
+
+PROFILE_FIELDS = [
+    "имя", "как называют", "возраст/класс", "учёба", "увлечения", "игры", "любимое", "характер",
+    "как общается", "дружит с", "спорит с", "о себе", "важное",
+]
+PROFILE_MAX_FIELDS = 20
+PROFILE_MAX_VALUE = 200
 
 grudges = Table(  # на кого Стелла обижена
     "grudges",
@@ -269,6 +286,54 @@ class DB:
                     .where(messages.c.chat_id == chat_id, messages.c.role == "user")
                 )
             ).scalar_one()
+
+    # ---------- анкеты ----------
+    async def get_profile(self, person_id: int, chat_id: int) -> dict[str, str]:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(profiles.c.data).where(profiles.c.person_id == person_id, profiles.c.chat_id == chat_id)
+                )
+            ).first()
+        if not row:
+            return {}
+        try:
+            data = json.loads(row.data or "{}")
+        except ValueError:
+            return {}
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+    async def update_profile(self, person_id: int, chat_id: int, updates: dict[str, Any]) -> dict[str, str]:
+        """Обновить поля анкеты (пустое значение — удалить поле). Возвращает анкету целиком."""
+        profile = await self.get_profile(person_id, chat_id)
+        for key, value in updates.items():
+            key = str(key).strip().lower()[:40]
+            if not key:
+                continue
+            value = "" if value is None else str(value).strip()[:PROFILE_MAX_VALUE]
+            if value:
+                if key not in profile and len(profile) >= PROFILE_MAX_FIELDS:
+                    continue
+                profile[key] = value
+            else:
+                profile.pop(key, None)
+        raw = json.dumps(profile, ensure_ascii=False)
+        async with self.engine.begin() as conn:
+            res = await conn.execute(
+                update(profiles)
+                .where(profiles.c.person_id == person_id, profiles.c.chat_id == chat_id)
+                .values(data=raw, updated_at=utcnow())
+            )
+            if res.rowcount == 0:
+                try:
+                    await conn.execute(insert(profiles).values(person_id=person_id, chat_id=chat_id, data=raw))
+                except IntegrityError:
+                    await conn.execute(
+                        update(profiles)
+                        .where(profiles.c.person_id == person_id, profiles.c.chat_id == chat_id)
+                        .values(data=raw, updated_at=utcnow())
+                    )
+        return profile
 
     # ---------- обиды ----------
     async def set_grudge(self, chat_id: int, person_id: int, until: datetime, reason: str) -> None:

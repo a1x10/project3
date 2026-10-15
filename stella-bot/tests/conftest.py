@@ -34,10 +34,10 @@ class FakeEvolution:
     def _id(self) -> str:
         return f"BOTMSG{next(self._ids)}"
 
-    async def send_text(self, number, text, *, delay_ms=0, quoted=None, mentioned=None):
+    async def send_text(self, number, text, *, delay_ms=0, quoted=None, mentioned=None, mentions_everyone=False):
         wa_id = self._id()
         self.sent.append({"type": "text", "to": number, "text": text, "quoted": quoted, "mentioned": mentioned,
-                          "id": wa_id})
+                          "everyone": mentions_everyone, "id": wa_id})
         return wa_id
 
     async def send_sticker(self, number, sticker_b64, *, delay_ms=0):

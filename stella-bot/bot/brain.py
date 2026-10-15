@@ -161,7 +161,7 @@ class Brain:
         self.stickers = StickerLibrary(db, settings.stickers_dir, rng=self.rng)
         self.casino = Casino(db, settings.casino_start_balance, settings.casino_bonus, settings.casino_bonus_hours,
                              settings.casino_min_bet)
-        self.memory = Memory(db, llm, settings, on_cost=self.track_cost)
+        self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         self.commands = Commands(db, self.casino, self.stickers, evo, settings)
         self.system = system_prompt(settings)
@@ -477,7 +477,8 @@ class Brain:
         if segments:
             quote_first = chat["is_group"] and await self._newer_messages_exist(chat["id"], target)
             sent = await self.outbox.send_segments(chat, segments, reply_to=target, quote_first=quote_first,
-                                                   people=people, already_typing_s=typed_for)
+                                                   people=await self._mention_pool(chat, people),
+                                                   already_typing_s=typed_for)
         elif not tool_ctx.after:
             log.info("%s: молчит (%s)", mask_phone(chat_jid), mode)
             return
@@ -490,6 +491,13 @@ class Brain:
             for i in starred:
                 talk[i.sender_jid] = now
             await self.db.update_chat(chat["id"], last_bot_at=utcnow(), last_eval_at=utcnow())
+
+    async def _mention_pool(self, chat: dict[str, Any], people: list[Person]) -> list[Person]:
+        """Кого можно отметить через @Имя: люди из контекста + все, кто писал в этот чат."""
+        pool = {p.id: p for p in people}
+        for p in await self.db.chat_members(chat["id"], limit=300):
+            pool.setdefault(p.id, p)
+        return list(pool.values())
 
     async def _sleep_unless(self, task: asyncio.Task, seconds: float) -> None:
         if seconds > 0:
@@ -556,12 +564,12 @@ class Brain:
                 if qp:
                     await add(qp.id)
 
-        people_list = [people_by_id[pid] for pid in order][:14]
+        people_list = [people_by_id[pid] for pid in order][: self.s.memory_people_in_prompt]
         people_facts = []
         for p in people_list:
             facts = await self.db.get_facts(p.id, chat["id"], self.s.memory_facts_in_prompt,
                                             self.s.memory_share_across_chats)
-            people_facts.append((p, facts))
+            people_facts.append((p, facts, await self.db.get_profile(p.id, chat["id"])))
         transcript = format_transcript(rows, people_by_id, self.s.bot_name, self.s.timezone,
                                        {i.msg_id for i in starred}, quoted_lookup)
         ctx = PromptContext(
@@ -569,6 +577,7 @@ class Brain:
             is_group=bool(chat["is_group"]),
             chat_notes=chat.get("notes") or "",
             chat_about=chat.get("about") or "",
+            members=await self.db.chat_members(chat["id"], limit=80) if chat["is_group"] else [],
             sticker_moods=await self.stickers.moods(),
             people=people_facts,
             transcript=transcript,
@@ -652,7 +661,8 @@ class Brain:
         segments = parse_reply(reply.text, self.s.max_bubbles)
         sent = 0
         if segments:
-            sent = await self.outbox.send_segments(chat, segments, reply_to=None, quote_first=False, people=people)
+            sent = await self.outbox.send_segments(chat, segments, reply_to=None, quote_first=False,
+                                                   people=await self._mention_pool(chat, people))
         for action in ctx.after:
             await action()
             sent += 1

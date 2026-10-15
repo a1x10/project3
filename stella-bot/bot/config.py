@@ -79,6 +79,8 @@ class Settings:
     timezone: str = field(default_factory=lambda: _str("BOT_TIMEZONE", "Asia/Almaty"))
     # school — школьные чаты подростков (сленг, бережные правила); none — без этого блока
     audience: str = field(default_factory=lambda: _str("BOT_AUDIENCE", "school"))
+    # minimal — просто ИИ-ассистент с короткой базовой инструкцией; full — подробный характер и правила
+    prompt_style: str = field(default_factory=lambda: _str("PROMPT_STYLE", "minimal"))
 
     # --- люди ---
     owner_phone: str = field(default_factory=lambda: _digits(_str("OWNER_PHONE")))
@@ -110,8 +112,9 @@ class Settings:
     initiative_open_minutes: float = field(default_factory=lambda: _float("INITIATIVE_OPEN_MINUTES", 30))
 
     # --- память ---
-    memory_extract_every: int = field(default_factory=lambda: _int("MEMORY_EXTRACT_EVERY", 30))
-    memory_facts_in_prompt: int = field(default_factory=lambda: _int("MEMORY_FACTS_IN_PROMPT", 12))
+    memory_extract_every: int = field(default_factory=lambda: _int("MEMORY_EXTRACT_EVERY", 15))
+    memory_facts_in_prompt: int = field(default_factory=lambda: _int("MEMORY_FACTS_IN_PROMPT", 15))
+    memory_people_in_prompt: int = field(default_factory=lambda: _int("MEMORY_PEOPLE_IN_PROMPT", 20))
     memory_max_facts: int = field(default_factory=lambda: _int("MEMORY_MAX_FACTS", 150))
     memory_share_across_chats: bool = field(default_factory=lambda: _bool("MEMORY_SHARE_ACROSS_CHATS", False))
 

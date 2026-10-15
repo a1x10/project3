@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from .casino import Bet, Casino, CasinoResult
 from .config import Settings
-from .db import DB, Person
+from .db import DB, PROFILE_FIELDS, Person
 from .llm.base import ToolSpec
 from .util import money, norm, utcnow
 
@@ -88,11 +88,21 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         except ToolError as exc:
             return str(exc)
         facts = await db.get_facts(person.id, ctx.chat_id, 40, settings.memory_share_across_chats)
+        profile = await db.get_profile(person.id, ctx.chat_id)
         names = [person.name]
         if person.push_name and person.push_name != person.name:
             names.append(f"в WhatsApp «{person.push_name}»")
+        anketa = "; ".join(f"{k}: {v}" for k, v in profile.items()) or "анкета пустая"
         known = "; ".join(facts) if facts else "фактов пока нет"
-        return f"{', '.join(names)} [{person.ref}]: {known}"
+        return f"{', '.join(names)} [{person.ref}]\nанкета: {anketa}\nфакты: {known}"
+
+    async def update_profile(args: dict[str, Any]) -> str:
+        person = await resolve_person(db, ctx, args.get("person"))
+        fields = args.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            raise ToolError("fields: {поле: значение}")
+        profile = await db.update_profile(person.id, ctx.chat_id, fields)
+        return f"анкета {person.name}: " + "; ".join(f"{k}: {v}" for k, v in profile.items())
 
     async def set_nickname(args: dict[str, Any]) -> str:
         person = await resolve_person(db, ctx, args.get("person"))
@@ -210,6 +220,21 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
                 "required": ["person", "fact"],
             },
             remember,
+        ),
+        ToolSpec(
+            "update_profile",
+            "Обновить анкету человека: поля и новые значения целиком (пустая строка — удалить поле). "
+            "Обычные поля: " + ", ".join(PROFILE_FIELDS) + ". Можно добавлять свои.",
+            {
+                "type": "object",
+                "properties": {
+                    "person": {"type": "string", "description": person_hint},
+                    "fields": {"type": "object", "description": "например {\"игры\": \"Roblox, Minecraft\"}",
+                               "additionalProperties": {"type": "string"}},
+                },
+                "required": ["person", "fields"],
+            },
+            update_profile,
         ),
         ToolSpec(
             "forget",
