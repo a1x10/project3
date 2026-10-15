@@ -149,6 +149,7 @@ class Evolution:
         delay_ms: int = 0,
         quoted: dict[str, Any] | None = None,
         mentioned: list[str] | None = None,
+        mentions_everyone: bool = False,
     ) -> str | None:
         """delay_ms: Evolution показывает «печатает…» столько миллисекунд, потом отправляет."""
         body: dict[str, Any] = {"number": number, "text": text, "linkPreview": False}
@@ -158,6 +159,8 @@ class Evolution:
             body["quoted"] = quoted
         if mentioned:
             body["mentioned"] = mentioned
+        if mentions_everyone:
+            body["mentionsEveryOne"] = True
         data = await self._call("POST", f"/message/sendText/{self.instance}", json=body, timeout=delay_ms / 1000 + 40)
         log.debug("sent text to %s", mask_phone(number))
         return ((data or {}).get("key") or {}).get("id")

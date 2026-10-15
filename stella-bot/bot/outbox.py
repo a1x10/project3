@@ -17,9 +17,11 @@ from .evolution import Evolution, EvolutionError
 from .humanize import Segment, add_typo, casualize, typing_ms
 from .parser import Incoming
 from .stickers import StickerLibrary
-from .util import mask_phone
+from .util import jid_digits, mask_phone
 
 log = logging.getLogger("stella.outbox")
+
+EVERYONE_RE = re.compile(r"@(все|всем|всех|all|everyone)(?![\wА-Яа-яЁё])", re.IGNORECASE)
 
 
 class RateLimiter:
@@ -79,21 +81,27 @@ class Outbox:
 
     # ---------- упоминания ----------
     @staticmethod
-    def apply_mentions(text: str, people: list[Person]) -> tuple[str, list[str]]:
-        """«@Вася» -> «@77771234567» + mentioned, чтобы WhatsApp подсветил человека."""
+    def apply_mentions(text: str, people: list[Person]) -> tuple[str, list[str], bool]:
+        """«@Вася» -> «@77771234567» + mentioned, чтобы WhatsApp подсветил человека.
+        Если номера нет (LID) — отмечаем по LID. «@все» — отметить всех участников."""
+        everyone = bool(EVERYONE_RE.search(text))
         mentioned: list[str] = []
         for p in sorted(people, key=lambda x: len(x.name), reverse=True):
-            if not p.phone:
+            if p.phone:
+                visible, mention_id = p.phone, p.phone
+            elif p.jid.endswith("@lid"):
+                visible, mention_id = jid_digits(p.jid), p.jid
+            else:
                 continue
             for name in {p.name, p.push_name, p.nickname or ""}:
                 if not name:
                     continue
                 pattern = re.compile(r"@" + re.escape(name) + r"(?![\wА-Яа-яЁё])", re.IGNORECASE)
                 if pattern.search(text):
-                    text = pattern.sub("@" + p.phone, text)
-                    if p.phone not in mentioned:
-                        mentioned.append(p.phone)
-        return text, mentioned
+                    text = pattern.sub("@" + visible, text)
+                    if mention_id not in mentioned:
+                        mentioned.append(mention_id)
+        return text, mentioned, everyone
 
     # ---------- отправка ----------
     async def _send_text(self, chat: dict[str, Any], text: str, delay_ms: int,
@@ -101,13 +109,13 @@ class Outbox:
         if not await self.limiter.acquire(chat["jid"]):
             log.warning("rate limit: пропускаю сообщение в %s", mask_phone(chat["jid"]))
             return None
-        text, mentioned = self.apply_mentions(text, people or [])
+        text, mentioned, everyone = self.apply_mentions(text, people or [])
         quoted_payload = None
         if quoted is not None:
             msg = {"conversation": quoted.text} if quoted.kind == "text" else quoted.raw_message
             quoted_payload = {"key": quoted.raw_key or {"id": quoted.msg_id}, "message": msg}
         wa_id = await self.evo.send_text(chat["jid"], text, delay_ms=self._delay(delay_ms), quoted=quoted_payload,
-                                         mentioned=mentioned or None)
+                                         mentioned=mentioned or None, mentions_everyone=everyone)
         self.remember_sent(wa_id)
         await self.db.add_message(chat["id"], "assistant", text, wa_message_id=wa_id, sender_name=self.s.bot_name,
                                   quoted_wa_id=quoted.msg_id if quoted else None)

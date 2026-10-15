@@ -15,11 +15,12 @@ from .persona import format_transcript
 
 log = logging.getLogger("stella.memory")
 
-EXTRACT_SYSTEM = """Ты — модуль памяти чат-бота. По куску переписки выпиши новые устойчивые факты о людях: имя и как любит, чтобы называли, возраст, город, учёба/работа, увлечения, вкусы, питомцы, отношения, планы, важные события, характерные шутки.
+EXTRACT_SYSTEM = """Ты — модуль памяти чат-бота. По куску переписки выпиши новые устойчивые факты о каждом участнике: имя и прозвища (как его называют другие), учёба/работа, увлечения и любимые игры, вкусы, что рассказывает о себе, с кем дружит или постоянно спорит, характер и манера общения, планы, важные события, его коронные шутки и мемы.
 Не записывай: разовые реплики, настроение на минуту, то, что уже есть в списке известного, догадки. Только то, что человек сказал о себе или что прямо сказали о нём.
 Номера телефонов, адреса, пароли и прочие чувствительные данные не записывай.
 Ответь ТОЛЬКО JSON без пояснений:
-{"people": [{"ref": "p12", "facts": ["коротко от третьего лица"], "nickname": null}], "chat": ["заметка о самом чате, если есть"]}
+{"people": [{"ref": "p12", "profile": {"поле анкеты": "новое значение целиком"}, "facts": ["коротко от третьего лица"], "nickname": null}], "chat": ["заметка о самом чате: общие мемы, темы, традиции"]}
+Анкета — главное: обновляй её поля (имя, как называют, возраст/класс, учёба, увлечения, игры, любимое, характер, как общается, дружит с, спорит с, о себе, важное), учитывая уже известное: значение поля пиши целиком, объединяя старое и новое. Возвращай только изменившиеся поля.
 Если ничего нового — {"people": [], "chat": []}"""
 
 
@@ -35,12 +36,20 @@ def parse_json_block(text: str) -> dict[str, Any] | None:
 
 
 class Memory:
-    def __init__(self, db: DB, llm: LLM, settings: Settings, on_cost=None):
+    def __init__(self, db: DB, llm: LLM, settings: Settings, on_cost=None, spawn=None):
         self.db = db
         self.llm = llm
         self.s = settings
         self.on_cost = on_cost
         self._running: set[int] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._spawn = spawn or self._own_spawn
+
+    def _own_spawn(self, coro) -> None:
+        # держим ссылку на задачу, иначе сборщик мусора может прибить её посреди работы
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def note_message(self, chat_id: int) -> None:
         """Вызывается на каждое входящее сообщение; запускает выжимку, когда накопилось."""
@@ -49,7 +58,7 @@ class Memory:
         count = await self.db.bump_extract_counter(chat_id)
         if count >= self.s.memory_extract_every and chat_id not in self._running:
             self._running.add(chat_id)
-            asyncio.create_task(self._run(chat_id))
+            self._spawn(self._run(chat_id))
 
     async def _run(self, chat_id: int) -> None:
         try:
@@ -73,7 +82,9 @@ class Memory:
         known_lines = []
         for p in people.values():
             facts = await self.db.get_facts(p.id, chat_id, 30, self.s.memory_share_across_chats)
-            known_lines.append(f"- {p.name} [{p.ref}]: {'; '.join(facts) if facts else '—'}")
+            profile = await self.db.get_profile(p.id, chat_id)
+            anketa = "; ".join(f"{k}: {v}" for k, v in profile.items()) or "пустая"
+            known_lines.append(f"- {p.name} [{p.ref}]: анкета — {anketa} | факты — {'; '.join(facts) if facts else '—'}")
         chat = await self.db.get_chat(chat_id)
         transcript = format_transcript(rows, people, self.s.bot_name, self.s.timezone, set(), {})
         prompt = (
@@ -100,6 +111,10 @@ class Memory:
             p = refs.get(str(item.get("ref", "")).strip("[] "))
             if not p:
                 continue
+            profile = item.get("profile")
+            if isinstance(profile, dict) and profile:
+                await self.db.update_profile(p.id, chat_id, profile)
+                added += 1
             for fact in item.get("facts") or []:
                 if isinstance(fact, str) and await self.db.add_fact(p.id, chat_id, fact, "auto",
                                                                    self.s.memory_max_facts):

@@ -19,6 +19,7 @@ async def feed(brain, *payloads):
 
 
 def test_prompt_is_honest_but_quiet_about_being_ai(settings):
+    settings.prompt_style = "full"
     sp = system_prompt(settings)
     assert "Алексей" in sp and "Codex" in sp and "Stells" in sp
     assert "сама об этом никогда не говоришь" in sp
@@ -310,6 +311,7 @@ async def test_non_admin_cannot_delete_owner_typed_message(brain):
 def test_calm_plain_style(settings, monkeypatch):
     from bot.config import Settings
 
+    settings.prompt_style = "full"
     settings.audience = "none"  # не школьный чат — спокойный взрослый стиль
     sp = system_prompt(settings)
     assert "простыми словами, спокойно" in sp

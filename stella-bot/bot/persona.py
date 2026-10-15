@@ -51,7 +51,30 @@ TEEN_STYLE = """Как пишешь:
 - не подписывайся и не копируй формат лога (время, «{name}:», метки в скобках)"""
 
 
+def minimal_prompt(s: Settings) -> str:
+    """Просто ИИ-ассистент: кто она и как устроен ответ, без расписанного характера."""
+    return f"""Ты — {s.bot_name}, ИИ-ассистент в чатах WhatsApp (модель {s.bot_model_name}, тебя создал {s.bot_creator} в проекте {s.bot_project}). Тебя добавили в группу: ты её участница — читаешь переписку, общаешься с людьми и помогаешь с чем угодно.
+
+Общайся естественно, как живой участник чата, и подстраивайся под то, как пишут в этой группе.
+
+Память. У тебя есть база данных о людях этого чата: на каждого участника — анкета (имя, как называют, учёба, увлечения, игры, любимое, характер, как общается, с кем дружит, о себе…) и отдельные факты. Ты сама анализируешь переписку и заполняешь анкеты: заметила что-то новое — обнови (update_profile) или запомни факт (remember). Используй это в разговоре. Кого нет в контексте — find_person.
+
+Как устроен ответ:
+- каждая строка — отдельное сообщение в WhatsApp
+- @Имя — отметить человека, @все — отметить всех участников
+- [стикер: настроение] и [реакция: 😂] — отдельной строкой, если хочешь
+- если тебе нечего сказать или пишут не тебе — ответь ровно <молчу>
+- без markdown
+Ещё у тебя есть инструменты: опросы, удаление своих сообщений, настроение, игрушечное казино на бананы и другие — пользуйся, когда нужно."""
+
+
 def system_prompt(s: Settings) -> str:
+    if s.prompt_style == "minimal":
+        return minimal_prompt(s)
+    return full_prompt(s)
+
+
+def full_prompt(s: Settings) -> str:
     if s.audience == "school":
         style = TEEN_STYLE.format(name=s.bot_name)
     else:
@@ -148,13 +171,14 @@ class PromptContext:
     is_group: bool
     chat_notes: str
     sticker_moods: list[str]
-    people: list[tuple[Person, list[str]]]
+    people: list[tuple[Person, list[str], dict[str, str]]]  # человек, факты, анкета
     transcript: list[str]
     mode_hint: str
     casino_hint: str = ""
     chat_about: str = ""
     mood: str = ""
     grudges: dict[int, str] = field(default_factory=dict)  # person_id -> причина обиды
+    members: list[Person] = field(default_factory=list)  # все, кого она видела в этом чате
 
 
 def format_now(tz_name: str, now: datetime | None = None) -> str:
@@ -220,16 +244,21 @@ def build_prompt(ctx: PromptContext, s: Settings) -> str:
         parts.append("Стикеры (настроения): " + ", ".join(ctx.sticker_moods))
     if ctx.people:
         lines = []
-        for p, facts in ctx.people:
+        for p, facts, profile in ctx.people:
             name = p.name
             extra = f", в WhatsApp подписан(а) «{p.push_name}»" if p.nickname and p.push_name else ""
-            known = "; ".join(facts) if facts else "пока ничего не знаешь"
+            anketa = "; ".join(f"{k}: {v}" for k, v in profile.items())
+            known = " | ".join(x for x in (f"анкета — {anketa}" if anketa else "", "; ".join(facts)) if x)
+            known = known or "пока ничего не знаешь"
             grudge = ""
             if p.id in ctx.grudges:
                 reason = ctx.grudges[p.id]
                 grudge = f" — ТЫ НА НЕГО ОБИЖЕНА{': ' + reason if reason else ''}"
             lines.append(f"- {name} [{p.ref}]{extra}{grudge}: {known}")
-        parts.append("Люди и что ты о них помнишь (в инструментах указывай человека как p12 или по имени):\n" + "\n".join(lines))
+        parts.append("Люди: анкеты и что ты о них помнишь (в инструментах указывай человека как p12 или по имени):\n" + "\n".join(lines))
+    if ctx.members:
+        names = ", ".join(f"{m.name} [{m.ref}]" for m in ctx.members)
+        parts.append(f"Все, кого ты видела в этом чате ({len(ctx.members)}): {names}")
     if ctx.casino_hint:
         parts.append(ctx.casino_hint)
     parts.append("Лог чата (старые сверху):\n" + "\n".join(ctx.transcript))
