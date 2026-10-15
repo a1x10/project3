@@ -1,5 +1,8 @@
 # Всё поднимается одной командой:  docker compose up -d
 # Наружу ничего не торчит: порты привязаны к 127.0.0.1, вебхук идёт по внутренней сети docker.
+# Порты на хосте (18080 — Evolution, 18000 — бот) меняются в .env: EVOLUTION_HOST_PORT / BOT_HOST_PORT.
+
+name: stella-whatsapp
 
 services:
   postgres:
@@ -38,7 +41,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8080:8080"  # панель /manager — только через SSH-туннель
+      - "127.0.0.1:${EVOLUTION_HOST_PORT:-18080}:8080"  # панель /manager — только через SSH-туннель
     environment:
       SERVER_TYPE: http
       SERVER_PORT: 8080
@@ -84,7 +87,7 @@ services:
       DATA_DIR: /app/data
       STICKERS_DIR: /app/data/stickers
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BOT_HOST_PORT:-18000}:8000"
     volumes:
       - ./data:/app/data
 

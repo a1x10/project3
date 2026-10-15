@@ -48,9 +48,9 @@ docker compose exec bot python -m bot.setup --number 77771234567
 
 Или QR: `docker compose exec bot python -m bot.setup` → картинка появится в `data/qr.png` (скачайте `scp` и отсканируйте за ~40 секунд). Проверить: `python -m bot.setup --status`.
 
-Потом просто добавьте номер Стеллы в группу. Панель Evolution (`/manager`) — только через SSH-туннель: `ssh -L 8080:127.0.0.1:8080 user@server` → http://localhost:8080/manager.
+Потом просто добавьте номер Стеллы в группу. Панель Evolution (`/manager`) — только через SSH-туннель: `ssh -L 18080:127.0.0.1:18080 user@server` → http://localhost:18080/manager.
 
-`nginx` + Let's Encrypt в этой схеме не обязательны: вебхук идёт по внутренней сети Docker, порты 8080/8000 слушают только `127.0.0.1`. Конфиг на случай, если Evolution живёт на другом сервере: `deploy/nginx/stella.conf`.
+`nginx` + Let's Encrypt в этой схеме не обязательны: вебхук идёт по внутренней сети Docker, порты 18080/18000 слушают только `127.0.0.1` (меняются в `.env`: `EVOLUTION_HOST_PORT`, `BOT_HOST_PORT`). Конфиг на случай, если Evolution живёт на другом сервере: `deploy/nginx/stella.conf`.
 
 ## Как Стелла решает, отвечать ли
 
@@ -83,7 +83,7 @@ docker compose exec bot python -m bot.setup --number 77771234567
 
 - До **23.10.2026** — `LLM_BACKEND=agent_sdk` (Claude Agent SDK, тратит промокредиты), модель Sonnet 5.5, `effort=low`.
 - С `LLM_SWITCH_AT=2026-10-23` бот **сам** переключается на `messages_api` + Haiku 5.5 — ничего не надо менять руками.
-- `DAILY_BUDGET_USD`: после лимита Стелла перестаёт сама встревать и выжимать память, но на прямые обращения отвечает. Расход за день — в `GET /health`.
+- `DAILY_BUDGET_USD`: после лимита Стелла перестаёт сама встревать и выжимать память, но на прямые обращения отвечает. Расход за день — `curl localhost:18000/health`.
 - Интерфейс модели — `bot/llm/base.py` (`ask(system, prompt, tools) -> text`); чтобы подключить свою модель, достаточно ещё одной реализации.
 
 Безопасность агента: пишут посторонние люди, поэтому в Agent SDK `tools=[]` (никаких Bash/Read/Write/Edit/WebFetch/WebSearch), плюс `disallowed_tools`, `permission_mode=dontAsk`, без настроек и CLAUDE.md с диска, `cwd` — пустая папка. Доступны только наши инструменты: `remember`, `forget`, `find_person`, `set_nickname`, `remember_chat`, `casino`. Правила (чей баланс тратить, кому можно стирать факты) проверяет код, а не промпт.
