@@ -402,7 +402,8 @@ class DB:
             cond = or_(people.c.jid == jid, people.c.alt_jid == jid)
             if alt_jid:
                 cond = or_(cond, people.c.jid == alt_jid, people.c.alt_jid == alt_jid)
-            row = (await conn.execute(select(people).where(cond).order_by(people.c.alt_jid.is_(None), people.c.id))).first()
+            rows = (await conn.execute(select(people).where(cond).order_by(people.c.alt_jid.is_(None), people.c.id))).all()
+            row = await self._merge_rows(conn, rows) if len(rows) > 1 else (rows[0] if rows else None)
             if row:
                 values: dict[str, Any] = {"last_seen_at": now}
                 if push_name and push_name != row.push_name:
@@ -435,13 +436,15 @@ class DB:
     async def link_jids(self, phone_jid: str, lid: str) -> None:
         """Связать номер и LID одного человека (из списка участников группы), если он уже есть в базе."""
         async with self.engine.begin() as conn:
-            row = (
+            rows = (
                 await conn.execute(
                     select(people).where(or_(people.c.jid.in_([phone_jid, lid]), people.c.alt_jid.in_([phone_jid, lid])))
+                    .order_by(people.c.id)
                 )
-            ).first()
-            if not row:
+            ).all()
+            if not rows:
                 return
+            row = await self._merge_rows(conn, rows) if len(rows) > 1 else rows[0]
             values: dict[str, Any] = {}
             if not row.phone:
                 values["phone"] = "".join(ch for ch in phone_jid.split("@", 1)[0] if ch.isdigit()) or None
@@ -450,6 +453,68 @@ class DB:
                 values["alt_jid"] = other
             if values:
                 await conn.execute(update(people).where(people.c.id == row.id).values(**values))
+
+    async def _merge_rows(self, conn: Any, rows: list[Any]) -> Any:
+        """Один человек записан несколько раз (по номеру и по LID) — склеиваем в ту запись, где больше истории."""
+        counts = {}
+        for r in rows:
+            counts[r.id] = (await conn.execute(
+                select(func.coalesce(func.sum(members.c.msg_count), 0)).where(members.c.person_id == r.id)
+            )).scalar_one()
+        keep = max(rows, key=lambda r: (counts[r.id], -r.id))
+        for drop in rows:
+            if drop.id != keep.id:
+                await self._merge_person(conn, keep, drop)
+                keep = (await conn.execute(select(people).where(people.c.id == keep.id))).first()
+        return keep
+
+    async def _merge_person(self, conn: Any, keep: Any, drop: Any) -> None:
+        k, d = keep.id, drop.id
+        await conn.execute(update(messages).where(messages.c.person_id == d).values(person_id=k))
+        await conn.execute(update(facts).where(facts.c.person_id == d).values(person_id=k))
+        for row in (await conn.execute(select(members).where(members.c.person_id == d))).all():
+            mine = (await conn.execute(
+                select(members).where(members.c.person_id == k, members.c.chat_id == row.chat_id))).first()
+            if mine:
+                await conn.execute(update(members).where(members.c.person_id == k, members.c.chat_id == row.chat_id)
+                                   .values(msg_count=mine.msg_count + row.msg_count,
+                                           last_seen_at=max(mine.last_seen_at, row.last_seen_at)))
+            else:
+                await conn.execute(insert(members).values(chat_id=row.chat_id, person_id=k, msg_count=row.msg_count,
+                                                          last_seen_at=row.last_seen_at))
+        await conn.execute(delete(members).where(members.c.person_id == d))
+        for row in (await conn.execute(select(profiles).where(profiles.c.person_id == d))).all():
+            mine = (await conn.execute(
+                select(profiles).where(profiles.c.person_id == k, profiles.c.chat_id == row.chat_id))).first()
+            if mine:
+                merged = {**_json_dict(row.data), **_json_dict(mine.data)}  # при совпадении полей — новее у keep
+                await conn.execute(update(profiles).where(profiles.c.person_id == k, profiles.c.chat_id == row.chat_id)
+                                   .values(data=json.dumps(merged, ensure_ascii=False), updated_at=utcnow()))
+            else:
+                await conn.execute(insert(profiles).values(person_id=k, chat_id=row.chat_id, data=row.data,
+                                                           updated_at=row.updated_at))
+        await conn.execute(delete(profiles).where(profiles.c.person_id == d))
+        for row in (await conn.execute(select(wallets).where(wallets.c.person_id == d))).all():
+            mine = (await conn.execute(
+                select(wallets).where(wallets.c.person_id == k, wallets.c.chat_id == row.chat_id))).first()
+            values = {c.name: getattr(row, c.name) for c in wallets.c if c.name not in ("chat_id", "person_id")}
+            if mine is None:
+                await conn.execute(insert(wallets).values(chat_id=row.chat_id, person_id=k, **values))
+            elif row.balance > mine.balance:  # бананы не складываем — берём больший кошелёк
+                await conn.execute(update(wallets).where(wallets.c.person_id == k, wallets.c.chat_id == row.chat_id)
+                                   .values(**values))
+        await conn.execute(delete(wallets).where(wallets.c.person_id == d))
+        await conn.execute(delete(grudges).where(grudges.c.person_id == d))
+        await conn.execute(delete(people).where(people.c.id == d))
+        values: dict[str, Any] = {}
+        other = next((j for j in (drop.jid, drop.alt_jid) if j and j != keep.jid), None)
+        if other and not keep.alt_jid:
+            values["alt_jid"] = other
+        for col in ("phone", "push_name", "nickname"):
+            if not getattr(keep, col) and getattr(drop, col):
+                values[col] = getattr(drop, col)
+        if values:
+            await conn.execute(update(people).where(people.c.id == k).values(**values))
 
     async def find_person_by_jid(self, jid: str) -> Person | None:
         async with self.engine.connect() as conn:
@@ -812,6 +877,14 @@ class DB:
                 except IntegrityError:
                     await conn.execute(update(kv).where(kv.c.key == key).values(num=kv.c.num + delta))
             return (await conn.execute(select(kv.c.num).where(kv.c.key == key))).scalar_one()
+
+
+def _json_dict(raw: Any) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def chat_paused(chat: dict[str, Any], now: datetime | None = None) -> bool:

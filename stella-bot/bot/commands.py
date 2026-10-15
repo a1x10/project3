@@ -110,9 +110,9 @@ class Commands:
         if re.fullmatch(r"(казино|игры|как играть|помощь|помощь казино)", t):
             return CasinoResult(list(HELP))
         if re.fullmatch(r"(бонус|ежедневка|ежедневный бонус|дай бананов|халява)", t):
-            return await self.casino.bonus(chat_id, sender)
+            return self._no_follow_up(await self.casino.bonus(chat_id, sender))
         if re.fullmatch(r"(топ|рейтинг|богачи|лидеры|топ богачей)", t):
-            return await self.casino.top(chat_id)
+            return self._no_follow_up(await self.casino.top(chat_id))
         m = re.fullmatch(r"(?:баланс|сколько у меня бананов|мои бананы|кошелек)(?:\s+(.+))?", t)
         if m:
             target = sender
@@ -124,7 +124,7 @@ class Commands:
             return CasinoResult([f"у {target.name} {money(bal)}"])
         bet = parse_bet(t)  # раньше перевода: «кинь монетку 100» — это ставка
         if bet:
-            return await self.casino.play(chat_id, sender, bet)
+            return self._no_follow_up(await self.casino.play(chat_id, sender, bet))
         m = re.fullmatch(rf"(?:переведи|перевод|передай|скинь|кинь|отправь)\s+(?:(.+?)\s+{_AMOUNT}|{_AMOUNT}\s+(.+?)|{_AMOUNT})"
                          r"(?:\s*(?:бананов|банана|банан|🍌))?", t)
         if m:
@@ -143,6 +143,12 @@ class Commands:
             return await self.casino.grant(chat_id, target, amount)
 
         return None
+
+    @staticmethod
+    def _no_follow_up(res: CasinoResult) -> CasinoResult:
+        """После ставки/бонуса/топа следующая болтовня человека — не обязательно ей (не тратим модель)."""
+        res.follow_up = False
+        return res
 
     async def _is_admin(self, chat: dict[str, Any], sender: Person, admin: bool) -> bool:
         if admin:

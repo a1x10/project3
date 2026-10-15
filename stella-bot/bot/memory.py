@@ -45,7 +45,7 @@ class Memory:
         self._running: set[int] = set()
         self._tasks: set[asyncio.Task] = set()
         self._spawn = spawn or self._own_spawn
-        self._limiter = limiter or asyncio.Semaphore(1)  # общий с ответами лимит одновременных вызовов модели
+        self._limiter = limiter or asyncio.Semaphore(1)  # не больше одной выжимки за раз
 
     def _own_spawn(self, coro) -> None:
         # держим ссылку на задачу, иначе сборщик мусора может прибить её посреди работы

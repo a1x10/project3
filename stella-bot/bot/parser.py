@@ -224,6 +224,6 @@ def parse_upsert(payload: dict[str, Any]) -> Incoming | None:
         raw_key=dict(key),
         raw_message=message,
         bot_jid=bot_jid,
-        lid_addressing=is_group and (key.get("addressingMode") == "lid" or sender_jid.endswith("@lid")
-                                     or bool(sender_alt and sender_alt.endswith("@lid"))),
+        lid_addressing=is_group and (key.get("addressingMode") == "lid" if key.get("addressingMode") in ("lid", "pn")
+                                     else normalize_jid(key.get("participant") or "").endswith("@lid")),
     )

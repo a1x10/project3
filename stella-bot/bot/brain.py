@@ -60,6 +60,7 @@ FALLBACK_REPLIES = [
 ]
 GROUP_SYNC_EVERY = 6 * 3600  # раз в 6 часов обновляем список участников группы (админы, LID <-> номер)
 OWNER_FRESH_SECONDS = 300  # «владелец пишет сам» — только про свежие сообщения, не про старые после переподключения
+FOLLOW_UP_WINDOW = 60  # сколько секунд после её ответа вопрос «а ты…?» от другого человека может быть ей
 REFUSAL_REPLIES = ["об этом я говорить не буду", "давай лучше о чём-нибудь другом"]
 
 
@@ -164,7 +165,8 @@ class Brain:
         self.casino = Casino(db, settings.casino_start_balance, settings.casino_bonus, settings.casino_bonus_hours,
                              settings.casino_min_bet)
         self.llm_slots = asyncio.Semaphore(max(1, settings.llm_concurrency))
-        self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn, limiter=self.llm_slots)
+        # память — своим отдельным слотом, чтобы фоновая выжимка не задерживала живые ответы
+        self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin)
         self.system = system_prompt(settings)
@@ -184,6 +186,8 @@ class Brain:
         self.open_floor: dict[str, float] = {}  # чат -> до какого момента ответы считаются ответами ей
         self.group_admins: dict[str, tuple[float, set[str]]] = {}  # группа -> (когда узнали, jid админов)
         self.lid_chats: set[str] = set()  # группы, где участники видны по LID
+        self.last_reply: dict[str, float] = {}  # чат -> когда она последний раз ответила (через модель)
+        self._group_sync: dict[str, asyncio.Task] = {}  # идущие запросы участников группы
 
     # ---------- запуск ----------
     async def start(self) -> None:
@@ -286,16 +290,14 @@ class Brain:
             return
 
         chat = await self.db.get_or_create_chat(inc.instance or self.s.evolution_instance, inc.chat_jid, inc.is_group)
-        if inc.is_group:
-            if inc.lid_addressing:
-                self.lid_chats.add(inc.chat_jid)
-            synced = self.group_admins.get(inc.chat_jid)
-            if synced is None or time.monotonic() - synced[0] > GROUP_SYNC_EVERY:
-                # отметка сразу, чтобы не дёргать Evolution на каждое сообщение, пока идёт запрос
-                self.group_admins[inc.chat_jid] = (time.monotonic(), synced[1] if synced else set())
-                self.spawn(self.sync_group(chat["id"], inc.chat_jid))
+        if inc.is_group and inc.lid_addressing:
+            self.lid_chats.add(inc.chat_jid)
         sender = await self.db.upsert_person(inc.sender_jid, inc.push_name, phone_of(inc.sender_jid), inc.sender_alt)
         await self.db.touch_member(chat["id"], sender.id)
+        if inc.is_group:
+            synced = self.group_admins.get(inc.chat_jid)
+            if synced is None or time.monotonic() - synced[0] > GROUP_SYNC_EVERY:
+                self._start_group_sync(chat["id"], inc.chat_jid)
 
         text = await self._readable_mentions(inc)
         quoted_is_bot = False
@@ -321,6 +323,9 @@ class Brain:
         named, body = strip_name_prefix(text, self.stems)
         addressed = named or inc.is_dm
         if chat_paused(chat):
+            if await self._owner_takeover_active(chat):
+                self._decision(inc, "владелец сейчас пишет сам — молчит")
+                return
             if addressed and inc.kind == "text" and self.commands.is_unpause(body, lenient=inc.is_dm):
                 res = await self.commands.handle(inc, chat, sender, body, named=named)
                 if res:
@@ -339,7 +344,8 @@ class Brain:
         spoke = self.talking.get(inc.chat_jid, {})
         talking = now_m - spoke.get(inc.sender_jid, -1e9) < self.s.continue_window
         talking = talking or now_m < self.open_floor.get(inc.chat_jid, 0)  # отвечают на её вопрос
-        spoke_recently = now_m - max(spoke.values(), default=-1e9) < self.s.continue_window
+        spoke_recently = (now_m - self.last_reply.get(inc.chat_jid, -1e9) < min(self.s.continue_window, FOLLOW_UP_WINDOW)
+                          and (chat.get("chime_level") or self.s.chime_default) != "off")
         level = classify(inc, stems=self.stems, bot=self.bot, quoted_is_bot=quoted_is_bot, talking_with_sender=talking,
                          bot_spoke_recently=spoke_recently)
         if inc.kind == "audio":
@@ -380,8 +386,9 @@ class Brain:
         if added is None or self._age_seconds(inc) > OWNER_FRESH_SECONDS:
             return  # дубль или старое сообщение, пришедшее после переподключения
         if self.s.owner_takeover_minutes > 0:
-            await self.db.update_chat(chat["id"], paused_until=utcnow() + timedelta(minutes=self.s.owner_takeover_minutes),
-                                      last_bot_at=utcnow())
+            until = utcnow() + timedelta(minutes=self.s.owner_takeover_minutes)
+            await self.db.update_chat(chat["id"], paused_until=until, last_bot_at=utcnow())
+            await self.db.kv_set(f"takeover:{chat['id']}", until.isoformat())
             log.info("владелец пишет сам в %s — пауза %d мин", mask_phone(inc.chat_jid), self.s.owner_takeover_minutes)
 
     # ---------- участники групп ----------
@@ -414,13 +421,42 @@ class Brain:
         self.group_admins[jid] = (time.monotonic(), admins)
         return admins
 
+    def _start_group_sync(self, chat_id: int, jid: str) -> asyncio.Task:
+        task = self._group_sync.get(jid)
+        if task is None or task.done():
+            # отметка сразу, чтобы не дёргать Evolution на каждое сообщение, пока идёт запрос
+            prev = self.group_admins.get(jid)
+            self.group_admins[jid] = (time.monotonic(), prev[1] if prev else set())
+            task = asyncio.ensure_future(self.sync_group(chat_id, jid))
+            self._group_sync[jid] = task
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+        return task
+
     async def is_group_admin(self, chat: dict[str, Any], person: Person) -> bool:
         """Админ группы в WhatsApp (может, например, поставить Стеллу на паузу)."""
         if not chat.get("is_group"):
             return False
+        task = self._group_sync.get(chat["jid"])
         cached = self.group_admins.get(chat["jid"])
-        admins = cached[1] if cached and cached[1] else await self.sync_group(chat["id"], chat["jid"])
+        if task is not None and not task.done():
+            admins = await asyncio.shield(task)
+        elif cached and (cached[1] or time.monotonic() - cached[0] <= GROUP_SYNC_EVERY):
+            admins = cached[1]
+        else:
+            admins = await self._start_group_sync(chat["id"], chat["jid"])
         return bool({j for j in (person.jid, person.alt_jid) if j} & admins)
+
+    async def _owner_takeover_active(self, chat: dict[str, Any]) -> bool:
+        """Текущая пауза — потому что владелец сам пишет с её телефона (а не «стелла помолчи»)."""
+        row = await self.db.kv_get(f"takeover:{chat['id']}")
+        if not row or not row[0] or not chat.get("paused_until"):
+            return False
+        try:
+            until = datetime.fromisoformat(row[0])
+        except ValueError:
+            return False
+        return abs((until - chat["paused_until"]).total_seconds()) < 2
 
     async def _readable_mentions(self, inc: Incoming) -> str:
         """«@77771234567» в тексте -> «@Вася», чтобы модель понимала, о ком речь."""
@@ -450,8 +486,8 @@ class Brain:
             pass
         await self.outbox.send_result(chat, res, reply_to=inc, quote=chat["is_group"] and self._others_after(inc))
         await self.db.update_chat(chat["id"], last_bot_at=utcnow())
-        # «стелла баланс» -> «а как получить больше?» — это продолжение разговора с ней
-        self.talking.setdefault(inc.chat_jid, {})[inc.sender_jid] = time.monotonic()
+        if getattr(res, "follow_up", True):  # «стелла баланс» -> «а как получить больше?» — это ей
+            self.talking.setdefault(inc.chat_jid, {})[inc.sender_jid] = time.monotonic()
 
     def _others_after(self, inc: Incoming) -> bool:
         runner = self.runners.get(inc.chat_jid)
@@ -520,9 +556,15 @@ class Brain:
         """Несколько человек обратились к ней в одной пачке — каждому свой ответ (лишние — одним общим).
         Кто писал ей напрямую — получает ответ точно; кто, возможно, продолжал разговор — модель решит."""
         direct = {i.sender_jid for i, lvl in batch if lvl == DIRECT}
+        chat_jid = batch[-1][0].chat_jid
+        now = time.monotonic()
+        talk = self.talking.get(chat_jid, {})
+        floor_open = now < self.open_floor.get(chat_jid, 0)
         by_sender: dict[str, list[Incoming]] = {}
         for inc, lvl in batch:
-            if lvl == DIRECT or lvl == CONTINUE:
+            # «может, это ей» от того, с кем она не говорила, — только контекст, без отдельного ответа
+            ongoing = floor_open or now - talk.get(inc.sender_jid, -1e9) < self.s.continue_window
+            if lvl == DIRECT or (lvl == CONTINUE and (inc.sender_jid in direct or ongoing)):
                 by_sender.setdefault(inc.sender_jid, []).append(inc)
         parts = [(items, DIRECT if jid in direct else CONTINUE) for jid, items in by_sender.items()]
         cap = max(1, self.s.reply_each_max)
@@ -611,6 +653,7 @@ class Brain:
             sent += 1
         if sent or any(s.kind == "reaction" for s in segments):
             self._mark_talking(chat_jid, starred)
+            self.last_reply[chat_jid] = time.monotonic()
             await self.db.update_chat(chat["id"], last_bot_at=utcnow(), last_eval_at=utcnow())
         elif segments:
             log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
@@ -644,7 +687,7 @@ class Brain:
             except LLMRefusal:
                 raise
             except LLMError as exc:
-                side_effects = ctx is not None and (ctx.pre_messages or ctx.after)
+                side_effects = ctx is not None and (ctx.pre_messages or ctx.after or ctx.side_effects)
                 if attempt >= retries or side_effects:
                     raise
                 attempt += 1

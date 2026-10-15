@@ -50,6 +50,7 @@ class CasinoResult:
     delta: int = 0
     balance: int | None = None
     pause_after_first: bool = False  # «кручу…» — пауза — результат
+    follow_up: bool = True  # ждать продолжения разговора с этим человеком (после ставок — нет)
     extra: dict = field(default_factory=dict)
 
 

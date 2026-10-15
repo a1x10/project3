@@ -35,6 +35,8 @@ class ToolContext:
     pre_messages: list[CasinoResult] = field(default_factory=list)
     # Действия после ответа модели (опрос — после её сообщения «го голосовать»)
     after: list[Callable[[], Awaitable[Any]]] = field(default_factory=list)
+    # инструмент уже что-то необратимо сделал (удалил сообщение) — повторять вызов модели нельзя
+    side_effects: bool = False
 
 
 class ToolError(Exception):
@@ -174,6 +176,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
     async def delete_my_last_message(args: dict[str, Any]) -> str:
         if ctx.actions is None:
             raise ToolError("недоступно")
+        ctx.side_effects = True
         deleted = await ctx.actions.delete_mine(quoted_id=ctx.quoted_wa_id, text=args.get("text") or None)
         if not deleted:
             return "нечего удалять (или не получилось)"
