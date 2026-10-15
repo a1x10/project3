@@ -29,6 +29,7 @@ MEDIA_KINDS = {
     "contactMessage": "contact",
     "contactsArrayMessage": "contact",
     "pollCreationMessage": "poll",
+    "pollCreationMessageV2": "poll",
     "pollCreationMessageV3": "poll",
 }
 
@@ -42,6 +43,7 @@ WRAPPERS = (
     "groupMentionedMessage",
     "botInvokeMessage",
     "lottieStickerMessage",
+    "associatedChildMessage",  # фото из альбома (с подписью)
 )
 
 

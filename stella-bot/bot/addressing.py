@@ -21,9 +21,9 @@ _WORD = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
 _SUFFIXES = (
     "", "а", "ы", "е", "у", "ой", "ою", "очка", "очки", "очке", "очку", "очкой", "ка", "ки", "ке", "ку", "кой",
     "ечка", "ечке", "ечку", "юша", "юшка", "ик", "я", "ей", "ька", "ьки", "ьке", "ьку", "ькой",
-    "чка", "чки", "чке", "чку", "уля", "уся", "ус", "ушка", "аа", "ааа", "ах",
+    "чка", "чки", "чке", "чку", "уля", "уся", "ус", "ушка", "аа", "ааа", "ах", "ичка", "ички", "ичке", "ичку", "ичкой",
 )
-_LATIN = {"stella", "stela", "stells", "stels", "stellka", "stelka", "stel", "stelll"}
+_LATIN = {"stella", "stela", "stells", "stels", "stellka", "stelka", "stel", "stelll", "stelochka", "stelocka"}
 # латинские буквы, которые выглядят как русские: «Cтелла» с английской C
 _HOMOGLYPHS = str.maketrans({"a": "а", "c": "с", "e": "е", "o": "о", "p": "р", "x": "х", "y": "у", "k": "к",
                              "m": "м", "t": "т", "h": "н", "b": "в"})
@@ -48,13 +48,24 @@ def _fix_mixed(word: str) -> str:
     return word
 
 
+def _squeeze(word: str) -> str:
+    """«стеллааааа» -> «стела», «stellaa» -> «stela»: растянутые буквы не мешают узнать имя."""
+    word = re.sub(r"([а-яё])\1+", r"\1", word)
+    return re.sub(r"([la])\1+", r"\1", word)
+
+
 def mentions_name(text: str, stems: list[str]) -> bool:
+    squeezed_stems = sorted({_squeeze(s) for s in stems}, key=len, reverse=True)
     for word in _WORD.findall(norm(text)):
         word = _fix_mixed(word)
-        if word in _LATIN:
+        if word in _LATIN or _squeeze(word) in _LATIN:
             return True
         for stem in stems:
             if word.startswith(stem) and word[len(stem):] in _SUFFIXES:
+                return True
+        short = _squeeze(word)
+        for stem in squeezed_stems:
+            if short.startswith(stem) and short[len(stem):] in _SUFFIXES:
                 return True
     return False
 
@@ -105,11 +116,15 @@ def classify(
 
 
 _TO_HER = re.compile(r"(^|[^а-яё])(ты|тебя|тебе|тобой|твой|твоя|твое|твои|твою|твоего|сама)([^а-яё]|$)")
+# «объясни ещё раз», «а мне?» — просьба к тому, кто только что отвечал
+_ASK_HER = re.compile(r"^(а |ну |и |так )?(объясни|расскажи|помоги|скажи|покажи|продолжай|продолжи|напиши|повтори|"
+                      r"переведи|реши|подскажи|посоветуй|придумай|сделай|проверь|давай)([^а-яё]|$)"
+                      r"|(^|[^а-яё])(а мне|мне тоже|и мне)([^а-яё]|$)")
 
 
 def looks_like_question_to_her(text: str) -> bool:
     t = norm(text)
-    return bool(_TO_HER.search(t)) or t.rstrip(" )!").endswith("?")
+    return bool(_TO_HER.search(t) or _ASK_HER.search(t)) or t.rstrip(" )!").endswith("?")
 
 
 ARGUMENT_MARKERS = re.compile(

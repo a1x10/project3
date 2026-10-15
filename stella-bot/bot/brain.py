@@ -246,12 +246,15 @@ class Brain:
     # ---------- события ----------
     async def handle_payload(self, payload: dict[str, Any]) -> None:
         event = event_name(payload)
-        if event == "messages.upsert":
-            inc = parse_upsert(payload)
-            if inc:
-                await self.on_message(inc)
-        elif event == "connection.update":
-            await self.on_connection(payload.get("data") or {})
+        try:
+            if event == "messages.upsert":
+                inc = parse_upsert(payload)
+                if inc:
+                    await self.on_message(inc)
+            elif event == "connection.update":
+                await self.on_connection(payload.get("data") or {})
+        except Exception:
+            log.exception("ошибка при обработке события %s", event)
 
     def _seen(self, key: str) -> bool:
         if key in self.seen:
@@ -315,19 +318,18 @@ class Brain:
             self._decision(inc, "старое сообщение (пришло после переподключения) — только в историю")
             return
 
-        addressed, body = strip_name_prefix(text, self.stems)
-        if inc.is_dm:
-            addressed = True
+        named, body = strip_name_prefix(text, self.stems)
+        addressed = named or inc.is_dm
         if chat_paused(chat):
-            if addressed and inc.kind == "text" and self.commands.is_unpause(body):
-                res = await self.commands.handle(inc, chat, sender, body)
+            if addressed and inc.kind == "text" and self.commands.is_unpause(body, lenient=inc.is_dm):
+                res = await self.commands.handle(inc, chat, sender, body, named=named)
                 if res:
                     self.spawn(self._send_command_result(chat, inc, res))
                     return
             self._decision(inc, "чат на паузе (снять: «стелла вернись»)")
             return
         if addressed and inc.kind == "text":
-            res = await self.commands.handle(inc, chat, sender, body)
+            res = await self.commands.handle(inc, chat, sender, body, named=named)
             if res is not None:
                 self._decision(inc, "команда")
                 self.spawn(self._send_command_result(chat, inc, res))
@@ -345,11 +347,13 @@ class Brain:
                 self._decision(inc, "голосовое — прошу написать текстом")
                 self.spawn(self._send_command_result(chat, inc, self._canned(VOICE_REPLIES)))
             return
-        if level == AMBIENT and self.over_budget():
-            self._decision(inc, "дневной бюджет исчерпан — в разговоры сама не вписывается")
+        if level != DIRECT and self.over_budget():
+            self._decision(inc, "дневной бюджет исчерпан — отвечает только на прямые обращения")
             return
-        if level != AMBIENT:
-            self._decision(inc, f"обращение ({level}) — отвечаю")
+        if level == DIRECT:
+            self._decision(inc, "обращение — отвечаю")
+        elif level == CONTINUE:
+            self._decision(inc, "возможно, ей — модель решит, ответить ли")
         self.runners.setdefault(inc.chat_jid, ChatRunner(self, inc.chat_jid)).feed(inc, level)
 
     @staticmethod
@@ -446,6 +450,8 @@ class Brain:
             pass
         await self.outbox.send_result(chat, res, reply_to=inc, quote=chat["is_group"] and self._others_after(inc))
         await self.db.update_chat(chat["id"], last_bot_at=utcnow())
+        # «стелла баланс» -> «а как получить больше?» — это продолжение разговора с ней
+        self.talking.setdefault(inc.chat_jid, {})[inc.sender_jid] = time.monotonic()
 
     def _others_after(self, inc: Incoming) -> bool:
         runner = self.runners.get(inc.chat_jid)
@@ -495,28 +501,36 @@ class Brain:
         if mode == AMBIENT and not await self._ambient_ok(chat, batch):
             return
         if mode == CONTINUE and self.over_budget():
+            log.info("%s: дневной бюджет исчерпан — продолжение разговора пропущено", mask_phone(chat_jid))
             return
-        starred = [i for i, lvl in batch if lvl == mode] or [batch[-1][0]]
-        parts = self._split_by_sender(starred) if chat["is_group"] and mode == DIRECT else [starred]
+        if chat["is_group"] and mode == DIRECT:
+            parts = self._split_by_sender(batch)
+        else:
+            parts = [([i for i, lvl in batch if lvl == mode] or [batch[-1][0]], mode)]
         if len(parts) > 1:
             log.info("%s: обращаются сразу %d человек — отвечаю каждому", mask_phone(chat_jid), len(parts))
-        for n, part in enumerate(parts):
+        for n, (part, part_mode) in enumerate(parts):
             if n:
                 chat = await self.db.get_chat(chat["id"])
                 if chat_paused(chat):
                     return
-            await self._respond_part(chat, batch, part, mode, mark_read=n == 0, several=len(parts) > 1)
+            await self._respond_part(chat, batch, part, part_mode, mark_read=n == 0, several=len(parts) > 1)
 
-    def _split_by_sender(self, starred: list[Incoming]) -> list[list[Incoming]]:
-        """Несколько человек обратились к ней в одной пачке — каждому свой ответ (лишние — одним общим)."""
+    def _split_by_sender(self, batch: list[tuple[Incoming, str]]) -> list[tuple[list[Incoming], str]]:
+        """Несколько человек обратились к ней в одной пачке — каждому свой ответ (лишние — одним общим).
+        Кто писал ей напрямую — получает ответ точно; кто, возможно, продолжал разговор — модель решит."""
+        direct = {i.sender_jid for i, lvl in batch if lvl == DIRECT}
         by_sender: dict[str, list[Incoming]] = {}
-        for inc in starred:
-            by_sender.setdefault(inc.sender_jid, []).append(inc)
-        parts = list(by_sender.values())
+        for inc, lvl in batch:
+            if lvl == DIRECT or lvl == CONTINUE:
+                by_sender.setdefault(inc.sender_jid, []).append(inc)
+        parts = [(items, DIRECT if jid in direct else CONTINUE) for jid, items in by_sender.items()]
         cap = max(1, self.s.reply_each_max)
         if len(parts) > cap:
-            rest = {id(i) for p in parts[cap - 1:] for i in p}
-            parts = parts[: cap - 1] + [[i for i in starred if id(i) in rest]]
+            rest = parts[cap - 1:]
+            ids = {id(i) for items, _ in rest for i in items}
+            merged = [i for i, _ in batch if id(i) in ids]
+            parts = parts[: cap - 1] + [(merged, DIRECT if any(m == DIRECT for _, m in rest) else CONTINUE)]
         return parts
 
     async def _respond_part(self, chat: dict[str, Any], batch: list[tuple[Incoming, str]], starred: list[Incoming],
@@ -524,7 +538,10 @@ class Brain:
         chat_jid = chat["jid"]
         target = starred[-1]
         sender = await self.db.find_person_by_jid(target.sender_jid)
+        if sender is None and target.sender_alt:
+            sender = await self.db.find_person_by_jid(target.sender_alt)
         if sender is None:
+            log.warning("%s: не нашла в базе того, кому отвечать (%s)", mask_phone(chat_jid), mask_phone(target.sender_jid))
             return
 
         # «просто ассистент» не обижается и не игнорирует людей
@@ -541,7 +558,7 @@ class Brain:
 
         started = time.monotonic()
         llm_task = asyncio.create_task(
-            self.ask_llm(prompt=prompt, tools=tools, ctx=tool_ctx, retries=1 if mode == DIRECT else 0)
+            self.ask_llm(prompt=prompt, tools=tools, ctx=tool_ctx, retries=0 if mode == AMBIENT else 1)
         )
         typing_task = None
         if mode in (DIRECT, CONTINUE):
@@ -555,15 +572,20 @@ class Brain:
                 typing_task = asyncio.create_task(self._typing_until(chat_jid, llm_task))
         try:
             reply = await llm_task
-        except LLMRefusal:
-            if mode == DIRECT:
-                await self.outbox.send_result(chat, self._canned(REFUSAL_REPLIES), reply_to=target, quote=several)
-            return
         except LLMError as exc:
-            log.error("модель недоступна: %s", exc)
-            if mode == DIRECT:
-                await self.outbox.send_result(chat, self._canned(FALLBACK_REPLIES), reply_to=target, quote=several)
+            refused = isinstance(exc, LLMRefusal)
+            if not refused:
+                log.error("модель недоступна: %s", exc)
+            # то, что инструменты уже сделали (ставка в казино, опрос), всё равно показываем
+            done = await self._flush_tool_effects(chat, tool_ctx, target)
+            if mode == DIRECT and not done:
+                await self.outbox.send_result(chat, self._canned(REFUSAL_REPLIES if refused else FALLBACK_REPLIES),
+                                              reply_to=target, quote=several)
+                done = True
+            if not refused and mode == DIRECT:
                 await self.notify_owner("llm", f"⚠️ Стелла: модель не ответила ({exc}). Чат {mask_phone(chat_jid)}")
+            if done:
+                self._mark_talking(chat_jid, starred)  # «напиши ещё раз» — следующее сообщение тоже ей
             return
         finally:
             if typing_task:
@@ -588,13 +610,28 @@ class Brain:
             await action()
             sent += 1
         if sent or any(s.kind == "reaction" for s in segments):
-            now = time.monotonic()
-            talk = self.talking.setdefault(chat_jid, {})
-            for i in starred:
-                talk[i.sender_jid] = now
+            self._mark_talking(chat_jid, starred)
             await self.db.update_chat(chat["id"], last_bot_at=utcnow(), last_eval_at=utcnow())
         elif segments:
             log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
+
+    def _mark_talking(self, chat_jid: str, starred: list[Incoming]) -> None:
+        now = time.monotonic()
+        talk = self.talking.setdefault(chat_jid, {})
+        for i in starred:
+            talk[i.sender_jid] = now
+
+    async def _flush_tool_effects(self, chat: dict[str, Any], ctx: ToolContext, target: Incoming) -> bool:
+        sent = False
+        for res in ctx.pre_messages:
+            await self.outbox.send_result(chat, res, reply_to=target)
+            sent = True
+        for action in ctx.after:
+            await action()
+            sent = True
+        ctx.pre_messages.clear()
+        ctx.after.clear()
+        return sent
 
     async def ask_llm(self, *, prompt: str, tools: list, ctx: ToolContext | None = None, retries: int = 0):
         """Вызов модели: не больше LLM_CONCURRENCY одновременно; при сбое — ещё попытка (если ничего не успело уйти)."""
