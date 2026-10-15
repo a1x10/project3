@@ -1,0 +1,9 @@
+.env
+data
+tests
+.pytest_cache
+__pycache__
+*.pyc
+.git
+deploy
+README.md

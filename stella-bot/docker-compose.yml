@@ -1,0 +1,94 @@
+# Всё поднимается одной командой:  docker compose up -d
+# Наружу ничего не торчит: порты привязаны к 127.0.0.1, вебхук идёт по внутренней сети docker.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"  # панель /manager — только через SSH-туннель
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://localhost:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?задайте EVOLUTION_API_KEY в .env}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "false"
+      DEL_INSTANCE: "false"
+      LANGUAGE: en
+      TELEMETRY_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN,INFO
+      LOG_BAILEYS: error
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      QRCODE_LIMIT: 30
+      CONFIG_SESSION_PHONE_CLIENT: Stella
+      CONFIG_SESSION_PHONE_NAME: Chrome
+    volumes:
+      - evolution_instances:/evolution/instances
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - evolution
+    env_file: .env
+    environment:
+      EVOLUTION_URL: http://evolution:8080
+      BOT_WEBHOOK_URL: http://bot:8000/webhook
+      DATA_DIR: /app/data
+      STICKERS_DIR: /app/data/stickers
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  evolution_instances:
