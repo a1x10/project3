@@ -278,6 +278,21 @@ class DB:
             ).mappings().all()
             return [dict(r) for r in rows]
 
+    async def all_chats(self, instance: str) -> list[dict[str, Any]]:
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(select(chats).where(chats.c.instance == instance))).mappings().all()
+            return [dict(r) for r in rows]
+
+    async def unpause_all(self, instance: str) -> int:
+        """Снять паузу во всех чатах. Возвращает, сколько чатов было на паузе."""
+        async with self.engine.begin() as conn:
+            res = await conn.execute(
+                update(chats)
+                .where(chats.c.instance == instance, chats.c.paused_until.is_not(None), chats.c.paused_until > utcnow())
+                .values(paused_until=None)
+            )
+            return res.rowcount or 0
+
     async def count_user_messages(self, chat_id: int) -> int:
         async with self.engine.connect() as conn:
             return (
@@ -348,6 +363,11 @@ class DB:
                 delete(grudges).where(grudges.c.chat_id == chat_id, grudges.c.person_id == person_id)
             )
             return bool(res.rowcount)
+
+    async def clear_all_grudges(self) -> int:
+        async with self.engine.begin() as conn:
+            res = await conn.execute(delete(grudges).where(grudges.c.until > utcnow()))
+            return res.rowcount or 0
 
     async def active_grudges(self, chat_id: int, now: datetime | None = None) -> dict[int, str]:
         """person_id -> причина, для обид, которые ещё не прошли."""
