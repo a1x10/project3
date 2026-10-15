@@ -85,7 +85,7 @@ class Commands:
             return CasinoResult([f"ок, режим «{m.group(1)}»"])
 
         # --- удалить сообщение (ответом на него) ---
-        if re.fullmatch(r"(удали|удали это|удали сообщение|удали его|удаляй|снеси)", t):
+        if re.fullmatch(r"(удали|удаляй|снеси)( это| его| сообщение| это сообщение)?( пожалуйста| пж| плиз| плз)?", t):
             return await self._delete_quoted(inc, chat, admin)
 
         # --- стикеры ---
@@ -135,11 +135,12 @@ class Commands:
         """Своё сообщение Стелла удаляет по просьбе любого, чужое — только по просьбе админа."""
         if not inc.quoted_id:
             return CasinoResult(["ответь этой командой на сообщение, которое удалить"])
-        mine = await self.db.is_bot_message(inc.quoted_id)
+        mine = await self.db.is_stella_message(inc.quoted_id)
+        from_me = mine or await self.db.is_bot_message(inc.quoted_id)  # набранное владельцем с её телефона
         if not mine and not admin:
             return CasinoResult(["чужие сообщения удаляю только по просьбе админа 🙃"])
-        key: dict[str, Any] = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": mine}
-        if not mine and inc.quoted_sender:
+        key: dict[str, Any] = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": from_me}
+        if not from_me and inc.quoted_sender:
             key["participant"] = inc.quoted_sender
         try:
             await self.evo.delete_message(key)

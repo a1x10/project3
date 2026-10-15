@@ -105,6 +105,7 @@ class Settings:
     initiative_hours: str = field(default_factory=lambda: _str("INITIATIVE_HOURS", "10-22"))
     initiative_min_gap_hours: float = field(default_factory=lambda: _float("INITIATIVE_MIN_GAP_HOURS", 36))
     initiative_quiet_minutes: float = field(default_factory=lambda: _float("INITIATIVE_QUIET_MINUTES", 60))
+    initiative_open_minutes: float = field(default_factory=lambda: _float("INITIATIVE_OPEN_MINUTES", 30))
 
     # --- память ---
     memory_extract_every: int = field(default_factory=lambda: _int("MEMORY_EXTRACT_EVERY", 30))
@@ -133,11 +134,16 @@ class Settings:
         return self.llm_backend, self.llm_model
 
     def initiative_window(self) -> tuple[int, int]:
+        """(начало, конец) в часах; «20-0» — до полуночи, «0-24» или «10-10» — круглые сутки."""
         try:
             start, end = (int(x) for x in self.initiative_hours.split("-", 1))
-            return max(0, min(start, 23)), max(1, min(end, 24))
         except ValueError:
             return 10, 22
+        start = max(0, min(start, 23))
+        end = 24 if end in (0, 24) else max(1, min(end, 23))
+        if start == end:
+            return 0, 24
+        return start, end
 
     def is_admin(self, phone: str | None) -> bool:
         if not phone:

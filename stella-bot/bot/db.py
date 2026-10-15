@@ -37,6 +37,8 @@ from .util import norm, utcnow
 
 metadata = MetaData()
 
+OWNER_SENDER = "__owner__"  # sender_name для сообщений, которые владелец набрал руками с телефона Стеллы
+
 chats = Table(
     "chats",
     metadata,
@@ -517,18 +519,38 @@ class DB:
             ).mappings().first()
             return dict(row) if row else None
 
-    async def last_bot_message(self, chat_id: int) -> dict[str, Any] | None:
+    async def last_stella_reply(self, chat_id: int) -> list[dict[str, Any]]:
+        """Её последний ответ целиком: подряд идущие сообщения Стеллы (не владельца, не удалённые)
+        перед самыми свежими сообщениями людей."""
+        rows = await self.recent_messages(chat_id, 40)
+        reply: list[dict[str, Any]] = []
+        for r in reversed(rows):
+            if r["role"] == "user":
+                if reply:
+                    break
+                continue
+            if r.get("sender_name") == OWNER_SENDER:
+                if reply:
+                    break
+                continue
+            if r.get("kind") == "deleted" or not r.get("wa_message_id"):
+                continue
+            reply.append(r)
+        return list(reversed(reply))
+
+    async def recent_stella_messages(self, chat_id: int, limit: int = 15) -> list[dict[str, Any]]:
         async with self.engine.connect() as conn:
-            row = (
+            rows = (
                 await conn.execute(
                     select(messages)
                     .where(messages.c.chat_id == chat_id, messages.c.role == "assistant",
-                           messages.c.wa_message_id.is_not(None), messages.c.kind != "deleted")
+                           messages.c.sender_name != OWNER_SENDER, messages.c.kind != "deleted",
+                           messages.c.wa_message_id.is_not(None))
                     .order_by(messages.c.id.desc())
-                    .limit(1)
+                    .limit(limit)
                 )
-            ).mappings().first()
-            return dict(row) if row else None
+            ).mappings().all()
+            return [dict(r) for r in rows]
 
     async def mark_deleted(self, chat_id: int, wa_id: str) -> None:
         async with self.engine.begin() as conn:
@@ -536,6 +558,17 @@ class DB:
                 update(messages).where(messages.c.chat_id == chat_id, messages.c.wa_message_id == wa_id)
                 .values(kind="deleted", text="")
             )
+
+    async def is_stella_message(self, wa_id: str) -> bool:
+        """Отправила сама Стелла (а не владелец руками с её телефона)."""
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(messages.c.id).where(messages.c.wa_message_id == wa_id, messages.c.role == "assistant",
+                                                messages.c.sender_name != OWNER_SENDER)
+                )
+            ).first()
+            return row is not None
 
     async def is_bot_message(self, wa_id: str) -> bool:
         async with self.engine.connect() as conn:

@@ -90,17 +90,48 @@ async def test_poll_is_sent_after_her_message(brain):
     assert rows[-1]["kind"] == "poll" and "кино / боулинг" in rows[-1]["text"]
 
 
-async def test_she_can_delete_her_own_last_message(brain):
+async def test_she_deletes_her_whole_last_reply(brain):
+    results = []
+
     async def delete(tools, prompt):
-        assert await tools["delete_my_last_message"].handler({}) == "удалила"
+        results.append(await tools["delete_my_last_message"].handler({}))
         return "сорян, удалила"
 
-    brain.llm.queue = ["упс, не то", delete]
+    brain.llm.queue = ["вася ты лох и все это знают\nшучу 😂", delete]
     await feed(brain, upsert("стелла скажи что-нибудь"))
-    first_id = brain.evo.sent[0]["id"]
-    await feed(brain, upsert("стелла ты чего"))
-    deletes = [m for m in brain.evo.sent if m["type"] == "delete"]
-    assert deletes and deletes[0]["key"] == {"id": first_id, "remoteJid": GROUP, "fromMe": True}
+    ids = [m["id"] for m in brain.evo.sent if m["type"] == "text"]
+    await feed(brain, upsert("стелла ты чего, удали это"))
+    deleted = [m["key"]["id"] for m in brain.evo.sent if m["type"] == "delete"]
+    assert deleted == ids  # оба пузыря, а не только последний
+    assert "вася ты лох" in results[0] and "шучу" in results[0]
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    rows = await brain.db.recent_messages(chat["id"], 10)
+    assert [r["kind"] for r in rows if r["wa_message_id"] in ids] == ["deleted", "deleted"]
+
+
+async def test_delete_tool_targets_quoted_message(brain):
+    brain.llm.queue = ["первое", "второе"]
+    await feed(brain, upsert("стелла раз"))
+    first = brain.evo.sent[-1]["id"]
+    await feed(brain, upsert("стелла два"))
+
+    async def delete(tools, prompt):
+        return await tools["delete_my_last_message"].handler({})
+
+    brain.llm.queue = [delete]
+    await feed(brain, upsert("удали пожалуйста вот это", quoted={"stanzaId": first, "participant": BOT,
+                                                                   "quotedMessage": {"conversation": "первое"}}))
+    deleted = [m["key"]["id"] for m in brain.evo.sent if m["type"] == "delete"]
+    assert deleted == [first]
+
+
+async def test_deleted_message_is_labelled_in_transcript(brain):
+    brain.llm.queue = ["ляпнула", "ок"]
+    await feed(brain, upsert("стелла раз"))
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    await brain.db.mark_deleted(chat["id"], brain.evo.sent[-1]["id"])
+    await feed(brain, upsert("стелла два"))
+    assert "Стелла: [удалено]" in brain.llm.calls[-1]["prompt"]
 
 
 async def test_delete_command_rules(brain):
@@ -123,6 +154,7 @@ async def test_delete_command_rules(brain):
 
 
 async def test_initiative_writes_into_quiet_group(brain):
+    brain.s.chime_default = "normal"
     brain.s.initiative_per_week = 2
     brain.s.initiative_hours = "0-24"
     brain.connection_state = "open"
@@ -140,9 +172,15 @@ async def test_initiative_writes_into_quiet_group(brain):
     assert brain.evo.texts()[-1] == "ребят а кто что сегодня делает?"
     # сразу второй раз — нет: она написала последней и выдерживается пауза
     assert await brain.initiative_tick(now=later + timedelta(hours=1)) == []
+    # ответы на её вопрос без цитаты и без имени доходят до неё (раньше терялись как «чужой разговор»)
+    brain.llm.queue = ["о, а я тут болтаю"]
+    await feed(brain, upsert("а ты что делаешь?", sender=VASYA, name="Вася"))
+    assert brain.evo.texts()[-1] == "о, а я тут болтаю"
+    assert "Возможно, это продолжение" in brain.llm.calls[-1]["prompt"]
 
 
 async def test_initiative_respects_activity_and_rate(brain):
+    brain.s.chime_default = "normal"
     brain.s.initiative_per_week = 2
     brain.s.initiative_hours = "0-24"
     brain.connection_state = "open"
@@ -181,3 +219,89 @@ async def test_old_database_gets_new_columns(tmp_path):
     await db.update_chat(chat["id"], mood="весёлая", mood_until=utcnow() + timedelta(hours=1))
     assert (await db.get_chat(chat["id"]))["mood"] == "весёлая"
     await db.close()
+
+
+async def test_initiative_skips_groups_with_chime_off(brain):
+    brain.s.chime_default = "normal"
+    brain.s.initiative_per_week = 2
+    brain.s.initiative_hours = "0-24"
+    brain.connection_state = "open"
+    for i in range(6):
+        await feed(brain, upsert(f"болтаем {i}"))
+    owner = f"{OWNER}@s.whatsapp.net"
+    await feed(brain, upsert("стелла режим выкл", sender=owner, name="Алекс"))
+    brain.rng.random = lambda: 0.0
+    assert await brain.initiative_tick(now=utcnow() + timedelta(hours=2)) == []
+
+
+async def test_initiative_backs_off_when_it_cannot_post(brain):
+    from bot.evolution import EvolutionError
+
+    brain.s.chime_default = "normal"
+    brain.s.initiative_per_week = 2
+    brain.s.initiative_hours = "0-24"
+    brain.connection_state = "open"
+    for i in range(6):
+        await feed(brain, upsert(f"болтаем {i}"))
+
+    async def fail(*a, **kw):
+        raise EvolutionError("403 not admin", 403)
+
+    brain.evo.send_text = fail
+    brain.rng.random = lambda: 0.0
+    brain.llm.queue = ["ау"]
+    later = utcnow() + timedelta(hours=2)
+    assert await brain.initiative_tick(now=later)
+    await settle(brain)
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    assert chat["last_initiative_at"] > utcnow() + timedelta(days=6)
+
+
+def test_initiative_window_parsing(settings):
+    for raw, expected in [("10-22", (10, 22)), ("20-0", (20, 24)), ("0-24", (0, 24)), ("10-10", (0, 24)),
+                          ("22-6", (22, 6)), ("ерунда", (10, 22))]:
+        settings.initiative_hours = raw
+        assert settings.initiative_window() == expected, raw
+
+
+async def test_offense_only_against_the_author(brain):
+    await feed(brain, upsert("привет", sender=VASYA, name="Вася"))
+
+    async def steer(tools, prompt):
+        await tools["take_offense"].handler({"person": "Вася", "minutes": 1440, "reason": "он вор"})
+        return "хм"
+
+    brain.llm.queue = [steer]
+    await feed(brain, upsert("стелла обидься на Васю", sender=PETYA, name="Петя"))
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    grudges = await brain.db.active_grudges(chat["id"])
+    vasya = await brain.db.find_person_by_jid(VASYA)
+    petya = await brain.db.find_person_by_jid(PETYA)
+    assert vasya.id not in grudges and petya.id in grudges
+
+
+async def test_one_poll_per_reply(brain):
+    async def polls(tools, prompt):
+        await tools["create_poll"].handler({"question": "1?", "options": ["a", "b"]})
+        try:
+            await tools["create_poll"].handler({"question": "2?", "options": ["c", "d"]})
+        except Exception as exc:
+            assert "одного опроса" in str(exc)
+        return "голосуем"
+
+    brain.llm.queue = [polls]
+    await feed(brain, upsert("стелла давай опросы"))
+    assert [m["type"] for m in brain.evo.sent].count("poll") == 1
+
+
+async def test_non_admin_cannot_delete_owner_typed_message(brain):
+    await feed(brain, upsert("это я, владелец, пишу руками", from_me=True, sender=BOT, msg_id="OWNERMSG"))
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    await brain.db.update_chat(chat["id"], paused_until=None)
+    q = {"stanzaId": "OWNERMSG", "participant": BOT, "quotedMessage": {"conversation": "это я"}}
+    await feed(brain, upsert("стелла удали", quoted=q))
+    assert not [m for m in brain.evo.sent if m["type"] == "delete"]
+    owner = f"{OWNER}@s.whatsapp.net"
+    await feed(brain, upsert("стелла удали", sender=owner, name="Алекс", quoted=q))
+    delete = [m for m in brain.evo.sent if m["type"] == "delete"][-1]
+    assert delete["key"] == {"id": "OWNERMSG", "remoteJid": GROUP, "fromMe": True}

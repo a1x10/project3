@@ -19,7 +19,7 @@ class ChatActions(Protocol):
 
     async def send_poll(self, question: str, options: list[str], multiple: bool) -> None: ...
 
-    async def delete_my_last(self) -> bool: ...
+    async def delete_mine(self, *, quoted_id: str | None = None, text: str | None = None) -> list[str]: ...
 
 
 @dataclass
@@ -29,6 +29,8 @@ class ToolContext:
     people_refs: dict[str, Person]
     is_admin: bool
     actions: ChatActions | None = None
+    quoted_wa_id: str | None = None  # на какое сообщение ответили (для «удали это»)
+    polls_queued: int = 0
     # То, что инструмент хочет отправить в чат сам (результат ставки), до ответа модели
     pre_messages: list[CasinoResult] = field(default_factory=list)
     # Действия после ответа модели (опрос — после её сообщения «го голосовать»)
@@ -152,27 +154,41 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         options = list(dict.fromkeys(options))[:12]
         if not question or len(options) < 2:
             raise ToolError("нужен вопрос и минимум 2 варианта")
+        if ctx.polls_queued >= 1:
+            raise ToolError("одного опроса за раз хватит")
         multiple = bool(args.get("multiple"))
+        ctx.polls_queued += 1
         ctx.after.append(lambda: ctx.actions.send_poll(question, options, multiple))
         return "опрос уйдёт в чат сразу после твоего сообщения"
 
     async def delete_my_last_message(args: dict[str, Any]) -> str:
         if ctx.actions is None:
             raise ToolError("недоступно")
-        return "удалила" if await ctx.actions.delete_my_last() else "нечего удалять"
+        deleted = await ctx.actions.delete_mine(quoted_id=ctx.quoted_wa_id, text=args.get("text") or None)
+        if not deleted:
+            return "нечего удалять (или не получилось)"
+        return "удалила: " + " / ".join(f"«{t[:80]}»" for t in deleted)
 
     async def set_mood(args: dict[str, Any]) -> str:
         mood = str(args.get("mood") or "").strip()[:150]
         if not mood:
             raise ToolError("опиши настроение")
-        hours = min(max(float(args.get("hours") or 3), 0.25), 24)
+        try:
+            hours = min(max(float(args.get("hours") or 3), 0.25), 24)
+        except (TypeError, ValueError):
+            hours = 3.0
         await db.update_chat(ctx.chat_id, mood=mood, mood_until=utcnow() + timedelta(hours=hours))
         return f"настроение: {mood} (на {hours:g} ч)"
 
     async def take_offense(args: dict[str, Any]) -> str:
-        person = await resolve_person(db, ctx, args.get("person"))
-        minutes = min(max(int(args.get("minutes") or 60), 5), 24 * 60)
-        reason = str(args.get("reason") or "").strip()[:200]
+        # Обижается только на автора сообщения: чтобы её нельзя было натравить на третьего человека
+        person = ctx.sender
+        if person is None:
+            raise ToolError("обижаться можно только на того, кто тебе сейчас написал")
+        if person.id in await db.active_grudges(ctx.chat_id):
+            return f"ты и так обижена на {person.name}"
+        minutes = min(max(int(float(args.get("minutes") or 60)), 5), 24 * 60)
+        reason = str(args.get("reason") or "").strip()[:100]
         await db.set_grudge(ctx.chat_id, person.id, utcnow() + timedelta(minutes=minutes), reason)
         return f"ты обижена на {person.name} на {minutes} мин"
 
@@ -270,8 +286,10 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         ),
         ToolSpec(
             "delete_my_last_message",
-            "Удалить своё последнее сообщение в этом чате у всех (если ляпнула лишнее или ошиблась).",
-            {"type": "object", "properties": {}},
+            "Удалить своё сообщение у всех (если ляпнула лишнее или ошиблась). Без аргументов — весь твой "
+            "последний ответ; если тебя просят удалить ответом на твоё сообщение — удалится именно оно; "
+            "text — кусок текста, если нужно удалить конкретное. Вернёт, что удалено.",
+            {"type": "object", "properties": {"text": {"type": "string"}}},
             delete_my_last_message,
         ),
         ToolSpec(
@@ -289,15 +307,13 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         ),
         ToolSpec(
             "take_offense",
-            "Обидеться на человека, который тебя грубо оскорбил (не за дружеские шутки).",
+            "Обидеться на автора сообщения, если он тебя грубо оскорбил (не за дружеские шутки).",
             {
                 "type": "object",
                 "properties": {
-                    "person": {"type": "string", "description": person_hint},
                     "minutes": {"type": "integer", "description": "на сколько минут, 5–1440, по умолчанию 60"},
-                    "reason": {"type": "string"},
+                    "reason": {"type": "string", "description": "коротко, за что"},
                 },
-                "required": ["person"],
             },
             take_offense,
         ),
