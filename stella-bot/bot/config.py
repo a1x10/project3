@@ -91,7 +91,7 @@ class Settings:
     batch_window_max: float = field(default_factory=lambda: _float("BATCH_WINDOW_MAX", 5))
     batch_max_wait: float = field(default_factory=lambda: _float("BATCH_MAX_WAIT", 12))
     typing_chars_per_sec: float = field(default_factory=lambda: _float("TYPING_CHARS_PER_SEC", 9))
-    typo_rate: float = field(default_factory=lambda: _float("TYPO_RATE", 0.07))
+    typo_rate: float = field(default_factory=lambda: _float("TYPO_RATE", 0.0))  # 0 — пишет без опечаток
     typo_fix_rate: float = field(default_factory=lambda: _float("TYPO_FIX_RATE", 0.4))
     max_bubbles: int = field(default_factory=lambda: _int("MAX_BUBBLES", 6))
     rate_limit_per_min: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_MIN", 20))
@@ -99,6 +99,12 @@ class Settings:
     continue_window: float = field(default_factory=lambda: _float("CONTINUE_WINDOW", 120))
     history_window: int = field(default_factory=lambda: _int("HISTORY_WINDOW", 40))
     owner_takeover_minutes: int = field(default_factory=lambda: _int("OWNER_TAKEOVER_MINUTES", 30))
+
+    # --- сама пишет в группы ---
+    initiative_per_week: float = field(default_factory=lambda: _float("INITIATIVE_PER_WEEK", 2))
+    initiative_hours: str = field(default_factory=lambda: _str("INITIATIVE_HOURS", "10-22"))
+    initiative_min_gap_hours: float = field(default_factory=lambda: _float("INITIATIVE_MIN_GAP_HOURS", 36))
+    initiative_quiet_minutes: float = field(default_factory=lambda: _float("INITIATIVE_QUIET_MINUTES", 60))
 
     # --- память ---
     memory_extract_every: int = field(default_factory=lambda: _int("MEMORY_EXTRACT_EVERY", 30))
@@ -125,6 +131,13 @@ class Settings:
         if self.llm_switch_at and today >= self.llm_switch_at:
             return self.llm_backend_after, self.llm_model_after
         return self.llm_backend, self.llm_model
+
+    def initiative_window(self) -> tuple[int, int]:
+        try:
+            start, end = (int(x) for x in self.initiative_hours.split("-", 1))
+            return max(0, min(start, 23)), max(1, min(end, 24))
+        except ValueError:
+            return 10, 22
 
     def is_admin(self, phone: str | None) -> bool:
         if not phone:

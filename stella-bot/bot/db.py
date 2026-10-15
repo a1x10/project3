@@ -24,8 +24,10 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    inspect,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
@@ -51,7 +53,19 @@ chats = Table(
     Column("last_eval_at", DateTime),
     Column("created_at", DateTime, nullable=False, default=utcnow),
     Column("updated_at", DateTime, nullable=False, default=utcnow),
+    Column("mood", String(200)),  # настроение, которое Стелла сама себе поставила
+    Column("mood_until", DateTime),
+    Column("last_initiative_at", DateTime),  # когда сама последний раз завела разговор
     UniqueConstraint("instance", "jid", name="uq_chat"),
+)
+
+grudges = Table(  # на кого Стелла обижена
+    "grudges",
+    metadata,
+    Column("chat_id", Integer, ForeignKey("chats.id"), primary_key=True),
+    Column("person_id", Integer, ForeignKey("people.id"), primary_key=True),
+    Column("until", DateTime, nullable=False),
+    Column("reason", String(300), default=""),
 )
 
 people = Table(
@@ -139,6 +153,19 @@ kv = Table(
 )
 
 
+def _add_missing_columns(sync_conn: Any) -> None:
+    """Простая миграция: новые nullable-колонки добавляются в уже существующие таблицы."""
+    insp = inspect(sync_conn)
+    for table in metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name not in existing and col.nullable:
+                coltype = col.type.compile(dialect=sync_conn.dialect)
+                sync_conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}'))
+
+
 def to_async_url(url: str) -> str:
     if url.startswith("sqlite:///"):
         return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
@@ -188,6 +215,7 @@ class DB:
     async def init(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
+            await conn.run_sync(_add_missing_columns)
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -222,6 +250,47 @@ class DB:
         values["updated_at"] = utcnow()
         async with self.engine.begin() as conn:
             await conn.execute(update(chats).where(chats.c.id == chat_id).values(**values))
+
+    async def group_chats(self, instance: str) -> list[dict[str, Any]]:
+        async with self.engine.connect() as conn:
+            rows = (
+                await conn.execute(select(chats).where(chats.c.instance == instance, chats.c.is_group.is_(True)))
+            ).mappings().all()
+            return [dict(r) for r in rows]
+
+    async def count_user_messages(self, chat_id: int) -> int:
+        async with self.engine.connect() as conn:
+            return (
+                await conn.execute(
+                    select(func.count()).select_from(messages)
+                    .where(messages.c.chat_id == chat_id, messages.c.role == "user")
+                )
+            ).scalar_one()
+
+    # ---------- обиды ----------
+    async def set_grudge(self, chat_id: int, person_id: int, until: datetime, reason: str) -> None:
+        async with self.engine.begin() as conn:
+            await conn.execute(delete(grudges).where(grudges.c.chat_id == chat_id, grudges.c.person_id == person_id))
+            await conn.execute(insert(grudges).values(chat_id=chat_id, person_id=person_id, until=until,
+                                                      reason=reason[:300]))
+
+    async def clear_grudge(self, chat_id: int, person_id: int) -> bool:
+        async with self.engine.begin() as conn:
+            res = await conn.execute(
+                delete(grudges).where(grudges.c.chat_id == chat_id, grudges.c.person_id == person_id)
+            )
+            return bool(res.rowcount)
+
+    async def active_grudges(self, chat_id: int, now: datetime | None = None) -> dict[int, str]:
+        """person_id -> причина, для обид, которые ещё не прошли."""
+        async with self.engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(grudges.c.person_id, grudges.c.reason)
+                    .where(grudges.c.chat_id == chat_id, grudges.c.until > (now or utcnow()))
+                )
+            ).all()
+        return {r.person_id: r.reason or "" for r in rows}
 
     async def bump_extract_counter(self, chat_id: int) -> int:
         async with self.engine.begin() as conn:
@@ -447,6 +516,26 @@ class DB:
                 )
             ).mappings().first()
             return dict(row) if row else None
+
+    async def last_bot_message(self, chat_id: int) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(messages)
+                    .where(messages.c.chat_id == chat_id, messages.c.role == "assistant",
+                           messages.c.wa_message_id.is_not(None), messages.c.kind != "deleted")
+                    .order_by(messages.c.id.desc())
+                    .limit(1)
+                )
+            ).mappings().first()
+            return dict(row) if row else None
+
+    async def mark_deleted(self, chat_id: int, wa_id: str) -> None:
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                update(messages).where(messages.c.chat_id == chat_id, messages.c.wa_message_id == wa_id)
+                .values(kind="deleted", text="")
+            )
 
     async def is_bot_message(self, wa_id: str) -> bool:
         async with self.engine.connect() as conn:

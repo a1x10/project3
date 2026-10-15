@@ -84,6 +84,10 @@ class Commands:
             await self.db.update_chat(chat_id, chime_level=CHIME_LEVELS[m.group(1)])
             return CasinoResult([f"ок, режим «{m.group(1)}»"])
 
+        # --- удалить сообщение (ответом на него) ---
+        if re.fullmatch(r"(удали|удали это|удали сообщение|удали его|удаляй|снеси)", t):
+            return await self._delete_quoted(inc, chat, admin)
+
         # --- стикеры ---
         m = re.fullmatch(r"запомни\s+стикер\s+(.{2,40})", t)
         if m:
@@ -126,6 +130,24 @@ class Commands:
             return await self.casino.grant(chat_id, target, amount)
 
         return None
+
+    async def _delete_quoted(self, inc: Incoming, chat: dict[str, Any], admin: bool) -> CasinoResult:
+        """Своё сообщение Стелла удаляет по просьбе любого, чужое — только по просьбе админа."""
+        if not inc.quoted_id:
+            return CasinoResult(["ответь этой командой на сообщение, которое удалить"])
+        mine = await self.db.is_bot_message(inc.quoted_id)
+        if not mine and not admin:
+            return CasinoResult(["чужие сообщения удаляю только по просьбе админа 🙃"])
+        key: dict[str, Any] = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": mine}
+        if not mine and inc.quoted_sender:
+            key["participant"] = inc.quoted_sender
+        try:
+            await self.evo.delete_message(key)
+        except EvolutionError:
+            log.warning("не удалось удалить сообщение", exc_info=True)
+            return CasinoResult(["не получилось удалить 😔" + ("" if mine else " (меня надо сделать админом группы)")])
+        await self.db.mark_deleted(chat["id"], inc.quoted_id)
+        return CasinoResult(["удалила 🫡"])
 
     async def _learn_sticker(self, inc: Incoming, mood: str) -> CasinoResult:
         if inc.quoted_kind != "sticker" or not inc.quoted_id:

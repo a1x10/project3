@@ -144,11 +144,9 @@ def add_typo(text: str, rng: random.Random, rate: float, protect: set[str] | Non
 
 
 def casualize(text: str, rng: random.Random) -> str:
-    """Как пишут в чатах: точка в конце обычно не ставится, иногда с маленькой буквы."""
+    """Как пишут в чатах: точку в конце одиночного сообщения обычно не ставят."""
     if text.endswith(".") and not text.endswith("..") and rng.random() < 0.85:
         text = text[:-1]
-    if len(text) > 1 and text[0].isupper() and text[1].islower() and rng.random() < 0.5:
-        text = text[0].lower() + text[1:]
     return text
 
 

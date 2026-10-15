@@ -171,6 +171,24 @@ class Evolution:
         )
         return ((data or {}).get("key") or {}).get("id")
 
+    async def send_poll(self, number: str, question: str, options: list[str], *, multiple: bool = False,
+                        delay_ms: int = 0) -> str | None:
+        body: dict[str, Any] = {
+            "number": number,
+            "name": question,
+            "selectableCount": len(options) if multiple else 1,
+            "values": options,
+        }
+        if delay_ms:
+            body["delay"] = int(delay_ms)
+        data = await self._call("POST", f"/message/sendPoll/{self.instance}", json=body, timeout=delay_ms / 1000 + 40)
+        return ((data or {}).get("key") or {}).get("id")
+
+    async def delete_message(self, key: dict[str, Any]) -> None:
+        """Удалить сообщение у всех (чужое — только если бот админ группы)."""
+        body = {k: key[k] for k in ("id", "remoteJid", "fromMe", "participant") if key.get(k) is not None}
+        await self._call("DELETE", f"/chat/deleteMessageForEveryone/{self.instance}", json=body)
+
     async def send_reaction(self, key: dict[str, Any], emoji: str) -> None:
         clean_key = {k: key[k] for k in ("remoteJid", "fromMe", "id", "participant") if key.get(k) is not None}
         await self._call("POST", f"/message/sendReaction/{self.instance}", json={"key": clean_key, "reaction": emoji})
