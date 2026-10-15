@@ -8,11 +8,14 @@ from typing import Any
 
 import httpx
 
-from .util import mask_phone
+from .util import mask_phone, normalize_jid
 
 log = logging.getLogger("stella.evolution")
 
 WEBHOOK_EVENTS = ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+# Этот текст Evolution сам отправляет тем, кто звонит, — бот не должен принять его за «владелец пишет сам»
+MSG_CALL = "сейчас не могу ответить на звонок, напишите, пожалуйста"
+POLL_MAX_OPTIONS = 10  # больше Evolution не принимает
 
 
 class EvolutionError(RuntimeError):
@@ -37,6 +40,7 @@ class Evolution:
         self, method: str, path: str, *, json: Any = None, params: Any = None, timeout: float | None = None
     ) -> Any:
         last_exc: Exception | None = None
+        sending = path.startswith("/message/")
         for attempt in range(3):
             try:
                 resp = await self.http.request(
@@ -44,6 +48,9 @@ class Evolution:
                 )
             except httpx.TransportError as exc:  # сеть/контейнер перезапускается
                 last_exc = exc
+                # сообщение могло уже уйти, а ответ просто не дождались — повтор дал бы дубль
+                if sending and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    break
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
             if resp.status_code >= 500 and attempt < 2:
@@ -97,7 +104,7 @@ class Evolution:
                 "readStatus": False,
                 "syncFullHistory": False,
                 "rejectCall": True,
-                "msgCall": "сейчас не могу ответить на звонок, напишите, пожалуйста",
+                "msgCall": MSG_CALL,
             },
         )
 
@@ -136,9 +143,23 @@ class Evolution:
         data = await self._call("GET", f"/instance/connectionState/{self.instance}")
         return str((data.get("instance") or {}).get("state") or data.get("state") or "unknown")
 
-    async def group_subject(self, group_jid: str) -> str | None:
+    async def group_info(self, group_jid: str) -> dict[str, Any]:
+        """Название и участники группы: [{id, phoneNumber?, lid?, admin}] (в LID-группах id — это LID)."""
         data = await self._call("GET", f"/group/findGroupInfos/{self.instance}", params={"groupJid": group_jid})
-        return data.get("subject") if isinstance(data, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    async def group_subject(self, group_jid: str) -> str | None:
+        return (await self.group_info(group_jid)).get("subject")
+
+    async def own_jids(self) -> list[str]:
+        """Свой номер и свой LID (по LID её отмечают через @ в группах). [] если Evolution не умеет."""
+        try:
+            data = await self._call("POST", f"/baileys/getAuthState/{self.instance}", json={})
+        except EvolutionError as exc:
+            log.info("не удалось узнать свой LID: %s", exc)
+            return []
+        me = (data or {}).get("me") or {}
+        return [normalize_jid(me[k]) for k in ("id", "lid") if isinstance(me.get(k), str) and "@" in me[k]]
 
     # ---------- отправка ----------
     async def send_text(
@@ -161,7 +182,7 @@ class Evolution:
             body["mentioned"] = mentioned
         if mentions_everyone:
             body["mentionsEveryOne"] = True
-        data = await self._call("POST", f"/message/sendText/{self.instance}", json=body, timeout=delay_ms / 1000 + 40)
+        data = await self._call("POST", f"/message/sendText/{self.instance}", json=body, timeout=delay_ms / 1000 + 60)
         log.debug("sent text to %s", mask_phone(number))
         return ((data or {}).get("key") or {}).get("id")
 
@@ -176,6 +197,7 @@ class Evolution:
 
     async def send_poll(self, number: str, question: str, options: list[str], *, multiple: bool = False,
                         delay_ms: int = 0) -> str | None:
+        options = list(dict.fromkeys(o.strip() for o in options if o and o.strip()))[:POLL_MAX_OPTIONS]
         body: dict[str, Any] = {
             "number": number,
             "name": question,

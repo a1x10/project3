@@ -20,9 +20,15 @@ AMBIENT = "ambient"
 _WORD = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
 _SUFFIXES = (
     "", "а", "ы", "е", "у", "ой", "ою", "очка", "очки", "очке", "очку", "очкой", "ка", "ки", "ке", "ку", "кой",
-    "ечка", "ечке", "ечку", "юша", "юшка", "ик",
+    "ечка", "ечке", "ечку", "юша", "юшка", "ик", "я", "ей", "ька", "ьки", "ьке", "ьку", "ькой",
+    "чка", "чки", "чке", "чку", "уля", "уся", "ус", "ушка", "аа", "ааа", "ах",
 )
-_LATIN = {"stella", "stela", "stells", "stels", "stellka"}
+_LATIN = {"stella", "stela", "stells", "stels", "stellka", "stelka", "stel", "stelll"}
+# латинские буквы, которые выглядят как русские: «Cтелла» с английской C
+_HOMOGLYPHS = str.maketrans({"a": "а", "c": "с", "e": "е", "o": "о", "p": "р", "x": "х", "y": "у", "k": "к",
+                             "m": "м", "t": "т", "h": "н", "b": "в"})
+_CYR = re.compile(r"[а-яё]")
+_LAT = re.compile(r"[a-z]")
 
 
 def name_stems(bot_name: str) -> list[str]:
@@ -36,8 +42,15 @@ def name_stems(bot_name: str) -> list[str]:
     return sorted(stems, key=len, reverse=True)
 
 
+def _fix_mixed(word: str) -> str:
+    if _CYR.search(word) and _LAT.search(word):
+        return word.translate(_HOMOGLYPHS)
+    return word
+
+
 def mentions_name(text: str, stems: list[str]) -> bool:
     for word in _WORD.findall(norm(text)):
+        word = _fix_mixed(word)
         if word in _LATIN:
             return True
         for stem in stems:
@@ -69,6 +82,7 @@ def classify(
     bot: BotIdentity,
     quoted_is_bot: bool,
     talking_with_sender: bool,
+    bot_spoke_recently: bool = False,
 ) -> str:
     if inc.is_dm:
         return DIRECT
@@ -84,7 +98,18 @@ def classify(
     addressed_elsewhere = bool(inc.mentioned) or (inc.quoted_id is not None)
     if talking_with_sender and not addressed_elsewhere:
         return CONTINUE
+    # она только что говорила в чате, и кто-то другой спрашивает «а ты…?» — возможно, ей (модель решит сама)
+    if bot_spoke_recently and not addressed_elsewhere and inc.text and looks_like_question_to_her(inc.text):
+        return CONTINUE
     return AMBIENT
+
+
+_TO_HER = re.compile(r"(^|[^а-яё])(ты|тебя|тебе|тобой|твой|твоя|твое|твои|твою|твоего|сама)([^а-яё]|$)")
+
+
+def looks_like_question_to_her(text: str) -> bool:
+    t = norm(text)
+    return bool(_TO_HER.search(t)) or t.rstrip(" )!").endswith("?")
 
 
 ARGUMENT_MARKERS = re.compile(

@@ -5,6 +5,7 @@ import itertools
 import os
 import random
 import shutil
+import time
 from typing import Any
 
 import pytest
@@ -30,6 +31,8 @@ class FakeEvolution:
         self.calls: list[tuple[str, Any]] = []
         self._ids = itertools.count(1)
         self.media: bytes | None = None
+        self.participants: list[dict[str, Any]] = []
+        self.me: list[str] = []
 
     def _id(self) -> str:
         return f"BOTMSG{next(self._ids)}"
@@ -69,6 +72,13 @@ class FakeEvolution:
 
     async def group_subject(self, jid):
         return "Друзья"
+
+    async def group_info(self, jid):
+        self.calls.append(("group_info", jid))
+        return {"subject": "Друзья", "participants": list(self.participants)}
+
+    async def own_jids(self):
+        return list(self.me)
 
     async def fetch_instances(self):
         return [{"name": "stella", "ownerJid": BOT, "connectionStatus": "open"}]
@@ -197,7 +207,7 @@ def upsert(text: str | None = None, *, chat: str = GROUP, sender: str = VASYA, n
         "pushName": name,
         "message": message if message is not None else {"conversation": text},
         "messageType": message_type,
-        "messageTimestamp": 1760000000,
+        "messageTimestamp": int(time.time()),
         "source": "android",
     }
     ctx: dict[str, Any] = {}

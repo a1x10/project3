@@ -19,7 +19,7 @@ from .casino import Casino
 from .commands import Commands
 from .config import Settings
 from .db import DB, OWNER_SENDER, Person, chat_paused
-from .evolution import Evolution, EvolutionError
+from .evolution import MSG_CALL, Evolution, EvolutionError
 from .humanize import Segment, parse_reply
 from .llm.base import LLM, LLMError, LLMRefusal
 from .memory import Memory
@@ -36,7 +36,7 @@ from .persona import (
 )
 from .stickers import StickerLibrary
 from .tools import ToolContext, build_tools
-from .util import jid_digits, mask_phone, norm, phone_of, utcnow
+from .util import jid_digits, mask_phone, norm, normalize_jid, phone_of, utcnow
 
 log = logging.getLogger("stella.brain")
 
@@ -55,9 +55,11 @@ VOICE_REPLIES = [
     "не могу послушать голосовое. напишешь текстом?",
 ]
 FALLBACK_REPLIES = [
-    "минутку, сейчас отвечу",
-    "подожди немного, сейчас вернусь",
+    "что-то я зависла, напиши, пожалуйста, ещё раз через минутку",
+    "не получилось ответить, повтори, пожалуйста, чуть позже",
 ]
+GROUP_SYNC_EVERY = 6 * 3600  # раз в 6 часов обновляем список участников группы (админы, LID <-> номер)
+OWNER_FRESH_SECONDS = 300  # «владелец пишет сам» — только про свежие сообщения, не про старые после переподключения
 REFUSAL_REPLIES = ["об этом я говорить не буду", "давай лучше о чём-нибудь другом"]
 
 
@@ -161,9 +163,10 @@ class Brain:
         self.stickers = StickerLibrary(db, settings.stickers_dir, rng=self.rng)
         self.casino = Casino(db, settings.casino_start_balance, settings.casino_bonus, settings.casino_bonus_hours,
                              settings.casino_min_bet)
-        self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
+        self.llm_slots = asyncio.Semaphore(max(1, settings.llm_concurrency))
+        self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn, limiter=self.llm_slots)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
-        self.commands = Commands(db, self.casino, self.stickers, evo, settings)
+        self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin)
         self.system = system_prompt(settings)
         self.stems = name_stems(settings.bot_name)
         self.bot = BotIdentity(set())
@@ -179,6 +182,8 @@ class Brain:
         self._today_spend = 0.0
         self._background: list[asyncio.Task] = []
         self.open_floor: dict[str, float] = {}  # чат -> до какого момента ответы считаются ответами ей
+        self.group_admins: dict[str, tuple[float, set[str]]] = {}  # группа -> (когда узнали, jid админов)
+        self.lid_chats: set[str] = set()  # группы, где участники видны по LID
 
     # ---------- запуск ----------
     async def start(self) -> None:
@@ -205,6 +210,7 @@ class Brain:
                 inst = await self.evo.find_own_instance() or {}
                 if inst.get("ownerJid"):
                     await self.add_bot_jid(inst["ownerJid"])
+                await self.learn_own_jids()
                 if inst.get("connectionStatus"):
                     self.connection_state = inst["connectionStatus"]
                 log.info("вебхук Evolution настроен, WhatsApp: %s", self.connection_state)
@@ -217,7 +223,16 @@ class Brain:
                 await self.sleep(min(5 * (attempt + 1), 30))
         log.error("не удалось настроить Evolution — проверьте docker compose logs evolution")
 
+    async def learn_own_jids(self) -> None:
+        """Свой LID: без него не видно, что её отметили через @ в группах."""
+        try:
+            for jid in await self.evo.own_jids():
+                await self.add_bot_jid(jid)
+        except EvolutionError:
+            log.info("свой LID пока не узнать", exc_info=True)
+
     async def add_bot_jid(self, jid: str) -> None:
+        jid = normalize_jid(jid)
         if not jid or jid in self.bot.jids:
             return
         self.bot.jids.add(jid)
@@ -257,6 +272,7 @@ class Brain:
         if inc.bot_jid:
             await self.add_bot_jid(inc.bot_jid)
         if not self._allowed(inc):
+            self._decision(inc, "чат не разрешён (ALLOWED_GROUPS / ALLOW_DMS)")
             return
         if inc.from_me:
             if inc.is_group:  # в LID-группах так узнаём собственный LID бота (для @упоминаний)
@@ -267,8 +283,14 @@ class Brain:
             return
 
         chat = await self.db.get_or_create_chat(inc.instance or self.s.evolution_instance, inc.chat_jid, inc.is_group)
-        if inc.is_group and not chat.get("title"):
-            self.spawn(self._fetch_title(chat["id"], inc.chat_jid))
+        if inc.is_group:
+            if inc.lid_addressing:
+                self.lid_chats.add(inc.chat_jid)
+            synced = self.group_admins.get(inc.chat_jid)
+            if synced is None or time.monotonic() - synced[0] > GROUP_SYNC_EVERY:
+                # отметка сразу, чтобы не дёргать Evolution на каждое сообщение, пока идёт запрос
+                self.group_admins[inc.chat_jid] = (time.monotonic(), synced[1] if synced else set())
+                self.spawn(self.sync_group(chat["id"], inc.chat_jid))
         sender = await self.db.upsert_person(inc.sender_jid, inc.push_name, phone_of(inc.sender_jid), inc.sender_alt)
         await self.db.touch_member(chat["id"], sender.id)
 
@@ -289,6 +311,9 @@ class Brain:
             self.spawn(self._collect_sticker(inc))
         if not self.over_budget():
             await self.memory.note_message(chat["id"])
+        if self._age_seconds(inc) > self.s.reply_stale_minutes * 60:
+            self._decision(inc, "старое сообщение (пришло после переподключения) — только в историю")
+            return
 
         addressed, body = strip_name_prefix(text, self.stems)
         if inc.is_dm:
@@ -298,39 +323,100 @@ class Brain:
                 res = await self.commands.handle(inc, chat, sender, body)
                 if res:
                     self.spawn(self._send_command_result(chat, inc, res))
+                    return
+            self._decision(inc, "чат на паузе (снять: «стелла вернись»)")
             return
         if addressed and inc.kind == "text":
             res = await self.commands.handle(inc, chat, sender, body)
             if res is not None:
+                self._decision(inc, "команда")
                 self.spawn(self._send_command_result(chat, inc, res))
                 return
 
         now_m = time.monotonic()
-        talking = now_m - self.talking.get(inc.chat_jid, {}).get(inc.sender_jid, -1e9) < self.s.continue_window
+        spoke = self.talking.get(inc.chat_jid, {})
+        talking = now_m - spoke.get(inc.sender_jid, -1e9) < self.s.continue_window
         talking = talking or now_m < self.open_floor.get(inc.chat_jid, 0)  # отвечают на её вопрос
-        level = classify(inc, stems=self.stems, bot=self.bot, quoted_is_bot=quoted_is_bot, talking_with_sender=talking)
+        spoke_recently = now_m - max(spoke.values(), default=-1e9) < self.s.continue_window
+        level = classify(inc, stems=self.stems, bot=self.bot, quoted_is_bot=quoted_is_bot, talking_with_sender=talking,
+                         bot_spoke_recently=spoke_recently)
         if inc.kind == "audio":
             if level == DIRECT:
+                self._decision(inc, "голосовое — прошу написать текстом")
                 self.spawn(self._send_command_result(chat, inc, self._canned(VOICE_REPLIES)))
             return
         if level == AMBIENT and self.over_budget():
+            self._decision(inc, "дневной бюджет исчерпан — в разговоры сама не вписывается")
             return
+        if level != AMBIENT:
+            self._decision(inc, f"обращение ({level}) — отвечаю")
         self.runners.setdefault(inc.chat_jid, ChatRunner(self, inc.chat_jid)).feed(inc, level)
+
+    @staticmethod
+    def _age_seconds(inc: Incoming) -> float:
+        return max(0.0, time.time() - inc.timestamp) if inc.timestamp else 0.0
+
+    def _decision(self, inc: Incoming, what: str) -> None:
+        """Одна строка в лог на каждое входящее: видно, почему Стелла ответила или промолчала."""
+        where = "группа" if inc.is_group else "личка"
+        log.info("%s %s, от %s: %s", where, mask_phone(inc.chat_jid), mask_phone(inc.sender_jid), what)
 
     async def _on_own_message(self, inc: Incoming) -> None:
         """fromMe: либо наше же сообщение (эхо), либо владелец сам пишет с телефона -> пауза в этом чате."""
         if self.outbox.is_ours(inc.msg_id):
             return
+        if norm(inc.text) == norm(MSG_CALL):
+            return  # Evolution сам ответил тому, кто звонил, — это не владелец
         await self.sleep(3)  # ответ sendText мог ещё не вернуться
         if self.outbox.is_ours(inc.msg_id) or await self.db.is_bot_message(inc.msg_id):
             return
         chat = await self.db.get_or_create_chat(inc.instance or self.s.evolution_instance, inc.chat_jid, inc.is_group)
-        await self.db.add_message(chat["id"], "assistant", inc.text, wa_message_id=inc.msg_id,
-                                  sender_name=OWNER_SENDER, kind=inc.kind, quoted_wa_id=inc.quoted_id)
+        added = await self.db.add_message(chat["id"], "assistant", inc.text, wa_message_id=inc.msg_id,
+                                          sender_name=OWNER_SENDER, kind=inc.kind, quoted_wa_id=inc.quoted_id)
+        if added is None or self._age_seconds(inc) > OWNER_FRESH_SECONDS:
+            return  # дубль или старое сообщение, пришедшее после переподключения
         if self.s.owner_takeover_minutes > 0:
             await self.db.update_chat(chat["id"], paused_until=utcnow() + timedelta(minutes=self.s.owner_takeover_minutes),
                                       last_bot_at=utcnow())
             log.info("владелец пишет сам в %s — пауза %d мин", mask_phone(inc.chat_jid), self.s.owner_takeover_minutes)
+
+    # ---------- участники групп ----------
+    async def sync_group(self, chat_id: int, jid: str) -> set[str]:
+        """Название, админы, связи LID <-> номер и собственный LID — из списка участников группы."""
+        try:
+            info = await self.evo.group_info(jid)
+        except EvolutionError:
+            log.info("не удалось получить участников %s", mask_phone(jid), exc_info=True)
+            self.group_admins[jid] = (time.monotonic() - GROUP_SYNC_EVERY + 600, set())  # повторить через 10 мин
+            return set()
+        if info.get("subject"):
+            await self.db.update_chat(chat_id, title=str(info["subject"])[:256])
+        own_digits = {jid_digits(j) for j in self.bot.jids if j.endswith("@s.whatsapp.net")}
+        admins: set[str] = set()
+        for part in info.get("participants") or []:
+            if not isinstance(part, dict):
+                continue
+            ids = {normalize_jid(part.get(k)) for k in ("id", "phoneNumber", "lid", "jid") if isinstance(part.get(k), str)}
+            ids.discard("")
+            phone = next((j for j in ids if j.endswith("@s.whatsapp.net")), None)
+            lid = next((j for j in ids if j.endswith("@lid")), None)
+            if phone and lid:
+                if jid_digits(phone) in own_digits:
+                    await self.add_bot_jid(lid)
+                else:
+                    await self.db.link_jids(phone, lid)
+            if part.get("admin"):
+                admins |= ids
+        self.group_admins[jid] = (time.monotonic(), admins)
+        return admins
+
+    async def is_group_admin(self, chat: dict[str, Any], person: Person) -> bool:
+        """Админ группы в WhatsApp (может, например, поставить Стеллу на паузу)."""
+        if not chat.get("is_group"):
+            return False
+        cached = self.group_admins.get(chat["jid"])
+        admins = cached[1] if cached and cached[1] else await self.sync_group(chat["id"], chat["jid"])
+        return bool({j for j in (person.jid, person.alt_jid) if j} & admins)
 
     async def _readable_mentions(self, inc: Incoming) -> str:
         """«@77771234567» в тексте -> «@Вася», чтобы модель понимала, о ком речь."""
@@ -364,14 +450,6 @@ class Brain:
     def _others_after(self, inc: Incoming) -> bool:
         runner = self.runners.get(inc.chat_jid)
         return bool(runner and any(i.sender_jid != inc.sender_jid for i, _ in runner.pending))
-
-    async def _fetch_title(self, chat_id: int, jid: str) -> None:
-        try:
-            subject = await self.evo.group_subject(jid)
-            if subject:
-                await self.db.update_chat(chat_id, title=subject)
-        except EvolutionError:
-            pass
 
     async def _collect_sticker(self, inc: Incoming) -> None:
         try:
@@ -419,12 +497,38 @@ class Brain:
         if mode == CONTINUE and self.over_budget():
             return
         starred = [i for i, lvl in batch if lvl == mode] or [batch[-1][0]]
+        parts = self._split_by_sender(starred) if chat["is_group"] and mode == DIRECT else [starred]
+        if len(parts) > 1:
+            log.info("%s: обращаются сразу %d человек — отвечаю каждому", mask_phone(chat_jid), len(parts))
+        for n, part in enumerate(parts):
+            if n:
+                chat = await self.db.get_chat(chat["id"])
+                if chat_paused(chat):
+                    return
+            await self._respond_part(chat, batch, part, mode, mark_read=n == 0, several=len(parts) > 1)
+
+    def _split_by_sender(self, starred: list[Incoming]) -> list[list[Incoming]]:
+        """Несколько человек обратились к ней в одной пачке — каждому свой ответ (лишние — одним общим)."""
+        by_sender: dict[str, list[Incoming]] = {}
+        for inc in starred:
+            by_sender.setdefault(inc.sender_jid, []).append(inc)
+        parts = list(by_sender.values())
+        cap = max(1, self.s.reply_each_max)
+        if len(parts) > cap:
+            rest = {id(i) for p in parts[cap - 1:] for i in p}
+            parts = parts[: cap - 1] + [[i for i in starred if id(i) in rest]]
+        return parts
+
+    async def _respond_part(self, chat: dict[str, Any], batch: list[tuple[Incoming, str]], starred: list[Incoming],
+                            mode: str, *, mark_read: bool = True, several: bool = False) -> None:
+        chat_jid = chat["jid"]
         target = starred[-1]
         sender = await self.db.find_person_by_jid(target.sender_jid)
         if sender is None:
             return
 
-        grudges = await self.db.active_grudges(chat["id"])
+        # «просто ассистент» не обижается и не игнорирует людей
+        grudges = await self.db.active_grudges(chat["id"]) if self.s.prompt_style != "minimal" else {}
         extra_hint = ""
         if sender.id in grudges:
             reason = grudges[sender.id]
@@ -437,31 +541,28 @@ class Brain:
 
         started = time.monotonic()
         llm_task = asyncio.create_task(
-            self.llm.ask(system=self.system, prompt=prompt, tools=tools, max_turns=self.s.llm_max_turns)
+            self.ask_llm(prompt=prompt, tools=tools, ctx=tool_ctx, retries=1 if mode == DIRECT else 0)
         )
         typing_task = None
         if mode in (DIRECT, CONTINUE):
             await self._sleep_unless(llm_task, self.rng.uniform(self.s.reply_delay_min, self.s.reply_delay_max))
-            try:
-                await self.evo.mark_read([i.raw_key for i, _ in batch])
-            except EvolutionError:
-                pass
+            if mark_read:
+                try:
+                    await self.evo.mark_read([i.raw_key for i, _ in batch])
+                except EvolutionError:
+                    pass
             if mode == DIRECT:
                 typing_task = asyncio.create_task(self._typing_until(chat_jid, llm_task))
         try:
             reply = await llm_task
         except LLMRefusal:
-            if typing_task:
-                typing_task.cancel()
             if mode == DIRECT:
-                await self.outbox.send_result(chat, self._canned(REFUSAL_REPLIES))
+                await self.outbox.send_result(chat, self._canned(REFUSAL_REPLIES), reply_to=target, quote=several)
             return
         except LLMError as exc:
-            if typing_task:
-                typing_task.cancel()
             log.error("модель недоступна: %s", exc)
             if mode == DIRECT:
-                await self.outbox.send_result(chat, self._canned(FALLBACK_REPLIES))
+                await self.outbox.send_result(chat, self._canned(FALLBACK_REPLIES), reply_to=target, quote=several)
                 await self.notify_owner("llm", f"⚠️ Стелла: модель не ответила ({exc}). Чат {mask_phone(chat_jid)}")
             return
         finally:
@@ -472,13 +573,14 @@ class Brain:
         typed_for = max(0.0, time.monotonic() - started - self.s.reply_delay_max)
         for res in tool_ctx.pre_messages:
             await self.outbox.send_result(chat, res, reply_to=target)
-        segments = parse_reply(reply.text, self.s.max_bubbles)
+        # отвечая нескольким по очереди, каждому — покороче, чтобы не упереться в лимит сообщений
+        segments = parse_reply(reply.text, min(self.s.max_bubbles, 3) if several else self.s.max_bubbles)
         sent = 0
         if segments:
-            quote_first = chat["is_group"] and await self._newer_messages_exist(chat["id"], target)
+            quote_first = chat["is_group"] and (several or await self._newer_messages_exist(chat["id"], target))
             sent = await self.outbox.send_segments(chat, segments, reply_to=target, quote_first=quote_first,
                                                    people=await self._mention_pool(chat, people),
-                                                   already_typing_s=typed_for)
+                                                   already_typing_s=typed_for, prefer_lid=chat_jid in self.lid_chats)
         elif not tool_ctx.after:
             log.info("%s: молчит (%s)", mask_phone(chat_jid), mode)
             return
@@ -491,6 +593,26 @@ class Brain:
             for i in starred:
                 talk[i.sender_jid] = now
             await self.db.update_chat(chat["id"], last_bot_at=utcnow(), last_eval_at=utcnow())
+        elif segments:
+            log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
+
+    async def ask_llm(self, *, prompt: str, tools: list, ctx: ToolContext | None = None, retries: int = 0):
+        """Вызов модели: не больше LLM_CONCURRENCY одновременно; при сбое — ещё попытка (если ничего не успело уйти)."""
+        attempt = 0
+        while True:
+            try:
+                async with self.llm_slots:
+                    return await self.llm.ask(system=self.system, prompt=prompt, tools=tools,
+                                              max_turns=self.s.llm_max_turns)
+            except LLMRefusal:
+                raise
+            except LLMError as exc:
+                side_effects = ctx is not None and (ctx.pre_messages or ctx.after)
+                if attempt >= retries or side_effects:
+                    raise
+                attempt += 1
+                log.warning("модель не ответила (%s), пробую ещё раз", exc)
+                await self.sleep(self.rng.uniform(2, 5))
 
     async def _mention_pool(self, chat: dict[str, Any], people: list[Person]) -> list[Person]:
         """Кого можно отметить через @Имя: люди из контекста + все, кто писал в этот чат."""
@@ -581,7 +703,8 @@ class Brain:
             sticker_moods=await self.stickers.moods(),
             people=people_facts,
             transcript=transcript,
-            mode_hint=(MODE_HINTS[mode].format(name=self.s.bot_name) + (" " + extra_hint if extra_hint else "")),
+            mode_hint=(MODE_HINTS["direct_dm" if mode == DIRECT and not chat["is_group"] else mode]
+                       .format(name=self.s.bot_name) + (" " + extra_hint if extra_hint else "")),
             mood=current_mood(chat, self.s.timezone),
             grudges=grudges or {},
         )
@@ -653,7 +776,7 @@ class Brain:
                           actions=_ChatActions(self, chat))
         tools = [t for t in build_tools(self.db, self.casino, self.s, ctx) if t.name != "casino"]
         try:
-            reply = await self.llm.ask(system=self.system, prompt=prompt, tools=tools, max_turns=self.s.llm_max_turns)
+            reply = await self.ask_llm(prompt=prompt, tools=tools)
         except LLMError as exc:
             log.warning("инициатива: модель не ответила: %s", exc)
             return False
@@ -662,7 +785,8 @@ class Brain:
         sent = 0
         if segments:
             sent = await self.outbox.send_segments(chat, segments, reply_to=None, quote_first=False,
-                                                   people=await self._mention_pool(chat, people))
+                                                   people=await self._mention_pool(chat, people),
+                                                   prefer_lid=chat_jid in self.lid_chats)
         for action in ctx.after:
             await action()
             sent += 1
@@ -705,6 +829,8 @@ class Brain:
             return
         prev, self.connection_state = self.connection_state, state
         if state == "open":
+            if prev != "open":
+                self.spawn(self.learn_own_jids())
             if self.disconnected_at and time.monotonic() - self.disconnected_at > 120:
                 minutes = int((time.monotonic() - self.disconnected_at) / 60)
                 await self.notify_owner("conn", f"✅ Стелла снова в сети (не было ~{minutes} мин)")
@@ -747,7 +873,7 @@ class Brain:
         await self.alert(text)
         if self.s.owner_phone and self.connection_state == "open":
             try:
-                await self.evo.send_text(self.s.owner_phone, text)
+                self.outbox.remember_sent(await self.evo.send_text(self.s.owner_phone, text))
             except EvolutionError:
                 log.warning("не смогла написать владельцу", exc_info=True)
 

@@ -54,6 +54,7 @@ async def test_set_mood_shows_in_next_prompt(brain):
 
 
 async def test_offense_and_forgive(brain):
+    brain.s.prompt_style = "full"  # обиды — только в режиме с характером
     async def offended(tools, prompt):
         await tools["take_offense"].handler({"person": "я", "minutes": 30, "reason": "обозвал дурой"})
         return "ну и ладно"
@@ -266,6 +267,7 @@ def test_initiative_window_parsing(settings):
 
 
 async def test_offense_only_against_the_author(brain):
+    brain.s.prompt_style = "full"
     await feed(brain, upsert("привет", sender=VASYA, name="Вася"))
 
     async def steer(tools, prompt):

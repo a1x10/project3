@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .util import normalize_jid
+
 IGNORED_TYPES = {
     "protocolMessage",
     "senderKeyDistributionMessage",
@@ -31,7 +33,16 @@ MEDIA_KINDS = {
 }
 
 # Обёртки, внутри которых лежит настоящее сообщение
-WRAPPERS = ("ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension")
+WRAPPERS = (
+    "ephemeralMessage",
+    "viewOnceMessage",
+    "viewOnceMessageV2",
+    "viewOnceMessageV2Extension",
+    "documentWithCaptionMessage",
+    "groupMentionedMessage",
+    "botInvokeMessage",
+    "lottieStickerMessage",
+)
 
 
 def event_name(payload: dict[str, Any]) -> str:
@@ -63,6 +74,7 @@ class Incoming:
     raw_key: dict[str, Any] = field(default_factory=dict)
     raw_message: dict[str, Any] = field(default_factory=dict)
     bot_jid: str | None = None  # поле sender в вебхуке = номер самого бота
+    lid_addressing: bool = False  # группа в режиме LID (участники видны по LID, а не по номерам)
 
     @property
     def is_dm(self) -> bool:
@@ -115,14 +127,14 @@ def _text_and_kind(message: dict[str, Any], ctype: str | None) -> tuple[str, str
 
 def _pick_participant(key: dict[str, Any], data: dict[str, Any]) -> tuple[str, str | None]:
     """В группах WhatsApp всё чаще присылает LID (…@lid). Если есть номер — берём его."""
-    participant = key.get("participant") or data.get("participant") or ""
+    participant = normalize_jid(key.get("participant") or data.get("participant") or "")
     candidates = [
         key.get("participantAlt"),
         key.get("participantPn"),
         key.get("senderPn"),
         data.get("participantAlt"),
     ]
-    alt = next((c for c in candidates if isinstance(c, str) and c), None)
+    alt = next((normalize_jid(c) for c in candidates if isinstance(c, str) and c), None)
     if participant.endswith("@lid") and alt and alt.endswith("@s.whatsapp.net"):
         return alt, participant
     return participant, alt
@@ -135,14 +147,16 @@ def parse_upsert(payload: dict[str, Any]) -> Incoming | None:
     if not isinstance(data, dict):
         return None
     key = data.get("key") or {}
-    chat_jid = key.get("remoteJid") or ""
+    chat_jid = normalize_jid(key.get("remoteJid") or "")
     msg_id = key.get("id") or ""
     if not chat_jid or not msg_id:
         return None
     if chat_jid == "status@broadcast" or chat_jid.endswith("@broadcast") or chat_jid.endswith("@newsletter"):
         return None
-    if chat_jid.endswith("@lid") and key.get("remoteJidAlt"):
-        chat_jid = key["remoteJidAlt"]
+    dm_alt = next((normalize_jid(key[k]) for k in ("remoteJidAlt", "senderPn") if isinstance(key.get(k), str) and key[k]), None)
+    dm_lid = None
+    if chat_jid.endswith("@lid") and dm_alt and dm_alt.endswith("@s.whatsapp.net"):
+        dm_lid, chat_jid = chat_jid, dm_alt  # в личке отвечаем на номер, если он известен
 
     message = data.get("message") or {}
     if not isinstance(message, dict):
@@ -159,11 +173,12 @@ def parse_upsert(payload: dict[str, Any]) -> Incoming | None:
 
     is_group = chat_jid.endswith("@g.us")
     from_me = bool(key.get("fromMe"))
-    bot_jid = payload.get("sender") or None
+    bot_jid = normalize_jid(payload.get("sender")) or None
     if is_group:
         sender_jid, sender_alt = _pick_participant(key, data)
     else:
-        sender_jid, sender_alt = chat_jid, key.get("remoteJidAlt")
+        sender_jid = chat_jid
+        sender_alt = dm_lid or (dm_alt if dm_alt and dm_alt != chat_jid else None)
     if from_me and bot_jid:
         sender_jid = bot_jid
     if not sender_jid:
@@ -197,9 +212,9 @@ def parse_upsert(payload: dict[str, Any]) -> Incoming | None:
         text=text.strip(),
         timestamp=int(data.get("messageTimestamp") or 0),
         source=data.get("source"),
-        mentioned=list(ctx.get("mentionedJid") or []) if isinstance(ctx, dict) else [],
+        mentioned=[normalize_jid(j) for j in ctx.get("mentionedJid") or [] if isinstance(j, str)] if isinstance(ctx, dict) else [],
         quoted_id=(ctx.get("stanzaId") or None) if isinstance(ctx, dict) else None,
-        quoted_sender=(ctx.get("participant") or None) if isinstance(ctx, dict) else None,
+        quoted_sender=(normalize_jid(ctx.get("participant")) or None) if isinstance(ctx, dict) else None,
         quoted_text=q_text or None,
         quoted_kind=q_kind,
         quoted_message=quoted if isinstance(quoted, dict) and quoted else None,
@@ -207,4 +222,6 @@ def parse_upsert(payload: dict[str, Any]) -> Incoming | None:
         raw_key=dict(key),
         raw_message=message,
         bot_jid=bot_jid,
+        lid_addressing=is_group and (key.get("addressingMode") == "lid" or sender_jid.endswith("@lid")
+                                     or bool(sender_alt and sender_alt.endswith("@lid"))),
     )

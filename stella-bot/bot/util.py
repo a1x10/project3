@@ -16,6 +16,14 @@ def jid_digits(jid: str | None) -> str:
     return "".join(ch for ch in user if ch.isdigit())
 
 
+_DEVICE = re.compile(r":\d+(?=@)")
+
+
+def normalize_jid(jid: str | None) -> str:
+    """'77771234512:3@s.whatsapp.net' -> '77771234512@s.whatsapp.net' (без номера устройства)."""
+    return _DEVICE.sub("", jid.strip()) if jid else ""
+
+
 def is_phone_jid(jid: str | None) -> bool:
     return bool(jid) and jid.endswith("@s.whatsapp.net")
 

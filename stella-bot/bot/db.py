@@ -429,6 +429,25 @@ class DB:
             row = (await conn.execute(select(people).where(people.c.id == person_id))).first()
             return _person(row) if row else None
 
+    async def link_jids(self, phone_jid: str, lid: str) -> None:
+        """Связать номер и LID одного человека (из списка участников группы), если он уже есть в базе."""
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    select(people).where(or_(people.c.jid.in_([phone_jid, lid]), people.c.alt_jid.in_([phone_jid, lid])))
+                )
+            ).first()
+            if not row:
+                return
+            values: dict[str, Any] = {}
+            if not row.phone:
+                values["phone"] = "".join(ch for ch in phone_jid.split("@", 1)[0] if ch.isdigit()) or None
+            other = lid if row.jid == phone_jid else phone_jid if row.jid == lid else None
+            if other and not row.alt_jid:
+                values["alt_jid"] = other
+            if values:
+                await conn.execute(update(people).where(people.c.id == row.id).values(**values))
+
     async def find_person_by_jid(self, jid: str) -> Person | None:
         async with self.engine.connect() as conn:
             row = (
