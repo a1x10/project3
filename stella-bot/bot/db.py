@@ -397,18 +397,21 @@ class DB:
     ) -> Person:
         now = utcnow()
         async with self.engine.begin() as conn:
-            cond = people.c.jid == jid
+            # человека ищем по обоим адресам (номер и LID): иначе один человек раздваивается,
+            # и по одному из адресов его потом не найти — Стелла молча не ответит
+            cond = or_(people.c.jid == jid, people.c.alt_jid == jid)
             if alt_jid:
-                cond = or_(cond, people.c.jid == alt_jid, people.c.alt_jid == jid)
-            row = (await conn.execute(select(people).where(cond))).first()
+                cond = or_(cond, people.c.jid == alt_jid, people.c.alt_jid == alt_jid)
+            row = (await conn.execute(select(people).where(cond).order_by(people.c.alt_jid.is_(None), people.c.id))).first()
             if row:
                 values: dict[str, Any] = {"last_seen_at": now}
                 if push_name and push_name != row.push_name:
                     values["push_name"] = push_name
                 if phone and not row.phone:
                     values["phone"] = phone
-                if alt_jid and not row.alt_jid and alt_jid != row.jid:
-                    values["alt_jid"] = alt_jid
+                other = alt_jid if alt_jid and alt_jid != row.jid else (jid if jid != row.jid else None)
+                if other and not row.alt_jid:
+                    values["alt_jid"] = other
                 await conn.execute(update(people).where(people.c.id == row.id).values(**values))
                 row = (await conn.execute(select(people).where(people.c.id == row.id))).first()
                 return _person(row)
@@ -451,7 +454,8 @@ class DB:
     async def find_person_by_jid(self, jid: str) -> Person | None:
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(select(people).where(or_(people.c.jid == jid, people.c.alt_jid == jid)))
+                await conn.execute(select(people).where(or_(people.c.jid == jid, people.c.alt_jid == jid))
+                                   .order_by(people.c.alt_jid.is_(None), people.c.id))
             ).first()
             return _person(row) if row else None
 

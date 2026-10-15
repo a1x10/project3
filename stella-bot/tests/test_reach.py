@@ -286,3 +286,162 @@ async def test_diag_reports_pauses_and_unpauses(settings, monkeypatch):
     await diag.main(["--unpause"], out=lines.append)
     assert any("пауза снята в чатах: 1" in line for line in lines)
     assert not any("ПАУЗА" in line for line in lines)
+
+
+# ---------- второй круг: что нашла проверка ----------
+
+async def test_person_first_seen_by_lid_in_quote_still_gets_answer(brain):
+    """Петю сначала процитировали по LID, потом он пишет сам (LID + номер) — Стелла ему отвечает."""
+    lid = "888000@lid"
+    await feed(brain, upsert("смотрите что он написал", quoted={"stanzaId": "Q1", "participant": lid,
+                                                                  "quotedMessage": {"conversation": "лол"}}))
+    msg = upsert("стелла привет", sender=lid, name="Петя")
+    msg["data"]["key"]["participantAlt"] = PETYA
+    brain.llm.queue = ["привет, Петя"]
+    await feed(brain, msg)
+    assert brain.evo.texts()[-1] == "привет, Петя"
+    p1 = await brain.db.find_person_by_jid(PETYA)
+    p2 = await brain.db.find_person_by_jid(lid)
+    assert p1 and p2 and p1.id == p2.id
+
+
+async def test_known_person_quoted_by_lid_is_not_duplicated(brain):
+    msg = upsert("всем ку", sender="888000@lid", name="Петя")
+    msg["data"]["key"]["participantAlt"] = PETYA
+    await feed(brain, msg)
+    await feed(brain, upsert("ахах", quoted={"stanzaId": "Q2", "participant": "888000@lid",
+                                              "quotedMessage": {"conversation": "всем ку"}}))
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    members = await brain.db.chat_members(chat["id"], limit=50)
+    assert len([m for m in members if "888000@lid" in (m.jid, m.alt_jid)]) == 1
+
+
+async def test_follow_up_and_new_question_in_one_batch_both_handled(brain):
+    brain.llm.queue = ["4"]
+    await feed(brain, upsert("стелла сколько будет 2+2"))
+    brain.s.batch_window_min = brain.s.batch_window_max = 0.3
+    brain.s.batch_max_wait = 1
+    brain.llm.queue = ["потому что так считают", "привет, Петя"]
+    await brain.handle_payload(upsert("а почему так?"))  # Вася продолжает
+    await brain.handle_payload(upsert("стелла привет", sender=PETYA, name="Петя"))
+    await settle(brain)
+    assert len(brain.llm.calls) == 3
+    assert "Возможно, это продолжение" in brain.llm.calls[1]["prompt"]
+    assert brain.evo.texts()[-2:] == ["потому что так считают", "привет, Петя"]
+
+
+async def test_follow_up_after_command_goes_to_her(brain):
+    await feed(brain, upsert("стелла баланс"))
+    brain.llm.queue = ["бонус раз в 12 часов"]
+    await feed(brain, upsert("а как получить больше"))
+    assert len(brain.llm.calls) == 1
+
+
+async def test_bare_stop_in_dm_is_not_a_pause_and_au_unpauses(brain):
+    brain.llm.queue = ["ок, остановилась"]
+    await feed(brain, upsert("стоп", chat=DM))
+    chat = await brain.db.get_chat_by_jid("stella", DM)
+    assert not chat["paused_until"] and len(brain.llm.calls) == 1
+    await feed(brain, upsert("стелла помолчи", chat=DM))
+    chat = await brain.db.get_chat_by_jid("stella", DM)
+    assert chat["paused_until"]
+    await feed(brain, upsert("ау", chat=DM))
+    chat = await brain.db.get_chat_by_jid("stella", DM)
+    assert not chat["paused_until"] and "снова здесь" in brain.evo.texts()[-1]
+
+
+def test_stretched_names():
+    kw = dict(stems=name_stems("Стелла"), bot=BotIdentity({BOT}), quoted_is_bot=False, talking_with_sender=False)
+    for text in ["СТЕЛЛАААА", "Стелллла", "Стелличка", "stellaa", "Stell ау"]:
+        assert classify(parse_upsert(upsert(text)), **kw) == DIRECT, text
+    for text in ["steel", "стеллажи"]:
+        assert classify(parse_upsert(upsert(text)), **kw) != DIRECT, text
+
+
+def test_parser_album_child_and_poll_v2():
+    album = upsert(message={"messageContextInfo": {}, "associatedChildMessage": {"message": {
+        "imageMessage": {"caption": "стелла что это"}}}}, message_type="associatedChildMessage")
+    inc = parse_upsert(album)
+    assert inc and inc.kind == "image" and inc.text == "стелла что это"
+    poll = upsert(message={"pollCreationMessageV2": {"name": "куда идём", "options": [{"optionName": "кино"}]}},
+                  message_type="pollCreationMessageV2")
+    inc = parse_upsert(poll)
+    assert inc and inc.kind == "poll"
+
+
+async def test_casino_result_shown_even_if_model_fails_after(brain):
+    async def bet_then_fail(tools, prompt):
+        await tools["casino"].handler({"action": "play", "game": "coin", "choice": "heads", "amount": 100})
+        raise LLMError("timeout")
+
+    brain.llm.queue = [bet_then_fail]
+    await feed(brain, upsert("стелла поставь сотку на орла"))
+    texts = brain.evo.texts()
+    assert any("монетку" in t for t in texts)
+    assert not any("зависла" in t for t in texts)
+
+
+async def test_resend_after_fallback_is_heard(brain):
+    brain.llm.queue = [LLMError("a"), LLMError("b")]
+    await feed(brain, upsert("стелла помоги"))
+    assert "зависла" in brain.evo.texts()[-1] or "получилось" in brain.evo.texts()[-1]
+    brain.llm.queue = ["вот"]
+    await feed(brain, upsert("помоги пж"))  # без имени — но это ей
+    assert brain.evo.texts()[-1] == "вот"
+
+
+# ---------- бэкенды модели ----------
+
+async def test_agent_sdk_keeps_text_when_turns_run_out(monkeypatch, tmp_path):
+    import claude_agent_sdk as sdk
+
+    from bot.llm.agent_sdk import AgentSdkLLM
+
+    def fake_query(stop_reason=None, subtype="error_max_turns"):
+        async def q(prompt, options):
+            yield sdk.AssistantMessage(content=[sdk.TextBlock(text="запомнила, Аня!")], model="m",
+                                       stop_reason=stop_reason)
+            yield sdk.ResultMessage(subtype=subtype, duration_ms=1, duration_api_ms=1, is_error=True, num_turns=5,
+                                    session_id="s", total_cost_usd=0.01)
+            raise RuntimeError("Claude Code returned an error result (exit code: 1)")
+        return q
+
+    llm = AgentSdkLLM("claude-sonnet-5-5", sandbox_dir=str(tmp_path / "sb"))
+    monkeypatch.setattr(sdk, "query", fake_query())
+    reply = await llm.ask(system="s", prompt="p")
+    assert reply.text == "запомнила, Аня!" and reply.cost_usd == 0.01
+
+    from bot.llm.base import LLMRefusal
+    monkeypatch.setattr(sdk, "query", fake_query(stop_reason="refusal", subtype="success"))
+    try:
+        await llm.ask(system="s", prompt="p")
+        raise AssertionError("ожидали отказ")
+    except LLMRefusal:
+        pass
+
+
+async def test_messages_api_keeps_text_before_empty_last_turn():
+    from types import SimpleNamespace as NS
+
+    from bot.llm.base import ToolSpec
+    from bot.llm.messages_api import MessagesApiLLM
+
+    async def remember(args):
+        return "ок"
+
+    usage = NS(input_tokens=10, output_tokens=5, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    first = NS(stop_reason="tool_use", usage=usage, stop_details=None, content=[
+        NS(type="text", text="Привет, Аня!"), NS(type="tool_use", id="t1", name="remember", input={})])
+    second = NS(stop_reason="end_turn", usage=usage, stop_details=None, content=[])
+
+    class Fake:
+        def __init__(self):
+            self.items = [first, second]
+
+        async def create(self, **kw):
+            return self.items.pop(0)
+
+    fake = Fake()
+    llm = MessagesApiLLM("claude-haiku-5-5", client=NS(messages=fake, beta=NS(messages=fake)))
+    reply = await llm.ask(system="s", prompt="p", tools=[ToolSpec("remember", "d", {"type": "object"}, remember)])
+    assert reply.text == "Привет, Аня!"

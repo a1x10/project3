@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any, Sequence
 
-from .base import LLMError, LLMReply, ToolSpec
+from .base import LLMError, LLMRefusal, LLMReply, ToolSpec
 
 log = logging.getLogger("stella.llm.agent_sdk")
 
@@ -81,11 +81,13 @@ class AgentSdkLLM:
         options = self._options(system, tools, model, max_turns)
         last_text: list[str] = []
         result: Any = None
+        refused = False
 
         async def run() -> None:
-            nonlocal result, last_text
+            nonlocal result, last_text, refused
             async for msg in query(prompt=prompt, options=options):
                 if isinstance(msg, AssistantMessage):
+                    refused = refused or getattr(msg, "stop_reason", None) == "refusal"
                     texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
                     if texts:
                         last_text = texts
@@ -99,12 +101,20 @@ class AgentSdkLLM:
         except LLMError:
             raise
         except Exception as exc:
-            raise LLMError(f"agent sdk: {type(exc).__name__}: {exc}") from exc
+            # при ошибке (например, кончились ходы) CLI сначала отдаёт результат, а потом падает —
+            # тогда разбираем результат, иначе готовый текст ответа потеряется
+            if result is None:
+                raise LLMError(f"agent sdk: {type(exc).__name__}: {exc}") from exc
+            log.info("agent sdk завершился с ошибкой после результата: %s", exc)
 
         if result is None:
             raise LLMError("agent sdk: нет результата")
         cost = float(result.total_cost_usd or 0.0)
-        if result.is_error and result.subtype != "error_max_turns":
+        if refused or getattr(result, "stop_reason", None) == "refusal":
+            raise LLMRefusal("refusal")
+        if result.is_error:
+            if result.subtype == "error_max_turns" and last_text:
+                return LLMReply(text="\n".join(last_text), cost_usd=cost, model=model)
             raise LLMError(f"agent sdk: {result.subtype} {result.api_error_status or ''} {result.errors or ''}")
         text = result.result if isinstance(result.result, str) and result.result.strip() else "\n".join(last_text)
         return LLMReply(text=text or "", cost_usd=cost, model=model)

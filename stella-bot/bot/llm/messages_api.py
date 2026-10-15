@@ -82,7 +82,9 @@ class MessagesApiLLM:
             if response.stop_reason == "refusal":
                 raise LLMRefusal(str(getattr(response.stop_details, "category", "") or "refusal"))
 
-            texts = [b.text for b in response.content if b.type == "text"]
+            turn = [b.text for b in response.content if b.type == "text"]
+            if turn:  # последний ход после инструментов бывает пустым — тогда ответ в предыдущем
+                texts = turn
             if response.stop_reason != "tool_use":
                 break
 

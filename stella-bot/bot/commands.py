@@ -21,6 +21,8 @@ CHIME_LEVELS = {"выкл": "off", "тихий": "rare", "тихо": "rare", "р
                 "норм": "normal", "болтушка": "chatty", "активный": "chatty"}
 
 UNPAUSE = r"(вернись|проснись|говори|можешь говорить|отомри|ты тут)"
+# в личке на паузе хватит и «ау», и «стелла вернись пожалуйста»
+UNPAUSE_LENIENT = r"(^|[^а-яё])(вернись|проснись|говори|отомри|ты тут|ты здесь|ау)([^а-яё]|$)"
 _AMOUNT = r"(\d+(?:[.,]\d+)?\s*(?:к|k|тыс)?)"
 
 
@@ -57,11 +59,14 @@ class Commands:
         return None
 
     @staticmethod
-    def is_unpause(body: str) -> bool:
-        return bool(re.fullmatch(UNPAUSE, norm(body).strip(" !?.")))
+    def is_unpause(body: str, lenient: bool = False) -> bool:
+        t = norm(body).strip(" !?.")
+        return bool(re.fullmatch(UNPAUSE, t) or (lenient and re.search(UNPAUSE_LENIENT, t)))
 
-    async def handle(self, inc: Incoming, chat: dict[str, Any], sender: Person, body: str) -> CasinoResult | None:
-        """body — текст после обращения «стелла». None — это не команда, отдать модели."""
+    async def handle(self, inc: Incoming, chat: dict[str, Any], sender: Person, body: str,
+                     named: bool = True) -> CasinoResult | None:
+        """body — текст после обращения «стелла». None — это не команда, отдать модели.
+        named — к ней обратились по имени (в личке без имени «стоп» — просто слово, а не пауза)."""
         t = norm(body).strip(" !?.")
         chat_id = chat["id"]
         admin = self.s.is_admin(phone_of(sender.jid) or sender.phone)
@@ -70,13 +75,17 @@ class Commands:
         m = re.fullmatch(r"(помолчи|замолчи|заткнись|не пиши|отдохни|тихо|стоп)(?:\s+(\d+)\s*(?:мин\w*|м)?)?", t)
         if m and chat["is_group"] and not await self._is_admin(chat, sender, admin):
             return None  # в группе выключить её для всех могут только админы; остальным она ответит сама
+        if m and not chat["is_group"] and not named:
+            return None  # «стоп» в личке без «стелла» — обычное сообщение
         if m:
             minutes = min(int(m.group(2) or 30), 24 * 60)
             await self.db.update_chat(chat_id, paused_until=utcnow() + timedelta(minutes=minutes))
             return CasinoResult([f"хорошо, помолчу {minutes} мин", "если понадоблюсь, напишите «стелла вернись»"])
-        if re.fullmatch(UNPAUSE, t):
+        strict = bool(re.fullmatch(UNPAUSE, t))
+        if strict or (not chat["is_group"] and self.is_unpause(t, lenient=True)):
             was_paused = bool(chat.get("paused_until") and chat["paused_until"] > utcnow())
-            if was_paused or t != "ты тут":  # «ты тут?» без паузы — обычный вопрос для модели
+            # «ты тут?» без паузы — обычный вопрос для модели
+            if was_paused or (strict and t != "ты тут"):
                 await self.db.update_chat(chat_id, paused_until=None)
                 return CasinoResult(["я снова здесь" if was_paused else "я здесь"])
 
