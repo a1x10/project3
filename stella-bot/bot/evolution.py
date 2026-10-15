@@ -80,11 +80,14 @@ class Evolution:
     async def find_own_instance(self) -> dict[str, Any] | None:
         return next((i for i in await self.fetch_instances() if self.instance_name(i) == self.instance), None)
 
-    async def create_instance(self) -> dict[str, Any]:
+    async def create_instance(self, number: str | None = None) -> dict[str, Any]:
+        """number — номер бота: тогда Evolution сразу выдаёт код сопряжения вместо QR."""
+        body: dict[str, Any] = {"number": number} if number else {}
         return await self._call(
             "POST",
             "/instance/create",
             json={
+                **body,
                 "instanceName": self.instance,
                 "integration": "WHATSAPP-BAILEYS",
                 "qrcode": True,
@@ -119,6 +122,15 @@ class Evolution:
         """QR-код (base64/code) или код сопряжения, если передан номер телефона."""
         params = {"number": number} if number else None
         return await self._call("GET", f"/instance/connect/{self.instance}", params=params)
+
+    async def delete_instance(self) -> None:
+        """Выйти и удалить инстанс (ошибки игнорируются: инстанса может уже не быть)."""
+        for method, path in (("DELETE", f"/instance/logout/{self.instance}"),
+                             ("DELETE", f"/instance/delete/{self.instance}")):
+            try:
+                await self._call(method, path)
+            except EvolutionError:
+                pass
 
     async def connection_state(self) -> str:
         data = await self._call("GET", f"/instance/connectionState/{self.instance}")
