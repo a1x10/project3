@@ -77,6 +77,8 @@ class Settings:
     bot_project: str = field(default_factory=lambda: _str("BOT_PROJECT", "Codex"))
     swear_level: int = field(default_factory=lambda: _int("SWEAR_LEVEL", 0))
     timezone: str = field(default_factory=lambda: _str("BOT_TIMEZONE", "Asia/Almaty"))
+    # school — школьные чаты подростков (сленг, бережные правила); none — без этого блока
+    audience: str = field(default_factory=lambda: _str("BOT_AUDIENCE", "school"))
 
     # --- люди ---
     owner_phone: str = field(default_factory=lambda: _digits(_str("OWNER_PHONE")))

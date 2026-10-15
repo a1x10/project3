@@ -568,6 +568,7 @@ class Brain:
             chat_title=chat.get("title") or "",
             is_group=bool(chat["is_group"]),
             chat_notes=chat.get("notes") or "",
+            chat_about=chat.get("about") or "",
             sticker_moods=await self.stickers.moods(),
             people=people_facts,
             transcript=transcript,

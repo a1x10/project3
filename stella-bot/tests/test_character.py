@@ -310,6 +310,7 @@ async def test_non_admin_cannot_delete_owner_typed_message(brain):
 def test_calm_plain_style(settings, monkeypatch):
     from bot.config import Settings
 
+    settings.audience = "none"  # не школьный чат — спокойный взрослый стиль
     sp = system_prompt(settings)
     assert "простыми словами, спокойно" in sp
     assert "без мата, грубых слов и сленга" in sp
