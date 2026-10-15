@@ -58,6 +58,7 @@ chats = Table(
     Column("mood", String(200)),  # настроение, которое Стелла сама себе поставила
     Column("mood_until", DateTime),
     Column("last_initiative_at", DateTime),  # когда сама последний раз завела разговор
+    Column("about", Text),  # что владелец рассказал про этот чат (python -m bot.notes), не вытесняется
     UniqueConstraint("instance", "jid", name="uq_chat"),
 )
 
