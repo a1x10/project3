@@ -18,7 +18,7 @@ from .addressing import AMBIENT, CONTINUE, DIRECT, BotIdentity, classify, looks_
 from .casino import Casino
 from .commands import Commands
 from .config import Settings
-from .db import DB, Person, chat_paused
+from .db import DB, OWNER_SENDER, Person, chat_paused
 from .evolution import Evolution, EvolutionError
 from .humanize import Segment, parse_reply
 from .llm.base import LLM, LLMError, LLMRefusal
@@ -36,7 +36,7 @@ from .persona import (
 )
 from .stickers import StickerLibrary
 from .tools import ToolContext, build_tools
-from .util import jid_digits, mask_phone, phone_of, utcnow
+from .util import jid_digits, mask_phone, norm, phone_of, utcnow
 
 log = logging.getLogger("stella.brain")
 
@@ -124,18 +124,30 @@ class _ChatActions:
         except EvolutionError:
             log.warning("не удалось отправить опрос", exc_info=True)
 
-    async def delete_my_last(self) -> bool:
-        row = await self.brain.db.last_bot_message(self.chat["id"])
-        if not row:
-            return False
-        try:
-            await self.brain.evo.delete_message({"id": row["wa_message_id"], "remoteJid": self.chat["jid"],
-                                                 "fromMe": True})
-        except EvolutionError:
-            log.warning("не удалось удалить своё сообщение", exc_info=True)
-            return False
-        await self.brain.db.mark_deleted(self.chat["id"], row["wa_message_id"])
-        return True
+    async def delete_mine(self, *, quoted_id: str | None = None, text: str | None = None) -> list[str]:
+        """Удалить своё: процитированное сообщение, сообщение с этим текстом или весь последний ответ.
+        Возвращает тексты удалённого."""
+        db = self.brain.db
+        chat_id = self.chat["id"]
+        if quoted_id and await db.is_stella_message(quoted_id):
+            row = await db.get_message_by_wa_id(chat_id, quoted_id)
+            targets = [row] if row and row.get("kind") != "deleted" else []
+        elif text and text.strip():
+            needle = norm(text)
+            targets = [r for r in await db.recent_stella_messages(chat_id) if needle in norm(r.get("text") or "")][:1]
+        else:
+            targets = await db.last_stella_reply(chat_id)
+        deleted = []
+        for row in targets:
+            try:
+                await self.brain.evo.delete_message({"id": row["wa_message_id"], "remoteJid": self.chat["jid"],
+                                                     "fromMe": True})
+            except EvolutionError:
+                log.warning("не удалось удалить своё сообщение", exc_info=True)
+                continue
+            await db.mark_deleted(chat_id, row["wa_message_id"])
+            deleted.append(row.get("text") or f"[{row.get('kind')}]")
+        return deleted
 
 
 class Brain:
@@ -167,6 +179,7 @@ class Brain:
         self._spend_day = date.today()
         self._today_spend = 0.0
         self._background: list[asyncio.Task] = []
+        self.open_floor: dict[str, float] = {}  # чат -> до какого момента ответы считаются ответами ей
 
     # ---------- запуск ----------
     async def start(self) -> None:
@@ -293,7 +306,9 @@ class Brain:
                 self.spawn(self._send_command_result(chat, inc, res))
                 return
 
-        talking = time.monotonic() - self.talking.get(inc.chat_jid, {}).get(inc.sender_jid, -1e9) < self.s.continue_window
+        now_m = time.monotonic()
+        talking = now_m - self.talking.get(inc.chat_jid, {}).get(inc.sender_jid, -1e9) < self.s.continue_window
+        talking = talking or now_m < self.open_floor.get(inc.chat_jid, 0)  # отвечают на её вопрос
         level = classify(inc, stems=self.stems, bot=self.bot, quoted_is_bot=quoted_is_bot, talking_with_sender=talking)
         if inc.kind == "audio":
             if level == DIRECT:
@@ -312,7 +327,7 @@ class Brain:
             return
         chat = await self.db.get_or_create_chat(inc.instance or self.s.evolution_instance, inc.chat_jid, inc.is_group)
         await self.db.add_message(chat["id"], "assistant", inc.text, wa_message_id=inc.msg_id,
-                                  sender_name=self.s.bot_name, kind=inc.kind, quoted_wa_id=inc.quoted_id)
+                                  sender_name=OWNER_SENDER, kind=inc.kind, quoted_wa_id=inc.quoted_id)
         if self.s.owner_takeover_minutes > 0:
             await self.db.update_chat(chat["id"], paused_until=utcnow() + timedelta(minutes=self.s.owner_takeover_minutes),
                                       last_bot_at=utcnow())
@@ -418,7 +433,7 @@ class Brain:
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
                                is_admin=self.s.is_admin(phone_of(sender.jid) or sender.phone),
-                               actions=_ChatActions(self, chat))
+                               actions=_ChatActions(self, chat), quoted_wa_id=target.quoted_id)
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
 
         started = time.monotonic()
@@ -599,6 +614,8 @@ class Brain:
                 continue
             if chat_paused(chat, now):
                 continue
+            if (chat.get("chime_level") or self.s.chime_default) == "off":
+                continue  # «стелла режим выкл» — сама не пишет
             last = chat.get("last_initiative_at")
             if last and now - last < timedelta(hours=self.s.initiative_min_gap_hours):
                 continue
@@ -641,7 +658,13 @@ class Brain:
             sent += 1
         if sent:
             await self.db.update_chat(chat["id"], last_bot_at=utcnow())
+            # ответы на её вопрос в ближайшие минуты — это ответы ей, даже без цитаты и имени
+            self.open_floor[chat_jid] = time.monotonic() + self.s.initiative_open_minutes * 60
             log.info("%s: сама завела разговор", mask_phone(chat_jid))
+        elif segments:
+            # хотела написать, но не смогла (выгнали из группы, писать могут только админы) — неделю не пытается
+            await self.db.update_chat(chat["id"], last_initiative_at=utcnow() + timedelta(days=7))
+            log.warning("%s: не получилось написать в группу, пауза на неделю", mask_phone(chat_jid))
         return bool(sent)
 
     # ---------- расходы и алерты ----------
