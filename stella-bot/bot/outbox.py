@@ -127,6 +127,16 @@ class Outbox:
                                   sender_name=self.s.bot_name, kind="sticker")
         return True
 
+    async def send_poll(self, chat: dict[str, Any], question: str, options: list[str], multiple: bool) -> str | None:
+        if not await self.limiter.acquire(chat["jid"]):
+            return None
+        wa_id = await self.evo.send_poll(chat["jid"], question, options, multiple=multiple,
+                                         delay_ms=self._delay(self.rng.randint(1500, 3000)))
+        self.remember_sent(wa_id)
+        await self.db.add_message(chat["id"], "assistant", f"{question} (варианты: {' / '.join(options)})",
+                                  wa_message_id=wa_id, sender_name=self.s.bot_name, kind="poll")
+        return wa_id
+
     async def _react(self, target: Incoming | None, emoji: str) -> None:
         if target is None:
             return

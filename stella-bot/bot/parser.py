@@ -104,7 +104,10 @@ def _text_and_kind(message: dict[str, Any], ctype: str | None) -> tuple[str, str
     if isinstance(body, dict):
         text = body.get("caption") or body.get("name") or ""
         if kind == "poll":
+            options = [o.get("optionName", "") for o in body.get("options") or [] if isinstance(o, dict)]
             text = body.get("name") or ""
+            if options:
+                text = f"{text} (варианты: {' / '.join(o for o in options if o)})"
         seconds = body.get("seconds")
         return str(text), kind, int(seconds) if isinstance(seconds, (int, float)) else None
     return str(text), kind, None

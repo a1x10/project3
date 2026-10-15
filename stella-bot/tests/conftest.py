@@ -45,6 +45,15 @@ class FakeEvolution:
         self.sent.append({"type": "sticker", "to": number, "id": wa_id})
         return wa_id
 
+    async def send_poll(self, number, question, options, *, multiple=False, delay_ms=0):
+        wa_id = self._id()
+        self.sent.append({"type": "poll", "to": number, "question": question, "options": options,
+                          "multiple": multiple, "id": wa_id})
+        return wa_id
+
+    async def delete_message(self, key):
+        self.sent.append({"type": "delete", "key": key})
+
     async def send_reaction(self, key, emoji):
         self.sent.append({"type": "reaction", "key": key, "emoji": emoji})
 
@@ -120,6 +129,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         owner_phone=OWNER,
         webhook_secret="s3cret",
         llm_switch_at=None,
+        initiative_per_week=0,
     )
     values.update(overrides)
     for k, v in values.items():

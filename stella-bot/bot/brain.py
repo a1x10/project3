@@ -8,7 +8,8 @@ import logging
 import random
 import time
 from collections import OrderedDict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -24,7 +25,15 @@ from .llm.base import LLM, LLMError, LLMRefusal
 from .memory import Memory
 from .outbox import Outbox
 from .parser import Incoming, event_name, parse_upsert
-from .persona import MODE_HINTS, PromptContext, build_prompt, format_transcript, system_prompt
+from .persona import (
+    MODE_HINTS,
+    OFFENDED_HINT,
+    PromptContext,
+    build_prompt,
+    current_mood,
+    format_transcript,
+    system_prompt,
+)
 from .stickers import StickerLibrary
 from .tools import ToolContext, build_tools
 from .util import jid_digits, mask_phone, phone_of, utcnow
@@ -102,6 +111,33 @@ class ChatRunner:
                 log.exception("ошибка при ответе в %s", mask_phone(self.chat_jid))
 
 
+class _ChatActions:
+    """Что Стелла может сделать в чате сама: опрос, удалить своё сообщение."""
+
+    def __init__(self, brain: "Brain", chat: dict[str, Any]):
+        self.brain = brain
+        self.chat = chat
+
+    async def send_poll(self, question: str, options: list[str], multiple: bool) -> None:
+        try:
+            await self.brain.outbox.send_poll(self.chat, question, options, multiple)
+        except EvolutionError:
+            log.warning("не удалось отправить опрос", exc_info=True)
+
+    async def delete_my_last(self) -> bool:
+        row = await self.brain.db.last_bot_message(self.chat["id"])
+        if not row:
+            return False
+        try:
+            await self.brain.evo.delete_message({"id": row["wa_message_id"], "remoteJid": self.chat["jid"],
+                                                 "fromMe": True})
+        except EvolutionError:
+            log.warning("не удалось удалить своё сообщение", exc_info=True)
+            return False
+        await self.brain.db.mark_deleted(self.chat["id"], row["wa_message_id"])
+        return True
+
+
 class Brain:
     def __init__(self, settings: Settings, db: DB, evo: Evolution, llm: LLM, *,
                  rng: random.Random | None = None, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep):
@@ -130,6 +166,7 @@ class Brain:
         self.tasks: set[asyncio.Task] = set()
         self._spend_day = date.today()
         self._today_spend = 0.0
+        self._background: list[asyncio.Task] = []
 
     # ---------- запуск ----------
     async def start(self) -> None:
@@ -141,6 +178,8 @@ class Brain:
             self.bot.jids |= set(json.loads(saved[0]))
         if self.s.evolution_auto_setup:
             await self.ensure_instance()
+        if self.s.initiative_per_week > 0:
+            self._background.append(asyncio.create_task(self._initiative_loop()))
 
     async def ensure_instance(self) -> None:
         """Создать инстанс (если нет) и прописать вебхук. Ошибки не валят бота — Evolution может ещё стартовать."""
@@ -371,9 +410,15 @@ class Brain:
         if sender is None:
             return
 
-        prompt, people = await self._build_prompt(chat, batch, starred, mode)
+        grudges = await self.db.active_grudges(chat["id"])
+        extra_hint = ""
+        if sender.id in grudges:
+            reason = grudges[sender.id]
+            extra_hint = OFFENDED_HINT.format(name=sender.name, reason=f" ({reason})" if reason else "")
+        prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
-                               is_admin=self.s.is_admin(phone_of(sender.jid) or sender.phone))
+                               is_admin=self.s.is_admin(phone_of(sender.jid) or sender.phone),
+                               actions=_ChatActions(self, chat))
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
 
         started = time.monotonic()
@@ -414,12 +459,17 @@ class Brain:
         for res in tool_ctx.pre_messages:
             await self.outbox.send_result(chat, res, reply_to=target)
         segments = parse_reply(reply.text, self.s.max_bubbles)
-        if not segments:
+        sent = 0
+        if segments:
+            quote_first = chat["is_group"] and await self._newer_messages_exist(chat["id"], target)
+            sent = await self.outbox.send_segments(chat, segments, reply_to=target, quote_first=quote_first,
+                                                   people=people, already_typing_s=typed_for)
+        elif not tool_ctx.after:
             log.info("%s: молчит (%s)", mask_phone(chat_jid), mode)
             return
-        quote_first = chat["is_group"] and await self._newer_messages_exist(chat["id"], target)
-        sent = await self.outbox.send_segments(chat, segments, reply_to=target, quote_first=quote_first, people=people,
-                                               already_typing_s=typed_for)
+        for action in tool_ctx.after:  # опрос — после её сообщения
+            await action()
+            sent += 1
         if sent or any(s.kind == "reaction" for s in segments):
             now = time.monotonic()
             talk = self.talking.setdefault(chat_jid, {})
@@ -444,7 +494,8 @@ class Brain:
         return target.msg_id in ids and ids[-1] != target.msg_id
 
     async def _build_prompt(self, chat: dict[str, Any], batch: list[tuple[Incoming, str]], starred: list[Incoming],
-                            mode: str) -> tuple[str, list[Person]]:
+                            mode: str, *, grudges: dict[int, str] | None = None,
+                            extra_hint: str = "") -> tuple[str, list[Person]]:
         rows = await self.db.recent_messages(chat["id"], self.s.history_window)
         people_by_id: dict[int, Person] = {}
         order: list[int] = []
@@ -506,9 +557,92 @@ class Brain:
             sticker_moods=await self.stickers.moods(),
             people=people_facts,
             transcript=transcript,
-            mode_hint=MODE_HINTS[mode].format(name=self.s.bot_name),
+            mode_hint=(MODE_HINTS[mode].format(name=self.s.bot_name) + (" " + extra_hint if extra_hint else "")),
+            mood=current_mood(chat, self.s.timezone),
+            grudges=grudges or {},
         )
         return build_prompt(ctx, self.s), people_list
+
+    # ---------- сама заводит разговор ----------
+    INITIATIVE_TICK = 600  # раз в 10 минут бросаем кубик
+
+    def initiative_probability(self) -> float:
+        """Шанс на один тик, чтобы в среднем выходило INITIATIVE_PER_WEEK раз в неделю в «дневные» часы."""
+        start, end = self.s.initiative_window()
+        hours = end - start if end > start else 24 - start + end
+        ticks = hours * (3600 / self.INITIATIVE_TICK) * 7
+        return min(1.0, self.s.initiative_per_week / ticks) if ticks > 0 else 0.0
+
+    def _in_initiative_hours(self, now_utc: datetime) -> bool:
+        start, end = self.s.initiative_window()
+        hour = now_utc.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(self.s.timezone)).hour
+        return start <= hour < end if end > start else (hour >= start or hour < end)
+
+    async def _initiative_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.INITIATIVE_TICK)
+            try:
+                await self.initiative_tick()
+            except Exception:
+                log.exception("ошибка в инициативе")
+
+    async def initiative_tick(self, now: datetime | None = None) -> list[int]:
+        """Решить, в какие группы Стелла сама напишет сейчас. Возвращает id чатов."""
+        now = now or utcnow()
+        if (self.s.initiative_per_week <= 0 or self.connection_state != "open" or self.over_budget()
+                or not self._in_initiative_hours(now)):
+            return []
+        p = self.initiative_probability()
+        started = []
+        for chat in await self.db.group_chats(self.s.evolution_instance):
+            if self.s.allowed_groups and chat["jid"] not in self.s.allowed_groups:
+                continue
+            if chat_paused(chat, now):
+                continue
+            last = chat.get("last_initiative_at")
+            if last and now - last < timedelta(hours=self.s.initiative_min_gap_hours):
+                continue
+            recent = await self.db.recent_messages(chat["id"], 1)
+            if not recent or recent[-1]["role"] == "assistant":
+                continue  # сама написала последней и ей не ответили — второй раз не лезет
+            if now - recent[-1]["created_at"] < timedelta(minutes=self.s.initiative_quiet_minutes):
+                continue  # идёт живой разговор
+            if await self.db.count_user_messages(chat["id"]) < 5:
+                continue  # чат, который она толком не знает
+            if self.rng.random() >= p:
+                continue
+            await self.db.update_chat(chat["id"], last_initiative_at=now)
+            self.spawn(self.initiate(chat["jid"]))
+            started.append(chat["id"])
+        return started
+
+    async def initiate(self, chat_jid: str) -> bool:
+        """Стелла сама пишет в группу. True — если что-то отправила."""
+        chat = await self.db.get_chat_by_jid(self.s.evolution_instance, chat_jid)
+        if chat is None or chat_paused(chat):
+            return False
+        grudges = await self.db.active_grudges(chat["id"])
+        prompt, people = await self._build_prompt(chat, [], [], "initiative", grudges=grudges)
+        ctx = ToolContext(chat_id=chat["id"], sender=None, people_refs={p.ref: p for p in people}, is_admin=False,
+                          actions=_ChatActions(self, chat))
+        tools = [t for t in build_tools(self.db, self.casino, self.s, ctx) if t.name != "casino"]
+        try:
+            reply = await self.llm.ask(system=self.system, prompt=prompt, tools=tools, max_turns=self.s.llm_max_turns)
+        except LLMError as exc:
+            log.warning("инициатива: модель не ответила: %s", exc)
+            return False
+        await self.track_cost(reply.cost_usd)
+        segments = parse_reply(reply.text, self.s.max_bubbles)
+        sent = 0
+        if segments:
+            sent = await self.outbox.send_segments(chat, segments, reply_to=None, quote_first=False, people=people)
+        for action in ctx.after:
+            await action()
+            sent += 1
+        if sent:
+            await self.db.update_chat(chat["id"], last_bot_at=utcnow())
+            log.info("%s: сама завела разговор", mask_phone(chat_jid))
+        return bool(sent)
 
     # ---------- расходы и алерты ----------
     async def track_cost(self, usd: float) -> None:

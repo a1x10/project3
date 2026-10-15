@@ -4,23 +4,35 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import timedelta
+from typing import Any, Awaitable, Callable, Protocol
 
 from .casino import Bet, Casino, CasinoResult
 from .config import Settings
 from .db import DB, Person
 from .llm.base import ToolSpec
-from .util import money, norm
+from .util import money, norm, utcnow
+
+
+class ChatActions(Protocol):
+    """Действия Стеллы в конкретном чате (реализация — в brain)."""
+
+    async def send_poll(self, question: str, options: list[str], multiple: bool) -> None: ...
+
+    async def delete_my_last(self) -> bool: ...
 
 
 @dataclass
 class ToolContext:
     chat_id: int
-    sender: Person
+    sender: Person | None  # None — Стелла пишет сама, без чьего-то сообщения
     people_refs: dict[str, Person]
     is_admin: bool
+    actions: ChatActions | None = None
     # То, что инструмент хочет отправить в чат сам (результат ставки), до ответа модели
     pre_messages: list[CasinoResult] = field(default_factory=list)
+    # Действия после ответа модели (опрос — после её сообщения «го голосовать»)
+    after: list[Callable[[], Awaitable[Any]]] = field(default_factory=list)
 
 
 class ToolError(Exception):
@@ -30,6 +42,8 @@ class ToolError(Exception):
 async def resolve_person(db: DB, ctx: ToolContext, who: str | None) -> Person:
     w = (who or "").strip()
     if norm(w) in ("", "я", "мне", "меня", "me", "self", "sender"):
+        if ctx.sender is None:
+            raise ToolError("укажи человека (pNN или имя)")
         return ctx.sender
     m = re.fullmatch(r"\[?p(\d+)\]?", w.lower())
     if m:
@@ -60,7 +74,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
 
     async def forget(args: dict[str, Any]) -> str:
         person = await resolve_person(db, ctx, args.get("person"))
-        if person.id != ctx.sender.id and not ctx.is_admin:
+        if (ctx.sender is None or person.id != ctx.sender.id) and not ctx.is_admin:
             raise ToolError("забывать можно только про себя (или если просит админ)")
         n = await db.forget_facts(person.id, ctx.chat_id, args.get("about") or None)
         return f"удалено фактов: {n}"
@@ -97,6 +111,8 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         return "запомнила про чат"
 
     async def casino_tool(args: dict[str, Any]) -> str:
+        if ctx.sender is None:
+            raise ToolError("казино — только когда кто-то сам просит")
         action = args.get("action")
         if action == "play":
             game = args.get("game")
@@ -127,6 +143,42 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
             raise ToolError("action: play | balance | bonus | top | transfer")
         ctx.pre_messages.append(res)
         return "в чат уже отправлено: " + " / ".join(res.lines)
+
+    async def create_poll(args: dict[str, Any]) -> str:
+        if ctx.actions is None:
+            raise ToolError("опросы здесь недоступны")
+        question = str(args.get("question") or "").strip()[:250]
+        options = [str(o).strip()[:100] for o in (args.get("options") or []) if str(o).strip()]
+        options = list(dict.fromkeys(options))[:12]
+        if not question or len(options) < 2:
+            raise ToolError("нужен вопрос и минимум 2 варианта")
+        multiple = bool(args.get("multiple"))
+        ctx.after.append(lambda: ctx.actions.send_poll(question, options, multiple))
+        return "опрос уйдёт в чат сразу после твоего сообщения"
+
+    async def delete_my_last_message(args: dict[str, Any]) -> str:
+        if ctx.actions is None:
+            raise ToolError("недоступно")
+        return "удалила" if await ctx.actions.delete_my_last() else "нечего удалять"
+
+    async def set_mood(args: dict[str, Any]) -> str:
+        mood = str(args.get("mood") or "").strip()[:150]
+        if not mood:
+            raise ToolError("опиши настроение")
+        hours = min(max(float(args.get("hours") or 3), 0.25), 24)
+        await db.update_chat(ctx.chat_id, mood=mood, mood_until=utcnow() + timedelta(hours=hours))
+        return f"настроение: {mood} (на {hours:g} ч)"
+
+    async def take_offense(args: dict[str, Any]) -> str:
+        person = await resolve_person(db, ctx, args.get("person"))
+        minutes = min(max(int(args.get("minutes") or 60), 5), 24 * 60)
+        reason = str(args.get("reason") or "").strip()[:200]
+        await db.set_grudge(ctx.chat_id, person.id, utcnow() + timedelta(minutes=minutes), reason)
+        return f"ты обижена на {person.name} на {minutes} мин"
+
+    async def forgive(args: dict[str, Any]) -> str:
+        person = await resolve_person(db, ctx, args.get("person"))
+        return f"простила {person.name}" if await db.clear_grudge(ctx.chat_id, person.id) else "обиды и не было"
 
     person_hint = "кто: p12 из контекста, имя/ник или «я» (автор сообщения)"
     return [
@@ -201,5 +253,59 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
                 "required": ["action"],
             },
             casino_tool,
+        ),
+        ToolSpec(
+            "create_poll",
+            "Создать опрос (голосование) в чате. Сама решаешь, когда это к месту.",
+            {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 12},
+                    "multiple": {"type": "boolean", "description": "можно выбрать несколько вариантов"},
+                },
+                "required": ["question", "options"],
+            },
+            create_poll,
+        ),
+        ToolSpec(
+            "delete_my_last_message",
+            "Удалить своё последнее сообщение в этом чате у всех (если ляпнула лишнее или ошиблась).",
+            {"type": "object", "properties": {}},
+            delete_my_last_message,
+        ),
+        ToolSpec(
+            "set_mood",
+            "Поменять своё настроение (как ты себя сейчас чувствуешь и почему), на сколько часов.",
+            {
+                "type": "object",
+                "properties": {
+                    "mood": {"type": "string", "description": "например «злая на Васю, он съел мой торт» или «на седьмом небе»"},
+                    "hours": {"type": "number", "description": "на сколько часов, по умолчанию 3"},
+                },
+                "required": ["mood"],
+            },
+            set_mood,
+        ),
+        ToolSpec(
+            "take_offense",
+            "Обидеться на человека, который тебя грубо оскорбил (не за дружеские шутки).",
+            {
+                "type": "object",
+                "properties": {
+                    "person": {"type": "string", "description": person_hint},
+                    "minutes": {"type": "integer", "description": "на сколько минут, 5–1440, по умолчанию 60"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["person"],
+            },
+            take_offense,
+        ),
+        ToolSpec(
+            "forgive",
+            "Простить человека, на которого ты обижена.",
+            {"type": "object", "properties": {"person": {"type": "string", "description": person_hint}},
+             "required": ["person"]},
+            forgive,
         ),
     ]
