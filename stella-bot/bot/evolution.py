@@ -16,7 +16,9 @@ WEBHOOK_EVENTS = ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
 
 
 class EvolutionError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class Evolution:
@@ -45,11 +47,11 @@ class Evolution:
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
             if resp.status_code >= 500 and attempt < 2:
-                last_exc = EvolutionError(f"{method} {path}: {resp.status_code} {resp.text[:300]}")
+                last_exc = EvolutionError(f"{method} {path}: {resp.status_code} {resp.text[:300]}", resp.status_code)
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue
             if resp.status_code >= 400:
-                raise EvolutionError(f"{method} {path}: {resp.status_code} {resp.text[:300]}")
+                raise EvolutionError(f"{method} {path}: {resp.status_code} {resp.text[:300]}", resp.status_code)
             if not resp.content:
                 return {}
             try:
@@ -60,8 +62,23 @@ class Evolution:
 
     # ---------- инстанс ----------
     async def fetch_instances(self) -> list[dict[str, Any]]:
-        data = await self._call("GET", "/instance/fetchInstances", params={"instanceName": self.instance})
-        return data if isinstance(data, list) else [data]
+        """Все инстансы на сервере Evolution ([] если их ещё нет)."""
+        try:
+            data = await self._call("GET", "/instance/fetchInstances")
+        except EvolutionError as exc:
+            if exc.status == 404:
+                return []
+            raise
+        if isinstance(data, dict):
+            data = [data] if data else []
+        return [i for i in data if isinstance(i, dict)]
+
+    @staticmethod
+    def instance_name(info: dict[str, Any]) -> str:
+        return str(info.get("name") or info.get("instanceName") or (info.get("instance") or {}).get("instanceName") or "")
+
+    async def find_own_instance(self) -> dict[str, Any] | None:
+        return next((i for i in await self.fetch_instances() if self.instance_name(i) == self.instance), None)
 
     async def create_instance(self) -> dict[str, Any]:
         return await self._call(

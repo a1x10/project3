@@ -144,30 +144,27 @@ class Brain:
 
     async def ensure_instance(self) -> None:
         """Создать инстанс (если нет) и прописать вебхук. Ошибки не валят бота — Evolution может ещё стартовать."""
-        for attempt in range(10):
+        for attempt in range(30):
             try:
-                found = await self.evo.fetch_instances()
-                if not any((i.get("name") or i.get("instanceName")) == self.s.evolution_instance for i in found):
+                if await self.evo.find_own_instance() is None:
                     await self.evo.create_instance()
-                    log.info("создан инстанс %s — подключите номер: python -m bot.setup", self.s.evolution_instance)
+                    log.info("создан инстанс %s — подключите номер: python -m bot.setup --number ...",
+                             self.s.evolution_instance)
                 await self.evo.set_webhook(self.s.webhook_url, self.s.webhook_secret)
-                for inst in await self.evo.fetch_instances():
-                    owner = inst.get("ownerJid") or inst.get("owner")
-                    if owner:
-                        await self.add_bot_jid(owner)
-                    if inst.get("connectionStatus"):
-                        self.connection_state = inst["connectionStatus"]
-                log.info("вебхук Evolution настроен, состояние: %s", self.connection_state)
+                inst = await self.evo.find_own_instance() or {}
+                if inst.get("ownerJid"):
+                    await self.add_bot_jid(inst["ownerJid"])
+                if inst.get("connectionStatus"):
+                    self.connection_state = inst["connectionStatus"]
+                log.info("вебхук Evolution настроен, WhatsApp: %s", self.connection_state)
                 return
             except EvolutionError as exc:
-                if "404" in str(exc) and attempt == 0:
-                    try:
-                        await self.evo.create_instance()
-                        continue
-                    except EvolutionError:
-                        pass
-                log.warning("Evolution пока недоступен (%s), попытка %d", exc, attempt + 1)
+                if exc.status == 401:
+                    log.error("Evolution не пускает: EVOLUTION_API_KEY в .env не совпадает с ключом Evolution")
+                else:
+                    log.warning("Evolution пока недоступен (%s), попытка %d", exc, attempt + 1)
                 await self.sleep(min(5 * (attempt + 1), 30))
+        log.error("не удалось настроить Evolution — проверьте docker compose logs evolution")
 
     async def add_bot_jid(self, jid: str) -> None:
         if not jid or jid in self.bot.jids:
