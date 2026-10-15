@@ -55,3 +55,42 @@ async def test_ensure_instance_creates_missing_instance(tmp_path, fetch_mode):
     assert "70000000000@s.whatsapp.net" not in brain.bot.jids  # чужой инстанс не считается ботом
     await brain.db.close()
     await evo.close()
+
+
+async def test_pair_by_number_recreates_instance_and_shows_codes():
+    from bot.setup import pair_by_number
+
+    st = {"created_with": None, "deleted": [], "connects": 0, "webhook": False}
+    codes = [None, "ABCD1234", "ABCD1234", "WXYZ9876"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "DELETE":
+            st["deleted"].append(path)
+            return httpx.Response(200, json={})
+        if path == "/instance/create":
+            st["created_with"] = json.loads(request.content).get("number")
+            return httpx.Response(201, json={})
+        if path == "/webhook/set/stella":
+            st["webhook"] = True
+            return httpx.Response(201, json={})
+        if path == "/instance/connectionState/stella":
+            state = "open" if st["connects"] >= len(codes) else "connecting"
+            return httpx.Response(200, json={"instance": {"instanceName": "stella", "state": state}})
+        if path == "/instance/connect/stella":
+            code = codes[st["connects"]]
+            st["connects"] += 1
+            return httpx.Response(200, json={"pairingCode": code, "code": "qr", "count": st["connects"]})
+        return httpx.Response(404, json={})
+
+    client = httpx.AsyncClient(base_url="http://evo", transport=httpx.MockTransport(handler))
+    evo = Evolution("http://evo", "k", "stella", client=client)
+    printed = []
+    ok = await pair_by_number(evo, "77077568480", "http://bot:8000/webhook", "s", out=printed.append, sleep=nosleep)
+    await evo.close()
+    text = "\n".join(printed)
+    assert ok
+    assert st["created_with"] == "77077568480" and st["webhook"]
+    assert st["deleted"] == ["/instance/logout/stella", "/instance/delete/stella"]
+    assert "ABCD-1234" in text and "WXYZ-9876" in text and text.count("ABCD-1234") == 1
+    assert "подключён" in text
