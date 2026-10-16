@@ -53,8 +53,8 @@ async def open_page(p, errors, **ctx_args):
     return browser, page
 """
 
-# Страница как на телефоне 390×844: сразу, через несколько секунд, после нажатия на главную кнопку и после
-# прокрутки. В stdout — одна строка JSON.
+# Страница как на телефоне 390×844: сразу, через несколько секунд, после нажатия на главную кнопку, после
+# прокрутки (у игры в один экран — пауза и финал) и на маленьком телефоне 360×640. В stdout — одна строка JSON.
 _WORKER = _BOOT + r"""
 page_path, out_dir = sys.argv[1], sys.argv[2]
 
@@ -88,17 +88,39 @@ async def main():
                 await target.tap(timeout=3000)
             else:
                 await page.touchscreen.tap(195, 560)
-            label = "после нажатия на первую кнопку" if target is not None else "после тапа по экрану"
+            label = "через 2.5 с после нажатия на главную кнопку" if target is not None else "через 2.5 с после тапа"
         except Exception:
             await page.touchscreen.tap(195, 560)
-            label = "после тапа по экрану"
+            label = "через 2.5 с после тапа по экрану"
         await page.wait_for_timeout(2500)
         await shot("3", label)
+        info = await page.evaluate("({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})")
         await page.keyboard.press("Escape")  # открылось окно — закрыть, чтобы увидеть прокрутку страницы
         await page.mouse.wheel(0, 844)
         await page.wait_for_timeout(1500)
-        await shot("4", "после прокрутки вниз на экран")
-        info = await page.evaluate("({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})")
+        if await page.evaluate("window.scrollY") > 0:
+            await shot("4", "после прокрутки вниз на экран")
+        else:  # приложение в один экран (игра): вместо повтора — пауза и финал, если страница их даёт
+            pause = await page.query_selector("[data-pause]")
+            if pause is not None and await pause.is_visible():
+                try:
+                    await pause.tap(timeout=2000)
+                    await page.wait_for_timeout(800)
+                    await shot("4", "пауза (нажата кнопка data-pause)")
+                    await pause.tap(timeout=2000)
+                except Exception:
+                    pass
+            if await page.evaluate("typeof window.__studioEnd === 'function'"):
+                try:
+                    await page.evaluate("window.__studioEnd()")
+                    await page.wait_for_timeout(1200)
+                    await shot("5", "экран финала (window.__studioEnd)")
+                except Exception:
+                    pass
+        await page.set_viewport_size({"width": 360, "height": 640})
+        await page.evaluate("window.scrollTo(0, 0)")
+        await page.wait_for_timeout(800)
+        await shot("6", "маленький телефон 360×640, то же состояние, верх страницы")
         await browser.close()
     print(json.dumps({"shots": shots, "errors": errors[:30], "scroll_width": info["w"], "height": info["h"]}))
 
@@ -424,7 +446,7 @@ async def _run_worker(code: str, page: bytes, args: list[str], timeout: float,
 
 
 async def shoot(page: bytes, timeout: float = SHOTS_TIMEOUT) -> Shots:
-    """Открыть страницу в браузере как на телефоне и снять 4 кадра. Ошибка браузера -> ShotsError."""
+    """Открыть страницу в браузере как на телефоне и снять 4–6 кадров. Ошибка браузера -> ShotsError."""
     data, tmp = await _run_worker(_WORKER, page, [], timeout)
     try:
         images = [(label, await asyncio.to_thread(_read, img)) for label, img in data["shots"]]

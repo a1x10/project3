@@ -49,6 +49,8 @@ COPY_SHADER = _a("CopyShader.js", T + "shaders/CopyShader.js",
                  "6b5da4fe3b410286974590885f82fe4a446f25c728f7d6c888e2a2a331333949")
 LUMA_SHADER = _a("LuminosityHighPassShader.js", T + "shaders/LuminosityHighPassShader.js",
                  "00ed0682e61ca207d9c62298269472d6d4eedd9d33528400e7cbc633da8544da")
+GAMMA_SHADER = _a("GammaCorrectionShader.js", T + "shaders/GammaCorrectionShader.js",
+                  "77c8fdedf8f488b7cab5392afb2d55f1acadf9d9086961b61dfd28f7ae80bdc3")
 COMPOSER = _a("EffectComposer.js", T + "postprocessing/EffectComposer.js",
               "4fc320fa3185847797332bc2b0125b1a39b9cf5fc4170a2f180cfa54fb057a2b")
 RENDER_PASS = _a("RenderPass.js", T + "postprocessing/RenderPass.js",
@@ -72,7 +74,7 @@ MATTER = _a("matter.min.js", "matter-js@0.20.0/build/matter.min.js",
 LIBS: dict[str, tuple[Asset, ...]] = {
     "three": (THREE,),
     "three-orbit": (ORBIT,),
-    "three-bloom": (COPY_SHADER, LUMA_SHADER, COMPOSER, RENDER_PASS, SHADER_PASS, BLOOM_PASS),
+    "three-bloom": (COPY_SHADER, LUMA_SHADER, GAMMA_SHADER, COMPOSER, RENDER_PASS, SHADER_PASS, BLOOM_PASS),
     "three-roundedbox": (ROUNDED_BOX,),
     "gsap": (GSAP,),
     "gsap-scrolltrigger": (SCROLL_TRIGGER,),
@@ -88,6 +90,7 @@ _ALIASES: dict[tuple[str, str], tuple[Asset, ...]] = {
     ("three", "orbitcontrols.js"): (ORBIT,),
     ("three", "copyshader.js"): (COPY_SHADER,),
     ("three", "luminosityhighpassshader.js"): (LUMA_SHADER,),
+    ("three", "gammacorrectionshader.js"): (GAMMA_SHADER,),
     ("three", "effectcomposer.js"): (COMPOSER,),
     ("three", "renderpass.js"): (RENDER_PASS,),
     ("three", "shaderpass.js"): (SHADER_PASS,),
