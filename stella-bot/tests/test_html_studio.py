@@ -623,3 +623,80 @@ async def test_simple_presentation_without_browser(brain, monkeypatch):
     brain.llm.queue = [grab]
     await feed(brain, upsert("стелла привет"))
     assert "slides" in seen["make_presentation"].input_schema["properties"]  # старая простая — из списка слайдов
+
+
+# ---------- связь со студией: обрывы, перегрузка, понятные ошибки ----------
+def _sdk_client(monkeypatch, replies):
+    """Настоящий клиент Anthropic SDK поверх поддельного сервера: replies — по ответу на каждый запрос."""
+    import json as _json
+
+    import anthropic
+    import httpx2
+
+    monkeypatch.setattr(html_studio, "RETRY_PAUSE", 0)
+    calls = []
+
+    class Broken(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            yield (b'event: message_start\ndata: {"type":"message_start","message":{"id":"m","type":"message",'
+                   b'"role":"assistant","model":"claude-opus-5-5","content":[],"stop_reason":null,'
+                   b'"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":1}}}\n\n')
+            raise httpx2.RemoteProtocolError("peer closed connection without sending complete message body")
+
+    def ok():
+        events = [
+            {"type": "message_start", "message": {"id": "m", "type": "message", "role": "assistant",
+                                                  "model": "claude-opus-5-5", "content": [], "stop_reason": None,
+                                                  "stop_sequence": None,
+                                                  "usage": {"input_tokens": 3000, "output_tokens": 1}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": PAGE}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+             "usage": {"output_tokens": 20000}},
+            {"type": "message_stop"},
+        ]
+        body = "".join(f"event: {e['type']}\ndata: {_json.dumps(e)}\n\n" for e in events).encode()
+        return httpx2.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async def handler(request):
+        calls.append(request)
+        kind = replies[min(len(calls), len(replies)) - 1]
+        if kind == "ok":
+            return ok()
+        if kind == "drop":
+            return httpx2.Response(200, stream=Broken(), headers={"content-type": "text/event-stream"})
+        code, message = kind
+        return httpx2.Response(code, json={"type": "error", "error": {"type": "x", "message": message}})
+
+    client = anthropic.AsyncAnthropic(api_key="test", max_retries=0,
+                                      http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+    monkeypatch.setattr(html_studio, "_client", client)
+    return calls
+
+
+async def test_dropped_stream_is_retried(settings, monkeypatch):
+    calls = _sdk_client(monkeypatch, ["drop", "ok"])
+    res = await html_studio.generate(settings, BRIEF, "x")
+    assert res.html == PAGE and len(calls) == 2
+
+
+async def test_dropped_twice_gives_clear_error(settings, monkeypatch):
+    _sdk_client(monkeypatch, ["drop", "drop"])
+    with pytest.raises(html_studio.StudioError, match="связь со студией оборвалась \\(RemoteProtocolError\\)"):
+        await html_studio.generate(settings, BRIEF, "x")
+
+
+async def test_overload_is_retried_and_api_errors_are_readable(settings, monkeypatch):
+    calls = _sdk_client(monkeypatch, [(529, "Overloaded"), "ok"])
+    assert (await html_studio.generate(settings, BRIEF, "x")).html == PAGE and len(calls) == 2
+    _sdk_client(monkeypatch, [(400, "Your credit balance is too low to access the Anthropic API.")])
+    with pytest.raises(html_studio.StudioError, match="кончились деньги"):
+        await html_studio.generate(settings, BRIEF, "x")
+    _sdk_client(monkeypatch, [(404, "model: claude-opus-5-5")])
+    with pytest.raises(html_studio.StudioError, match="HTML_MODEL=claude-sonnet-5-5"):
+        await html_studio.generate(settings, BRIEF, "x")
+    calls = _sdk_client(monkeypatch, [(401, "invalid x-api-key")])
+    with pytest.raises(html_studio.StudioError, match="ANTHROPIC_API_KEY"):
+        await html_studio.generate(settings, BRIEF, "x")
+    assert len(calls) == 1  # неверный ключ не повторяем
