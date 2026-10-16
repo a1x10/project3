@@ -364,12 +364,59 @@ def star_contour(r: float = 1.0, inner: float = 0.48, n: int = 5) -> np.ndarray:
     return np.array(pts)
 
 
-def heart_contour(k: int = 48) -> np.ndarray:
-    t = np.linspace(0, 2 * np.pi, k, endpoint=False)
-    x = 16 * np.sin(t) ** 3
-    y = 13 * np.cos(t) - 5 * np.cos(2 * t) - 2 * np.cos(3 * t) - np.cos(4 * t)
-    c = np.stack([x, y], 1) / 17.0
-    c[:, 1] += 0.12  # центр масс сердца — посередине высоты
+def heart_contour(k: int = 56) -> np.ndarray:
+    """Сердце: две дуги-«доли» и касательные к острию, остриё чуть скруглено (иначе фаска у острия
+    выворачивается петлёй). Против часовой, высота от -0.92 до 0.84."""
+    R = 0.5
+    cx, cy = 0.46, 0.34
+    tip = np.array([0.0, -0.92])
+    pts: list[tuple[float, float]] = []
+
+    def tangent_angle(sgn: float) -> float:
+        # точка касания прямой из острия к окружности доли (sgn = +1 — правая доля)
+        c = np.array([sgn * cx, cy])
+        d = c - tip
+        dist = float(np.linalg.norm(d))
+        base = math.atan2(d[1], d[0])
+        off = math.acos(min(1.0, R / dist))
+        return base + sgn * off + math.pi * (1 if sgn > 0 else 1)
+
+    a_r = tangent_angle(1.0)  # угол точки касания на правой доле
+    a_l = math.pi - a_r  # симметрично на левой
+    n_arc = max(8, k // 2 - 4)
+    # правая доля: от точки касания вверх через макушку до ложбинки (пересечения долей на оси x = 0)
+    cleft = math.atan2(math.sqrt(max(R * R - cx * cx, 1e-6)), cx)
+    a_end_r = math.pi - cleft
+    for i in range(n_arc + 1):
+        a = a_r + (a_end_r + 2 * math.pi * (a_end_r < a_r) - a_r) * i / n_arc
+        pts.append((cx + R * math.cos(a), cy + R * math.sin(a)))
+    a_start_l = cleft
+    for i in range(n_arc + 1):
+        a = a_start_l + (a_l + 2 * math.pi * (a_l < a_start_l) - a_start_l) * i / n_arc
+        pts.append((-cx + R * math.cos(a), cy + R * math.sin(a)))
+    # к острию по касательной, скругление острия
+    left = np.array(pts[-1])
+    right = np.array(pts[0])
+    for i in range(1, 4):
+        p = left + (tip - left) * (i / 4)
+        pts.append((float(p[0]), float(p[1])))
+    rr = 0.07
+    dl = (left - tip) / np.linalg.norm(left - tip)
+    dr = (right - tip) / np.linalg.norm(right - tip)
+    p0 = tip + dl * rr
+    p2 = tip + dr * rr
+    for i in range(5):
+        t = i / 4
+        q = (1 - t) ** 2 * p0 + 2 * (1 - t) * t * tip + t * t * p2
+        pts.append((float(q[0]), float(q[1])))
+    for i in range(1, 4):
+        p = tip + (right - tip) * (i / 4)
+        pts.append((float(p[0]), float(p[1])))
+    c = np.array(pts)
+    # убрать повторы
+    keep = np.ones(len(c), bool)
+    keep[1:] = np.linalg.norm(np.diff(c, axis=0), axis=1) > 1e-6
+    c = c[keep]
     return c[::-1].copy() if signed_area(c) < 0 else c
 
 
@@ -393,12 +440,20 @@ class Extrusion:
     back: list[np.ndarray] = field(default_factory=list, repr=False)
     lo: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]  # углы рамки (2,) в плоскости
     hi: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]
+    # для контура силуэта стенок: рёбра (E, 2) по номерам вершин колец, их точки (n, 3) и грани по сторонам ребра
+    # (номер четырёхугольника; -1 — передняя плоская грань, -2 — задняя)
+    edges: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]
+    epts: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]
+    ef: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]
 
     def build(self) -> Extrusion:
         self.contours = orient_contours(self.contours)
         d2 = self.depth / 2
         b = max(0.0, min(self.bevel, d2 * 0.9))
         qs, ns, ks = [], [], []
+        ids: list[np.ndarray] = []
+        pts: list[np.ndarray] = []
+        base = 0
         for c in self.contours:
             m = len(c)
             ring = inset(c, b) if b > 0 else c
@@ -406,6 +461,13 @@ class Extrusion:
                 layers = [(ring, d2, 1.0), (c, d2 - b, 0.0), (c, -d2 + b, 0.0), (ring, -d2, -1.0)]
             else:
                 layers = [(c, d2, 0.0), (c, -d2, 0.0)]
+            for cl, zl, _ in layers:
+                pts.append(np.column_stack([cl, np.full(m, zl)]))
+            i = np.arange(m)
+            for li in range(len(layers) - 1):
+                a0, b0 = base + li * m, base + (li + 1) * m
+                ids.append(np.stack([a0 + i, a0 + (i + 1) % m, b0 + (i + 1) % m, b0 + i], 1))
+            base += len(layers) * m
             # наружная нормаль стенки в плоскости: «правая» от направления обхода
             edge = np.roll(c, -1, 0) - c
             out2 = np.stack([edge[:, 1], -edge[:, 0]], 1)
@@ -426,9 +488,34 @@ class Extrusion:
         self.quads = np.concatenate(qs) if qs else np.zeros((0, 4, 3))
         self.qn = np.concatenate(ns) if ns else np.zeros((0, 3))
         self.qk = np.concatenate(ks) if ks else np.zeros(0, int)
+        self._edges(np.concatenate(ids) if ids else np.zeros((0, 4), int),
+                    np.concatenate(pts) if pts else np.zeros((0, 3)), 4 if b > 0 else 2)
         allp = np.concatenate(self.contours) if self.contours else np.zeros((1, 2))
         self.lo, self.hi = allp.min(0), allp.max(0)
         return self
+
+    def _edges(self, qid: np.ndarray, pts: np.ndarray, n_layers: int) -> None:
+        """Рёбра стенок и грани по их сторонам: соседние четырёхугольники или плоская грань спереди/сзади."""
+        side: dict[tuple[int, int], list[int]] = {}
+        for q, row in enumerate(qid.tolist()):
+            for j in range(4):
+                a, b = row[j], row[(j + 1) % 4]
+                side.setdefault((min(a, b), max(a, b)), []).append(q)
+        # рёбра колец передней и задней грани: первое и последнее кольцо каждого контура
+        base = 0
+        for c in self.contours:
+            m = len(c)
+            for li, code in ((0, -1), (n_layers - 1, -2)):
+                a0 = base + li * m
+                for i in range(m):
+                    a, b = a0 + i, a0 + (i + 1) % m
+                    key = (min(a, b), max(a, b))
+                    side.setdefault(key, []).append(code)
+            base += n_layers * m
+        keys = list(side)
+        self.edges = np.array(keys, int).reshape(-1, 2)
+        self.ef = np.array([(v + [v[0]])[:2] if len(v) == 1 else v[:2] for v in side.values()], int).reshape(-1, 2)
+        self.epts = pts
 
 
 # ======================= кеш =======================

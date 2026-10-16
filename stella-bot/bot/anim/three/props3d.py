@@ -19,7 +19,7 @@ import numpy as np
 from ..ease import hash01, noise1, rng
 from ..model import RGB, PropSpec
 from ..palette import hx, lighten, mix, mul
-from .mesh import (Extrusion, circle_contour, cone, cylinder, facet_sphere, gem, heart_contour, lathe, lod_for_radius,
+from .mesh import (Extrusion, circle_contour, cone, facet_sphere, gem, heart_contour, lathe, lod_for_radius,
                    lod_level, rounded_profile, sphere, star_contour, torus)
 from .mesh import cached as _cached
 from .render3d import (OBJECT_BUDGET, Camera3D, Obj, draw_parts, estimate_tris, outline_px, sprite_camera, stats,
@@ -373,10 +373,10 @@ def _bands_vcolor(m, base: RGB, seed: int) -> np.ndarray:  # type: ignore[no-unt
     w = y + 0.06 * np.sin(ang * 3 + seed)
     b = np.asarray(base, float)
     light = np.asarray(lighten(base, 0.35))
-    dark = np.asarray(mix(base, (0.2, 0.1, 0.4), 0.3))
-    band = 0.5 + 0.5 * np.sin(w * 7.0)
-    band2 = np.clip((np.abs(w + 0.2) - 0.1) / 0.06, 0, 1)
-    col = b[None] * (1 - band[:, None] * 0.6) + light[None] * band[:, None] * 0.6
+    dark = np.asarray(mix(base, (0.2, 0.1, 0.4), 0.45))
+    band = np.clip(np.sin(w * 6.0) * 2.0, 0, 1)
+    band2 = np.clip((np.abs(w + 0.25) - 0.09) / 0.05, 0, 1)
+    col = b[None] * (1 - band[:, None] * 0.75) + light[None] * band[:, None] * 0.75
     col = col * band2[:, None] + dark[None] * (1 - band2[:, None])
     return col
 
@@ -395,12 +395,48 @@ def _b_planet(k: Kit) -> None:
           split=body, outline=0.8)
 
 
+def _ribbon_bands(wa: float, wb: float):
+    """Ленты подарка на скруглённом кубе (локальный куб [-1, 1]³): полоса |x| < wa вокруг через перед и верх
+    и полоса |z| < wb вокруг через бока и верх. На каждой видимой грани — прямоугольник ленты в её плоскости."""
+    def faces(M: np.ndarray, T: np.ndarray, cam: Camera3D):  # type: ignore[no-untyped-def]
+        loops, lines = [], []
+        Minv = np.linalg.inv(M)
+        for ax in range(3):
+            for sg in (-1.0, 1.0):
+                n = np.zeros(3)
+                n[ax] = sg
+                c = M @ n + T
+                nw = n @ Minv
+                if float(nw @ (cam.pos - c)) <= 0:
+                    continue
+                o1, o2 = [a for a in range(3) if a != ax]
+                for band_ax, w in ((0, wa), (2, wb)):
+                    if band_ax == ax:
+                        continue  # эта лента обходит грань стороной
+                    other = o2 if band_ax == o1 else o1
+                    rect = []
+                    for u, v in ((-w, -1.0), (w, -1.0), (w, 1.0), (-w, 1.0)):
+                        p = np.zeros(3)
+                        p[ax] = sg * 1.004
+                        p[band_ax] = u
+                        p[other] = v
+                        rect.append(p)
+                    rect_a = np.array(rect)
+                    loops.append(rect_a)
+                    # края ленты — тонкой линией, не доходя до скруглённых рёбер куба
+                    lines.append(rect_a[[0, 3]] * np.where(np.arange(3) == other, 0.84, 1.0))
+                    lines.append(rect_a[[1, 2]] * np.where(np.arange(3) == other, 0.84, 1.0))
+        return loops, lines
+
+    return faces
+
+
 def _b_gift(k: Kit) -> None:
-    k.add(k.sph(k.seg, 0.25), pos=(0, -0.22, 0), scale=(0.7, 0.56, 0.7))
-    rib = _m("#ffd23f", "candy")
-    small = k.lv(0.75)
-    k.add(k.sph(small, 0.25), rib, pos=(0, -0.22, 0), scale=(0.17, 0.575, 0.715), bias=-0.02, outline=0.7)
-    k.add(k.sph(small, 0.25), rib, pos=(0, -0.22, 0), scale=(0.715, 0.575, 0.17), bias=-0.02, outline=0.7)
+    box = k.add(k.sph(k.seg, 0.25), pos=(0, -0.22, 0), scale=(0.7, 0.56, 0.7))
+    rib_c = hx("#ffd23f") if np.linalg.norm(np.asarray(k.main.color) - np.asarray(hx("#ffd23f"))) > 0.25 \
+        else hx("#ff3d6e")
+    box.patches.append((_ribbon_bands(0.2, 0.2), rib_c))
+    rib = _m(rib_c, "candy")
     loop = k.tor(1.0, 0.36, k.lv(0.6, 12), 8)
     for s in (-1, 1):
         k.add(loop, rib, pos=(s * 0.2, 0.47, 0.0), rot=(math.pi / 2, 0.0, s * 0.55), scale=(0.2, 0.2, 0.15),
@@ -491,7 +527,8 @@ def _trophy_profile() -> list[tuple[float, float]]:
         a = i / 8
         cup.append((0.14 + 0.5 * math.sin(a * math.pi / 2) ** 0.8, -0.28 + 1.0 * a))
     return [(0.0, -0.78), (0.42, -0.78), (0.44, -0.74), (0.3, -0.68), (0.13, -0.6), (0.1, -0.45), (0.13, -0.36)] + \
-        cup[1:] + [(0.66, 0.73), (0.6, 0.76), (0.54, 0.62), (0.0, 0.42)]
+        cup[1:] + [(0.66, 0.73), (0.6, 0.76), (0.54, 0.62), (0.44, 0.55), (0.33, 0.5), (0.22, 0.46), (0.11, 0.43),
+                   (0.0, 0.42)]  # дно чаши — мелкими поясами: длинные рёбра ломают проверку перекрытия контура
 
 
 def _b_trophy(k: Kit) -> None:

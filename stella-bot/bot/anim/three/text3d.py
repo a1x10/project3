@@ -334,7 +334,7 @@ def _draw_letter(ctx: cairo.Context, ex: Extrusion, x: float, y: float, em: floa
     from .render3d import world
 
     M, T = world(o)
-    draw_extrusion(ctx, cam, o, M, T, lw * min(1.0, st.scale), sts, back_outline=False)
+    draw_extrusion(ctx, cam, o, M, T, lw * min(1.0, st.scale), sts, sil=False)
 
 
 def _shine(t: float, x0: float, x1: float, em: float, y: float, period: float = 3.4,

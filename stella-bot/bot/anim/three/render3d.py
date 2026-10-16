@@ -96,7 +96,7 @@ class Obj:
     grout: bool = False  # гранёный шар: тёмные швы между плитками (диско-шар)
     # «покраска» области сетки чётким краем: (контуры на поверхности (k, 3) в локальных координатах, цвет);
     # контуры одного направления складываются, встречные — вырезают (брюшко пингвина, глазурь)
-    patches: list[tuple[list[np.ndarray], tuple[float, float, float]]] = field(default_factory=list)
+    patches: list[tuple[Any, tuple[float, float, float]]] = field(default_factory=list)
 
 
 def world(o: Obj) -> tuple[np.ndarray, np.ndarray]:
@@ -228,7 +228,9 @@ def _occluded(mid: np.ndarray, mdepth: np.ndarray, tri: np.ndarray, tdepth: np.n
 
 
 def _stroke_edges(ctx: cairo.Context, S: np.ndarray, weld: np.ndarray, pairs: np.ndarray, lw: float,
-                  smooth: bool, alpha: float = 1.0) -> None:
+                  smooth: bool, alpha: float = 1.0, min_len: float = 0.0) -> None:
+    """Обвести рёбра (пары вершин) цепочками; открытые цепочки короче min_len пикселей — пропустить
+    (короткие «засечки» касательных на фаске мелькают при вращении)."""
     if not len(pairs) or lw <= 0:
         return
     wp = weld[pairs]
@@ -238,6 +240,10 @@ def _stroke_edges(ctx: cairo.Context, S: np.ndarray, weld: np.ndarray, pairs: np
         rep.setdefault(w1, i1)
     for chain, closed in _chains([tuple(x) for x in wp.tolist()]):
         pts = [S[rep[w]].tolist() for w in chain]
+        if min_len > 0 and not closed:
+            arr = np.asarray(pts)
+            if float(np.linalg.norm(np.diff(arr, axis=0), axis=1).sum()) < min_len:
+                continue
         smooth_path(ctx, pts, closed, smooth)
     ctx.set_source_rgba(*INK, alpha)
     ctx.set_line_width(lw)
@@ -278,9 +284,11 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
             base = mat.vcolor[m.f[order]].mean(1)
         cols = shade(fnn, _unit(to_cam[order]), mat, base=base)
         pts = S[m.f[order]]
-        if o.grout:  # швы между плитками: сначала всё тёмным, потом плитки чуть меньше
-            meshpat.fill_flat(ctx, pts, np.tile([0.16, 0.14, 0.24], (len(pts), 1)), 0.8)
-            meshpat.fill_flat(ctx, pts, cols, -0.6 * min(1.0, lw / 2.5))
+        if o.grout:  # швы между плитками: сначала всё тёмным, потом плитки чуть меньше и чуть разной яркости
+            jit = 0.82 + 0.36 * ((np.sin(order * 12.9898) * 43758.5453) % 1.0)
+            cols = np.clip(cols[:, :3] * jit[:, None], 0, 1)
+            meshpat.fill_flat(ctx, pts, np.tile([0.3, 0.28, 0.4], (len(pts), 1)), 0.8)
+            meshpat.fill_flat(ctx, pts, cols, -0.45 * min(1.0, lw / 2.5))
         else:
             meshpat.fill_flat(ctx, pts, cols)
     else:
@@ -289,9 +297,14 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
         cols = shade(N, V, mat)
         tris = S[m.f[order]]
         meshpat.paint_triangles(ctx, tris, cols[m.f[order]])
-        for loops, pcol in o.patches:
+        for src, pcol in o.patches:
             # та же сетка своим цветом, но только внутри проекции контуров: край — сглаженный клип, а не
-            # размытая интерполяция цвета по крупным треугольникам
+            # размытая интерполяция цвета по крупным треугольникам. src — контуры или функция (M, T, cam) →
+            # контуры либо (контуры, линии): линии потом обводятся тонко (края ленты на подарке)
+            got = src(M, T, cam) if callable(src) else src
+            loops, lines = got if isinstance(got, tuple) else (got, [])
+            if not loops:
+                continue
             pc = shade(N, V, mat, base=np.asarray(pcol, float))
             ctx.save()
             for loop in loops:
@@ -300,6 +313,16 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
             ctx.clip()
             meshpat.paint_triangles(ctx, tris, pc[m.f[order]])
             ctx.restore()
+            if lines and lw > 0:
+                for ln in lines:
+                    sp = cam.project(np.asarray(ln, float) @ M.T + T).tolist()
+                    ctx.move_to(*sp[0])
+                    for q in sp[1:]:
+                        ctx.line_to(*q)
+                ctx.set_source_rgba(*INK, 0.85)
+                ctx.set_line_width(lw * 0.45)
+                ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+                ctx.stroke()
     if o.outline <= 0 or lw <= 0:
         return
     ef = m.ef
@@ -319,7 +342,10 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
         pairs = pairs[~hidden]
     alpha = 0.55 if mat.kind == "glass" else 1.0
     weld = _weld(m)
-    _stroke_edges(ctx, S, weld, pairs, lw * o.outline, smooth=not m.flat, alpha=alpha)
+    # у невыпуклых (тор, кубок) — без коротких обрывков: там, где поверхность почти ребром к камере, силуэт
+    # многоугольной сетки распадается на «чёрточки»
+    min_len = 0.0 if m.convex else 3.0 * lw * o.outline
+    _stroke_edges(ctx, S, weld, pairs, lw * o.outline, smooth=not m.flat, alpha=alpha, min_len=min_len)
 
 
 def _weld(m: Mesh) -> np.ndarray:
@@ -343,9 +369,9 @@ def _cap_path(ctx: cairo.Context, polys: list[np.ndarray]) -> None:
 
 
 def draw_extrusion(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.ndarray, lw: float,
-                   st: dict | None = None, back_outline: bool = True) -> None:
-    """Выдавленная фигура: видимые стенки по глубине (раздутые на 0.7 px), потом видимая плоская грань
-    (один путь, правило winding — дырки в «О», «А», «Р» получаются сами), блик и контур."""
+                   st: dict | None = None, sil: bool = True) -> None:
+    """Выдавленная фигура: видимые стенки по глубине (раздутые на 0.7 px), контур силуэта толщины (sil), потом
+    видимая плоская грань (один путь, правило winding — дырки в «О», «А», «Р» получаются сами), блик и контур."""
     ex = o.shape
     assert isinstance(ex, Extrusion)
     mat = o.mat or Material()
@@ -370,16 +396,8 @@ def draw_extrusion(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: 
     caps = ex.front if front_vis else ex.back if back_vis else []
     cap_polys = [cam.project(c @ M.T + T) for c in caps]
     lw_cap = lw * o.outline
-    if back_outline and lw_cap > 0:
-        # контур дальнего края: рисуется до стенок, видна только наружная половина — силуэт у «толщины»
-        far = ex.back if front_vis else ex.front
-        _cap_path(ctx, [cam.project(c @ M.T + T) for c in far])
-        ctx.set_source_rgb(*INK)
-        ctx.set_line_width(lw_cap * 2)
-        ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-        ctx.stroke()
-    if len(idx):
-        order = idx[np.argsort(-cam.depth(cen[idx]), kind="stable")]
+    order = idx[np.argsort(-cam.depth(cen[idx]), kind="stable")] if len(idx) else idx
+    if len(order):
         if st is not None:
             st["tris"] += 2 * len(order)
         base = np.tile(np.asarray(mat.color, float), (len(order), 1))
@@ -389,6 +407,33 @@ def draw_extrusion(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: 
         side_mat = Material(mat.color, "plastic" if glass else mat.kind, rim=mat.rim)
         cols = shade(Nq[order], _unit(to_cam[order]), side_mat, base=base)
         meshpat.fill_flat(ctx, cam.project(Q[order]), cols, 0.7)
+    if sil and lw_cap > 0 and ex.edges is not None and len(ex.edges):
+        # контур силуэта толщины: рёбра, у которых видна только одна сторона (стенка или плоская грань);
+        # закрытые ближними стенками — убираются, закрытые плоской гранью — её заливка ляжет поверх
+        side_vis = np.concatenate([vis, [back_vis, front_vis]])  # индексы -2 и -1 — задняя и передняя грани
+        f0 = side_vis[ex.ef[:, 0]]
+        f1 = side_vis[ex.ef[:, 1]]
+        sel = np.nonzero(f0 != f1)[0]
+        if len(sel):
+            pairs = ex.edges[sel]
+            P = ex.epts @ M.T + T
+            S = cam.project(P)
+            ed = cam.depth(P[pairs].mean(1))
+            if len(order):
+                qs = cam.project(Q[order])
+                tri = np.concatenate([qs[:, [0, 1, 2]], qs[:, [0, 2, 3]]])
+                qd = cam.depth(Q[order])
+                tdep = np.concatenate([qd[:, [0, 1, 2]], qd[:, [0, 2, 3]]])
+                # ребро закрыто, если закрыта хоть одна из трёх точек на нём: у вогнутых фигур (звезда в профиль)
+                # иначе остаются короткие «засечки» наполовину спрятанных рёбер
+                a2, b2 = S[pairs[:, 0]], S[pairs[:, 1]]
+                da, db = cam.depth(P[pairs[:, 0]]), cam.depth(P[pairs[:, 1]])
+                hid = np.zeros(len(pairs), bool)
+                for f in (0.15, 0.5, 0.85):
+                    hid |= _occluded(a2 + (b2 - a2) * f, da + (db - da) * f, tri, tdep)
+                pairs = pairs[~hid]
+            ident = np.arange(len(S))
+            _stroke_edges(ctx, S, ident, pairs, lw_cap, smooth=True, min_len=2.5 * lw_cap)
     if cap_polys:
         allp = np.concatenate(cap_polys)
         x0, y0 = allp.min(0)
