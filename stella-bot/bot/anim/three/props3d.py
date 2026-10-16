@@ -57,8 +57,9 @@ class Kit:
     def lat(self, name: str, n: int, profile: Callable[[], list[tuple[float, float]]], convex: bool = False):
         return _cached(self.cache, ("lathe", name, n), lambda: lathe(profile(), n, convex=convex))
 
-    def add(self, shape, mat: Material | None = None, pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0),  # type: ignore[no-untyped-def]
-            scale=(1.0, 1.0, 1.0), parent: Obj | None = None, **kw) -> Obj:
+    def add(self, shape: object, mat: Material | None = None, pos: tuple = (0.0, 0.0, 0.0),
+            rot: tuple = (0.0, 0.0, 0.0), scale: tuple | float = (1.0, 1.0, 1.0), parent: Obj | None = None,
+            **kw: object) -> Obj:
         if isinstance(scale, (int, float)):
             scale = (scale, scale, scale)
         o = Obj(shape, mat or self.main, pos=pos, rot=rot, scale=scale, parent=parent or self.root, **kw)
@@ -367,18 +368,17 @@ def _b_dice(k: Kit) -> None:
 
 
 def _bands_vcolor(m, base: RGB, seed: int) -> np.ndarray:  # type: ignore[no-untyped-def]
-    """Полосы планеты по широте (чуть волнистые)."""
+    """Полосы планеты по широте (чуть волнистые): светлые розоватые, одна тёмная у экватора."""
     y = m.v[:, 1]
     ang = np.arctan2(m.v[:, 2], m.v[:, 0])
-    w = y + 0.06 * np.sin(ang * 3 + seed)
+    w = y + 0.07 * np.sin(ang * 3 + seed)
     b = np.asarray(base, float)
-    light = np.asarray(lighten(base, 0.35))
-    dark = np.asarray(mix(base, (0.2, 0.1, 0.4), 0.45))
-    band = np.clip(np.sin(w * 6.0) * 2.0, 0, 1)
-    band2 = np.clip((np.abs(w + 0.25) - 0.09) / 0.05, 0, 1)
-    col = b[None] * (1 - band[:, None] * 0.75) + light[None] * band[:, None] * 0.75
-    col = col * band2[:, None] + dark[None] * (1 - band2[:, None])
-    return col
+    light = np.asarray(mix(lighten(base, 0.3), (1.0, 0.65, 0.85), 0.45))
+    dark = np.asarray(mix(base, (0.2, 0.1, 0.42), 0.5))
+    band = np.clip(np.sin(w * 5.5 + 0.6) * 3.0, 0, 1)
+    band2 = np.clip((np.abs(w + 0.22) - 0.08) / 0.05, 0, 1)
+    col = b[None] * (1 - band[:, None]) + light[None] * band[:, None]
+    return col * band2[:, None] + dark[None] * (1 - band2[:, None])
 
 
 def _b_planet(k: Kit) -> None:
@@ -407,7 +407,9 @@ def _ribbon_bands(wa: float, wb: float):
                 n[ax] = sg
                 c = M @ n + T
                 nw = n @ Minv
-                if float(nw @ (cam.pos - c)) <= 0:
+                to_cam = cam.pos - c
+                k = float(nw @ to_cam) / (float(np.linalg.norm(nw) * np.linalg.norm(to_cam)) + 1e-12)
+                if k <= 0:
                     continue
                 o1, o2 = [a for a in range(3) if a != ax]
                 for band_ax, w in ((0, wa), (2, wb)):
@@ -423,6 +425,8 @@ def _ribbon_bands(wa: float, wb: float):
                         rect.append(p)
                     rect_a = np.array(rect)
                     loops.append(rect_a)
+                    if k < 0.3:  # грань почти ребром к камере — без линий, они легли бы на силуэт
+                        continue
                     # края ленты — тонкой линией, не доходя до скруглённых рёбер куба
                     lines.append(rect_a[[0, 3]] * np.where(np.arange(3) == other, 0.84, 1.0))
                     lines.append(rect_a[[1, 2]] * np.where(np.arange(3) == other, 0.84, 1.0))
@@ -444,24 +448,28 @@ def _b_gift(k: Kit) -> None:
     k.add(k.sph(k.lv(0.5)), rib, pos=(0, 0.38, 0.0), scale=0.11, bias=-0.35)
 
 
-def _cake_vcolor(m, body: RGB, icing: RGB, top: float, drip: float, waves: int) -> np.ndarray:  # type: ignore[no-untyped-def]
-    ang = np.arctan2(m.v[:, 2], m.v[:, 0])
-    edge = top - 0.05 - drip * np.clip(np.sin(ang * waves) * 0.8 + 0.4 * np.sin(ang * waves * 2 + 1.3), 0, 1)
-    k = np.clip((m.v[:, 1] - edge) / 0.025, 0, 1)
-    return np.asarray(body)[None] * (1 - k[:, None]) + np.asarray(icing)[None] * k[:, None]
+def _icing_loops(r: float, top: float, drip: float, waves: int, phase: float) -> list[np.ndarray]:
+    """Глазурь яруса торта — пятно с чётким краем: верхний круг и волнистая кромка потёков по боку
+    (оба контура обходятся одинаково — правило winding их складывает)."""
+    a = np.linspace(0, 2 * np.pi, 96, endpoint=False)
+    edge = top - 0.04 - drip * (0.5 + 0.5 * np.sin(a * waves + phase)) ** 3 * (0.75 + 0.25 * np.sin(a * 3 + 1.3))
+    rr = r * 1.003
+    side = np.stack([rr * np.cos(a), edge, -rr * np.sin(a)], 1)
+    cap = np.stack([rr * np.cos(a), np.full_like(a, top + 0.002), -rr * np.sin(a)], 1)
+    return [cap, side]
 
 
 def _b_cake(k: Kit) -> None:
     body = tuple(k.main.color)
     cream = hx("#fff6ea")
     n = k.seg
-    m1 = k.lat("cake1", n, lambda: rounded_profile(0.82, -0.92, -0.28, 0.07, rows=8), convex=True)
-    m2 = k.lat("cake2", n, lambda: rounded_profile(0.58, -0.3, 0.2, 0.07, rows=7), convex=True)
-    vc1 = _cached(k.cache, ("cake_vc1", n, body), lambda: _cake_vcolor(m1, body, cream, -0.28, 0.2, 7))
-    vc2 = _cached(k.cache, ("cake_vc2", n, body), lambda: _cake_vcolor(m2, cream, body, 0.2, 0.17, 6))
-    k.add(m1, Material(body, k.main.kind, vcolor=vc1))
-    k.add(m2, Material(body, k.main.kind, vcolor=vc2), bias=-0.05)
-    cm = k.lat("candle", k.lv(0.4, 8), lambda: rounded_profile(1.0, -1.0, 1.0, 0.25), convex=True)
+    m1 = k.lat("cake1", n, lambda: rounded_profile(0.82, -0.92, -0.28, 0.07, steps=2), convex=True)
+    m2 = k.lat("cake2", n, lambda: rounded_profile(0.58, -0.3, 0.2, 0.07, steps=2), convex=True)
+    t1 = k.add(m1, Material(body, k.main.kind))
+    t1.patches.append((_icing_loops(0.82, -0.28, 0.2, 7, 0.0), cream))
+    t2 = k.add(m2, Material(cream, k.main.kind), bias=-0.05)
+    t2.patches.append((_icing_loops(0.58, 0.2, 0.17, 6, 0.8), body))
+    cm = k.lat("candle", 8, lambda: rounded_profile(1.0, -1.0, 1.0, 0.3, steps=1), convex=True)
     candles = []
     for i, (ang, col) in enumerate(((0.35, "#3ec1ff"), (2.45, "#ffd23f"), (4.4, "#7cdf6b"))):
         x, z = 0.3 * math.cos(ang), -0.3 * math.sin(ang)
@@ -506,14 +514,14 @@ def _b_donut(k: Kit) -> None:
     dough = hx("#e8a96a")
 
     def top_edge(u: float) -> float:
-        return -0.15 + 0.22 * max(0.0, math.sin(u * 5 + 1.0)) ** 2
+        return 0.05 - 0.25 * max(0.0, math.sin(u * 5 + 1.0)) ** 2
 
     def vcol() -> np.ndarray:
         v = mesh.v
         u = np.arctan2(-v[:, 2], v[:, 0])
         sv = v[:, 1] / r
-        edge = -0.15 + 0.22 * np.clip(np.sin(u * 5 + 1.0), 0, 1) ** 2
-        kk = np.clip((sv - edge) / 0.12, 0, 1)
+        edge = 0.05 - 0.25 * np.clip(np.sin(u * 5 + 1.0), 0, 1) ** 2  # потёки глазури вниз
+        kk = np.clip((sv - edge) / 0.1, 0, 1)
         return np.asarray(dough)[None] * (1 - kk[:, None]) + np.asarray(icing)[None] * kk[:, None]
 
     vc = _cached(k.cache, ("donut_vc", k.seg, icing), vcol)
@@ -693,6 +701,7 @@ def draw_prop(ctx: cairo.Context, prop: PropSpec, t: float, x: float, y: float, 
         from .text3d import draw_word
 
         max_w = _frame_width(ctx)
+        stats(cache)["objects"] += 1
         draw_word(ctx, prop.text or "3D", x, y, size_px, color=prop.color, material=prop.material,
                   anim=prop.anim, t=t, phase=phase, cache=cache, quality=quality,
                   max_w=max_w * 0.92 if max_w else None)

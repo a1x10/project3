@@ -241,7 +241,7 @@ def fit_layout(text: str, zone_px: tuple[float, float, float, float], steps: int
     k = 0
     y = top
     xs0, xs1 = [], []
-    for li, (line, (w, hi, lo)) in enumerate(zip(lines, mets)):
+    for li, (line, (w, hi, lo)) in enumerate(zip(lines, mets, strict=True)):
         base = y + hi * em
         x = (zx0 + zx1) / 2 - w * em / 2
         xs0.append(x)

@@ -28,6 +28,7 @@ class Mesh:
     f: np.ndarray  # (M, 3) грани, int32
     flat: bool = False  # гранёная: свет по грани (кристалл, диско-шар), а не по вершинам
     convex: bool = True  # выпуклая — силуэт не может закрывать сам себя (контур без проверки перекрытий)
+    is_sphere: bool = False  # единичная сфера: крошечную можно рисовать 2D-кружком (render3d._impostor)
     n: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]  # (N, 3) нормали вершин
     edges: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]  # (E, 2) вершины рёбер
     ef: np.ndarray = field(default=None, repr=False)  # type: ignore[assignment]  # (E, 2) грани ребра, -1 — край
@@ -87,9 +88,11 @@ def lod_level(segments: float) -> int:
     return best
 
 
-def lod_for_radius(r_px: float, quality: str = "normal", lo: int = 10, hi: int = 32) -> int:
-    """Сегменты по кругу для радиуса на экране: около r/4 (не грубее lo, не тоньше hi); fast — на треть грубее."""
-    k = 4.0 if quality != "fast" else 6.0
+def lod_for_radius(r_px: float, quality: str = "normal", lo: int = 16, hi: int = 40) -> int:
+    """Сегменты по кругу для радиуса на экране: около r/3 (не грубее lo, не тоньше hi); fast — вдвое грубее."""
+    k = 3.0 if quality != "fast" else 6.0
+    if quality == "fast":
+        lo = min(lo, 12)
     seg = min(max(r_px / k, lo), hi)
     return lod_level(seg)
 
@@ -129,7 +132,7 @@ def sphere(nu: int = 24, nv: int | None = None, sx: float = 1.0, sy: float = 1.0
     for i in range(nu):
         j = (i + 1) % nu
         f.append((base + i, bot, base + j))
-    return Mesh(v, np.array(f, np.int32)).prepare()
+    return Mesh(v, np.array(f, np.int32), is_sphere=(e == 1.0 and sx == sy == sz == 1.0)).prepare()
 
 
 def torus(R: float = 1.0, r: float = 0.4, nu: int = 32, nv: int = 14) -> Mesh:
@@ -472,7 +475,7 @@ class Extrusion:
             edge = np.roll(c, -1, 0) - c
             out2 = np.stack([edge[:, 1], -edge[:, 0]], 1)
             out2 = out2 / (np.linalg.norm(out2, axis=1, keepdims=True) + 1e-12)
-            for (ca, za, sa), (cb, zb, sb) in zip(layers[:-1], layers[1:]):
+            for (ca, za, sa), (cb, zb, sb) in zip(layers[:-1], layers[1:], strict=True):
                 A = np.column_stack([ca, np.full(m, za)])
                 B = np.column_stack([cb, np.full(m, zb)])
                 q = np.stack([A, np.roll(A, -1, 0), np.roll(B, -1, 0), B], 1)

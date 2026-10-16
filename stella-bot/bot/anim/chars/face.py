@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 import cairocffi as cairo
 
 from ..draw import ellipse, fill_ink, heart, rrect, set_source, sparkle, star
-from ..ease import clamp, lerp, smoothstep
+from ..ease import clamp, lerp
 from ..model import RGB, Pose
 from ..palette import INK, hx, lighten, mix, mul
 from .look import Look
@@ -302,6 +302,14 @@ def _mouth(ctx: cairo.Context, look: Look, pose: Pose, ef: EmoFace, x: float, y:
         _open_mouth(ctx, look, pose, kind, o, shape, x, y, wk, sp)
         return
     w = 13.0 * wk
+    if sp.nose == "dog" and kind in ("smile", "proud"):  # счастливый пёс показывает язык
+        ctx.move_to(x - 5.5, y + 4)
+        ctx.curve_to(x - 6.5, y + 15, x + 6.5, y + 15, x + 5.5, y + 4)
+        ctx.close_path()
+        fill_ink(ctx, TONGUE, 2.4)
+        ctx.move_to(x, y + 5)
+        ctx.line_to(x, y + 9)
+        _stroke(ctx, mul(TONGUE, 0.7), 1.4)
     if kind == "smile":
         ctx.move_to(x - w, y - 2)
         ctx.curve_to(x - w * 0.45, y + 9, x + w * 0.45, y + 9, x + w, y - 2)

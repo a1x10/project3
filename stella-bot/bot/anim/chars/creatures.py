@@ -77,7 +77,7 @@ def head_top(look: Look, r: float) -> float:
 
 def ears_top(look: Look, r: float) -> float:
     """Насколько выше макушки торчат уши/рожки/антенны (единицы, ≥ 0)."""
-    return {"cat": 0.62, "fox": 0.8, "bunny": 1.4, "bear": 0.2, "dragon": 0.55, "alien": 0.75,
+    return {"dog": 0.12, "cat": 0.62, "fox": 0.8, "bunny": 1.4, "bear": 0.2, "dragon": 0.55, "alien": 0.75,
             "robot": 0.75, "monster": 0.5}.get(look.base, 0.0) * r
 
 

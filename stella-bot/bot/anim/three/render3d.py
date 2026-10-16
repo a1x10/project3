@@ -21,6 +21,7 @@ import numpy as np
 from ..palette import INK
 from . import meshpat
 from .mesh import Extrusion, Mesh
+from .shade import LIGHT as LIGHT_DIR
 from .shade import Material, flat_fill, shade
 
 DIST = 6.0
@@ -97,6 +98,8 @@ class Obj:
     # «покраска» области сетки чётким краем: (контуры на поверхности (k, 3) в локальных координатах, цвет);
     # контуры одного направления складываются, встречные — вырезают (брюшко пингвина, глазурь)
     patches: list[tuple[Any, tuple[float, float, float]]] = field(default_factory=list)
+    clip_decals: bool = False  # обрезать наклейки по силуэту части (лицо у края головы не «вылезает»)
+    silhouette: list = field(default_factory=list, repr=False)  # замкнутые петли силуэта последнего кадра
 
 
 def world(o: Obj) -> tuple[np.ndarray, np.ndarray]:
@@ -116,13 +119,14 @@ def stats(cache: dict) -> dict:
 
 
 def estimate_tris(parts: Sequence[Obj]) -> int:
-    """Оценка видимых треугольников: у замкнутой сетки к камере смотрит около половины граней."""
+    """Оценка видимых треугольников с запасом: у замкнутой сетки к камере смотрит около половины граней
+    (у сплюснутых деталей — чуть больше)."""
     n = 0.0
     for o in parts:
         if isinstance(o.shape, Mesh):
-            n += o.shape.ntri * 0.55
+            n += o.shape.ntri * 0.62
         elif isinstance(o.shape, Extrusion):
-            n += len(o.shape.quads) * 0.55 * 2
+            n += len(o.shape.quads) * 0.62 * 2
     return int(n)
 
 
@@ -198,6 +202,28 @@ def smooth_path(ctx: cairo.Context, pts: list[list[float]], closed: bool, smooth
         ctx.close_path()
 
 
+def _relax(P: np.ndarray, closed: bool) -> np.ndarray:
+    """Сгладить «лесенку» силуэта: силуэт сетки идёт то по меридиану, то по параллели, и черта зигзагует.
+    Двигаются только вершины зигзага (поворот меняет знак у соседей): p' = p/2 + (prev + next)/4 гасит зигзаг
+    через точку полностью. Выпуклые участки (скруглённые углы куба, бок шара) не трогаем — иначе черта уходит
+    внутрь и из-под неё выглядывает заливка."""
+    if closed:
+        prev, nxt = np.roll(P, 1, 0), np.roll(P, -1, 0)
+    else:
+        prev = np.vstack([P[:1], P[:-1]])
+        nxt = np.vstack([P[1:], P[-1:]])
+    d1 = P - prev
+    d2 = nxt - P
+    cr = d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]
+    sg = np.sign(np.where(np.abs(cr) < 1e-9, 0.0, cr))
+    zig = (sg != 0) & ((sg != np.roll(sg, 1)) | (sg != np.roll(sg, -1)))
+    if not closed:
+        zig[0] = zig[-1] = False
+    out = P.copy()
+    out[zig] = 0.5 * P[zig] + 0.25 * (prev[zig] + nxt[zig])
+    return out
+
+
 def _occluded(mid: np.ndarray, mdepth: np.ndarray, tri: np.ndarray, tdepth: np.ndarray) -> np.ndarray:
     """Какие точки mid (k, 2) с глубиной mdepth закрыты треугольниками tri (t, 3, 2) с глубиной вершин tdepth."""
     if not len(mid) or not len(tri):
@@ -228,23 +254,30 @@ def _occluded(mid: np.ndarray, mdepth: np.ndarray, tri: np.ndarray, tdepth: np.n
 
 
 def _stroke_edges(ctx: cairo.Context, S: np.ndarray, weld: np.ndarray, pairs: np.ndarray, lw: float,
-                  smooth: bool, alpha: float = 1.0, min_len: float = 0.0) -> None:
+                  smooth: bool, alpha: float = 1.0, min_len: float = 0.0, keep: list | None = None) -> None:
     """Обвести рёбра (пары вершин) цепочками; открытые цепочки короче min_len пикселей — пропустить
     (короткие «засечки» касательных на фаске мелькают при вращении)."""
     if not len(pairs) or lw <= 0:
         return
     wp = weld[pairs]
     rep: dict[int, int] = {}
-    for (i0, i1), (w0, w1) in zip(pairs.tolist(), wp.tolist()):
+    for (i0, i1), (w0, w1) in zip(pairs.tolist(), wp.tolist(), strict=True):
         rep.setdefault(w0, i0)
         rep.setdefault(w1, i1)
+    loops: list[list[list[float]]] = []
     for chain, closed in _chains([tuple(x) for x in wp.tolist()]):
         pts = [S[rep[w]].tolist() for w in chain]
         if min_len > 0 and not closed:
             arr = np.asarray(pts)
             if float(np.linalg.norm(np.diff(arr, axis=0), axis=1).sum()) < min_len:
                 continue
+        if smooth and len(pts) >= 5:
+            pts = _relax(np.asarray(pts, float), closed).tolist()
+        if closed:
+            loops.append(pts)
         smooth_path(ctx, pts, closed, smooth)
+    if keep is not None:
+        keep.extend(loops)
     ctx.set_source_rgba(*INK, alpha)
     ctx.set_line_width(lw)
     ctx.set_line_cap(cairo.LINE_CAP_ROUND)
@@ -306,12 +339,20 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
             if not loops:
                 continue
             pc = shade(N, V, mat, base=np.asarray(pcol, float))
+            polys = [cam.project(np.asarray(loop, float) @ M.T + T) for loop in loops]
+            # только треугольники, задевающие рамку хоть одного контура: заливка сеткой дорогая
+            tlo, thi = tris.min(1), tris.max(1)
+            near = np.zeros(len(tris), bool)
+            for poly in polys:
+                plo, phi = poly.min(0) - 1, poly.max(0) + 1
+                near |= np.all(thi >= plo, 1) & np.all(tlo <= phi, 1)
+            if not near.any():
+                continue
             ctx.save()
-            for loop in loops:
-                _cap_path(ctx, [cam.project(np.asarray(loop, float) @ M.T + T)])
+            _cap_path(ctx, polys)
             ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
             ctx.clip()
-            meshpat.paint_triangles(ctx, tris, pc[m.f[order]])
+            meshpat.paint_triangles(ctx, tris[near], pc[m.f[order[near]]])
             ctx.restore()
             if lines and lw > 0:
                 for ln in lines:
@@ -344,8 +385,10 @@ def draw_mesh(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: np.nd
     weld = _weld(m)
     # у невыпуклых (тор, кубок) — без коротких обрывков: там, где поверхность почти ребром к камере, силуэт
     # многоугольной сетки распадается на «чёрточки»
-    min_len = 0.0 if m.convex else 3.0 * lw * o.outline
-    _stroke_edges(ctx, S, weld, pairs, lw * o.outline, smooth=not m.flat, alpha=alpha, min_len=min_len)
+    min_len = 0.0 if m.convex else 4.0 * lw * o.outline
+    o.silhouette = []
+    _stroke_edges(ctx, S, weld, pairs, lw * o.outline, smooth=not m.flat, alpha=alpha, min_len=min_len,
+                  keep=o.silhouette if m.convex else None)
 
 
 def _weld(m: Mesh) -> np.ndarray:
@@ -418,7 +461,6 @@ def draw_extrusion(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: 
             pairs = ex.edges[sel]
             P = ex.epts @ M.T + T
             S = cam.project(P)
-            ed = cam.depth(P[pairs].mean(1))
             if len(order):
                 qs = cam.project(Q[order])
                 tri = np.concatenate([qs[:, [0, 1, 2]], qs[:, [0, 2, 3]]])
@@ -428,9 +470,10 @@ def draw_extrusion(ctx: cairo.Context, cam: Camera3D, o: Obj, M: np.ndarray, T: 
                 # иначе остаются короткие «засечки» наполовину спрятанных рёбер
                 a2, b2 = S[pairs[:, 0]], S[pairs[:, 1]]
                 da, db = cam.depth(P[pairs[:, 0]]), cam.depth(P[pairs[:, 1]])
-                hid = np.zeros(len(pairs), bool)
-                for f in (0.15, 0.5, 0.85):
-                    hid |= _occluded(a2 + (b2 - a2) * f, da + (db - da) * f, tri, tdep)
+                fr = np.array([0.15, 0.5, 0.85])
+                pts = (a2[None] + (b2 - a2)[None] * fr[:, None, None]).reshape(-1, 2)
+                dep = (da[None] + (db - da)[None] * fr[:, None]).reshape(-1)
+                hid = _occluded(pts, dep, tri, tdep).reshape(3, -1).any(0)
                 pairs = pairs[~hid]
             ident = np.arange(len(S))
             _stroke_edges(ctx, S, ident, pairs, lw_cap, smooth=True, min_len=2.5 * lw_cap)
@@ -495,6 +538,52 @@ def surface_affine(cam: Camera3D, M: np.ndarray, T: np.ndarray, p: Sequence[floa
     return mtx, float(np.linalg.norm(ev)), k
 
 
+# ======================= крошечные шары =======================
+IMPOSTOR_PX = 13.0  # шар меньше этого радиуса на экране — 2D-кружок с тем же светом (ёлочные игрушки, кисти)
+
+
+def _impostor_radius(cam: Camera3D, o: Obj, M: np.ndarray, T: np.ndarray) -> float:
+    """Радиус шара на экране, если часть — маленький равномерный шар без наклеек и покраски; иначе 0."""
+    m = o.shape
+    if not isinstance(m, Mesh) or not m.is_sphere or o.patches or o.decals or o.mat is None:
+        return 0.0
+    if o.mat.vcolor is not None or o.mat.kind == "glass":
+        return 0.0
+    sc = np.linalg.norm(M, axis=0)
+    if sc.max() > sc.min() * 1.06:
+        return 0.0
+    r = cam.f * float(sc.mean()) / float(cam.depth(T))
+    return r if r < IMPOSTOR_PX else 0.0
+
+
+def _impostor(ctx: cairo.Context, cam: Camera3D, o: Obj, T: np.ndarray, r: float, lw: float,
+              st: dict | None) -> None:
+    """Маленький шар одним кружком: радиальный градиент из цветов того же материала (свет → середина → тень),
+    блик и контур. На таком размере не отличить от сетки, а стоит в разы дешевле."""
+    assert o.mat is not None
+    cx, cy = (float(v) for v in cam.project(T[None])[0])
+    lx, ly = float(LIGHT_DIR[0]), float(LIGHT_DIR[1])
+    N = _unit(np.array([[lx, ly, 0.75], [0.0, 0.0, 1.0], [-lx, -ly, 0.25]]))
+    V = np.tile([0.0, 0.0, 1.0], (3, 1))
+    c = shade(N, V, o.mat)[:, :3].tolist()
+    hx_, hy_ = cx + lx * r * 0.4, cy - ly * r * 0.4
+    g = cairo.RadialGradient(hx_, hy_, r * 0.05, cx, cy, r * 1.05)
+    g.add_color_stop_rgb(0.0, *c[0])
+    g.add_color_stop_rgb(0.45, *c[1])
+    g.add_color_stop_rgb(1.0, *c[2])
+    ctx.arc(cx, cy, r, 0, 2 * math.pi)
+    ctx.set_source(g)
+    ctx.fill_preserve()
+    if o.outline > 0 and lw > 0:
+        ctx.set_source_rgb(*INK)
+        ctx.set_line_width(lw * o.outline)
+        ctx.stroke()
+    else:
+        ctx.new_path()
+    if st is not None:
+        st["tris"] += 1
+
+
 # ======================= «слоёная кукла» =======================
 def draw_parts(ctx: cairo.Context, cam: Camera3D, parts: Sequence[Obj], lw: float, st: dict | None = None) -> None:
     """Нарисовать части объекта по глубине (дальние первыми); у каждой — заливка, контур и наклейки."""
@@ -515,13 +604,21 @@ def draw_parts(ctx: cairo.Context, cam: Camera3D, parts: Sequence[Obj], lw: floa
             entries.append((d, i, o, M, T, None))
     entries.sort(key=lambda e: (-e[0], e[1]))
     for _, _, o, M, T, half in entries:
-        if isinstance(o.shape, Mesh):
+        r_imp = _impostor_radius(cam, o, M, T) if half is None else 0.0
+        if r_imp > 0:
+            _impostor(ctx, cam, o, T, r_imp, lw, st)
+        elif isinstance(o.shape, Mesh):
             draw_mesh(ctx, cam, o, M, T, lw, half, st)
         else:
             draw_extrusion(ctx, cam, o, M, T, lw, st)
         if half is None or half[0] == "near":
             for decal in o.decals:
                 ctx.save()
+                if o.clip_decals and o.silhouette:
+                    for loop in o.silhouette:
+                        smooth_path(ctx, loop, True, True)
+                    ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
+                    ctx.clip()
                 decal(ctx, cam, M, T)
                 ctx.restore()
 

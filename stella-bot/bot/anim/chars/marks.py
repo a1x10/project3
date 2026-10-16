@@ -12,7 +12,7 @@ import math
 
 import cairocffi as cairo
 
-from ..draw import ellipse, fill_ink, fill_union, heart, set_source, sparkle, star, text_path
+from ..draw import ellipse, fill_union, heart, set_source, sparkle, star, text_path
 from ..ease import clamp, ease_out_back, smoothstep
 from ..palette import INK, hx, lighten
 
@@ -50,6 +50,18 @@ def _glyph(ctx: cairo.Context, text: str, x: float, y: float, size: float, fill,
     ctx.stroke_preserve()
     set_source(ctx, fill, alpha)
     ctx.fill()
+    ctx.restore()
+
+
+def _group_paint(ctx: cairo.Context, box: tuple[float, float, float, float], draw, alpha: float) -> None:
+    """Нарисовать draw() группой с прозрачностью alpha; группа — только по рамке box (x, y, w, h)."""
+    ctx.save()
+    ctx.rectangle(*box)
+    ctx.clip()
+    ctx.push_group()
+    draw()
+    ctx.pop_group_to_source()
+    ctx.paint_with_alpha(clamp(alpha))
     ctx.restore()
 
 
@@ -233,10 +245,8 @@ def _steam(ctx, p, cx, cy, u, f, r, t, sc, al, lw):
             for k in range(3):
                 ctx.new_sub_path()
                 ctx.arc(x + s * k * rr * 0.7, y - k * rr * 0.6, rr * (1 - k * 0.15), 0, 2 * math.pi)
-        ctx.push_group()
-        fill_union(ctx, puffs, (0.96, 0.96, 1.0), lw * 0.7)
-        ctx.pop_group_to_source()
-        ctx.paint_with_alpha(a)
+        box = (x - rr * 2 - lw, y - rr * 3 - lw, rr * 4 + 2 * lw + rr * 2, rr * 5 + 2 * lw)
+        _group_paint(ctx, box, lambda puffs=puffs, lw=lw: fill_union(ctx, puffs, (0.96, 0.96, 1.0), lw * 0.7), a)
 
 
 def _shock(ctx, p, cx, cy, u, f, r, t, sc, al, lw):
@@ -274,22 +284,22 @@ def draw_puff(ctx: cairo.Context, p: float, cx: float, cy: float, u: float, seed
     if p <= 0 or p >= 1:
         return
     grow = ease_out_back(clamp(p / 0.35))
-    a = 1.0 - smoothstep((p - 0.45) / 0.55)
+    a = 1.0 - smoothstep((p - 0.22) / 0.33)
+    if a <= 0.01:
+        return
     lw = max(1.2, 2.6 * u)
 
     def puffs() -> None:
         for i in range(9):
             ang = 2 * math.pi * i / 9 + seed
             d = (40 + 55 * p) * u
-            rr = (30 - 8 * (i % 3)) * u * grow * (1 - 0.35 * p)
+            rr = (30 - 8 * (i % 3)) * u * grow * (1 - 0.8 * p)
             ctx.new_sub_path()
             ctx.arc(cx + math.cos(ang) * d, cy + math.sin(ang) * d * 0.8, max(0.5, rr), 0, 2 * math.pi)
         ctx.new_sub_path()
         ctx.arc(cx, cy, max(0.5, 52 * u * grow * (1 - 0.6 * p)), 0, 2 * math.pi)
-    ctx.push_group()
-    fill_union(ctx, puffs, (0.95, 0.94, 1.0), lw)
-    ctx.pop_group_to_source()
-    ctx.paint_with_alpha(clamp(a))
+    ext = (140 + 100 * p) * u
+    _group_paint(ctx, (cx - ext, cy - ext, ext * 2, ext * 2), lambda: fill_union(ctx, puffs, (0.93, 0.91, 1.0), lw), a)
     if p < 0.5:
         for i in range(5):
             ang = 2 * math.pi * i / 5 + 0.4 + seed
@@ -335,11 +345,9 @@ def draw_dust(ctx: cairo.Context, p: float, x: float, y: float, u: float, f: int
             rr = (7 + 3 * i) * u * (0.6 + 0.6 * p)
             ctx.new_sub_path()
             ctx.arc(x + dx, y - rr * 0.7 - i * 2 * u, rr, 0, 2 * math.pi)
-    ctx.push_group()
-    fill_union(ctx, puffs, (0.93, 0.9, 0.86), lw)
-    ctx.pop_group_to_source()
-    ctx.paint_with_alpha(a)
+    ext = 90 * u
+    _group_paint(ctx, (x - ext, y - ext, ext * 2, ext * 1.2), lambda: fill_union(ctx, puffs, (0.93, 0.9, 0.86), lw), a)
 
 
 MARK_KINDS = tuple(_MARKS)
-__all__ = ["MARK_KINDS", "draw_dust", "draw_mark", "draw_puff", "draw_spark", "fill_ink"]
+__all__ = ["MARK_KINDS", "draw_dust", "draw_mark", "draw_puff", "draw_spark"]
