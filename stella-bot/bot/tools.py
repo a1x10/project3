@@ -21,7 +21,7 @@ class ChatActions(Protocol):
 
     async def delete_mine(self, *, quoted_id: str | None = None, text: str | None = None) -> list[str]: ...
 
-    async def send_file(self, file: Any, caption: str = "") -> None: ...
+    async def send_file(self, file: Any, caption: str = "", reply: bool = False) -> None: ...
 
     async def fetch_media(self, key: dict[str, Any], message: dict[str, Any] | None) -> bytes | None: ...
 
@@ -55,6 +55,7 @@ class ToolContext:
     # решает, нужно ли самой объявить «делаю, будет через N секунд»
     replied: int = 0
     cartoon_queued: bool = False
+    html_queued: bool = False
     # фото/стикер, из которого можно сделать мем: (key, message) для скачивания
     quoted_media: tuple[dict[str, Any], dict[str, Any] | None] | None = None
 

@@ -373,14 +373,26 @@ async def test_strangers_in_telegram_dm_have_a_daily_cap(tbrain, api):
     assert len(api.sent()) == 3  # владельцу — без лимита
 
 
-async def test_html_page_goes_to_telegram_as_file(tbrain, api):
+async def test_html_page_goes_to_telegram_as_file(tbrain, api, monkeypatch):
+    from bot import html_studio, weblibs
+
+    async def run(settings, brief, title, image=None):
+        return html_studio.StudioResult("<h1>С днём рождения!</h1>", 0.4, 1.0)
+
+    async def no_download(*a, **kw):
+        return []
+
+    monkeypatch.setattr(html_studio, "run", run)
+    monkeypatch.setattr(weblibs, "ensure", no_download)
+
     async def make(tools, prompt):
-        await tools["make_html"].handler({"title": "Открытка", "html": "<h1>С днём рождения!</h1>"})
-        return "лови открытку"
+        await tools["make_html"].handler({"title": "Открытка", "brief": "открытка Васе на день рождения, салют"})
+        return "делаю открытку, минуты через 3"
 
     tbrain.llm.queue = [make]
-    await feed_tg(tbrain, tg_update("стелла сделай открытку", chat_id=VASYA_TG, chat_type="private"))
-    assert [b["text"] for b in api.sent()] == ["лови открытку"]
+    await feed_tg(tbrain, tg_update("стелла сделай открытку", chat_id=VASYA_TG, chat_type="private", mid=77))
+    assert [b["text"] for b in api.sent()] == ["делаю открытку, минуты через 3"]
     doc = api.sent("sendDocument")
     assert len(doc) == 1 and b'filename="' in doc[0]["_raw"] and b"text/html" in doc[0]["_raw"]
+    assert b'"message_id": 77' in doc[0]["_raw"] or b'"message_id":77' in doc[0]["_raw"]  # ответом на просьбу
     assert tbrain.wa.sent == []

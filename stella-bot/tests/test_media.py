@@ -105,17 +105,6 @@ def test_html_full_document_keeps_its_own_head():
         media.html_page("т", "x" * (media.MAX_HTML_CHARS + 1))
 
 
-async def test_she_sends_html_page(brain):
-    async def make(tools, prompt):
-        await tools["make_html"].handler({"title": "Викторина", "html": "<h1>Вопрос 1</h1>", "caption": "играй"})
-        return "держи викторину"
-
-    brain.llm.queue = [make]
-    await feed(brain, upsert("стелла сделай викторину html"))
-    files = [m for m in brain.evo.sent if m["type"] == "media"]
-    assert [m["type"] for m in brain.evo.sent] == ["text", "media"]
-    assert files[0]["mimetype"] == "text/html" and files[0]["filename"] == "Викторина.html"
-
 async def test_meme_from_quoted_sticker(brain):
     brain.evo.media = media.sticker_from_svg(SMILE).data
 

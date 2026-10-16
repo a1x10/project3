@@ -8,6 +8,7 @@ SVG чистится (без скриптов, внешних ссылок и в
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import os
@@ -439,18 +440,54 @@ def presentation(title: str, subtitle: str, slides: Any) -> MediaFile:
 
 # ---------- HTML-страница ----------
 MAX_HTML_CHARS = 400_000
-# Страница работает сама по себе (CSS, JS, анимации, кнопки), но ничего не грузит из интернета и не шлёт туда сама:
-# ни запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов. Переход по ссылке CSP в <meta> не запретит —
-# это как обычная ссылка в сообщении
-HTML_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
-            "font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; frame-src 'none'; "
-            "base-uri 'none'")
+PHOTO_MARK = "__PHOTO__"  # сюда подставляется фото из чата (data:)
+PAGE_PHOTO_SIDE = 1280
 _META_REFRESH = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?\s*refresh[^>]*>", re.IGNORECASE)
 _BASE_TAG = re.compile(r"<base\b[^>]*>", re.IGNORECASE)
 
 
-def html_page(title: str, html: str) -> MediaFile:
-    """HTML-страница от модели -> файл .html: целый документ, кодировка UTF-8 и жёсткий CSP первым в <head>."""
+def html_csp(script_src: list[str] = (), font_src: list[str] = ()) -> str:
+    """Страница работает сама по себе (CSS, JS, анимации, 3D, кнопки), но ничего не грузит из интернета и не шлёт
+    туда сама: ни запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов — кроме библиотек, которые не
+    удалось встроить (точные адреса на CDN с проверкой хеша). Переход по ссылке CSP в <meta> не запретит —
+    это как обычная ссылка в сообщении. eval разрешён: он не даёт выхода в сеть (калькуляторы им пользуются)."""
+    scripts = " ".join(["'unsafe-inline'", "'unsafe-eval'", *script_src])
+    fonts = " ".join(["data:", *font_src])
+    return (f"default-src 'none'; script-src {scripts}; style-src 'unsafe-inline'; img-src data: blob:; "
+            f"font-src {fonts}; media-src data: blob:; worker-src blob:; connect-src 'none'; form-action 'none'; "
+            "frame-src 'none'; base-uri 'none'")
+
+
+HTML_CSP = html_csp()
+
+
+def photo_for_page(data: bytes) -> tuple[str, bytes] | None:
+    """Фото/стикер из чата -> (mime, байты) для встраивания в страницу: до 1280 px; с прозрачностью — WebP."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.width * img.height > MAX_INPUT_PIXELS:
+            return None
+        img.seek(0)
+        img.draft("RGB", (PAGE_PHOTO_SIDE, PAGE_PHOTO_SIDE))
+        img.load()
+    except Exception:
+        return None
+    has_alpha = img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or img.mode in ("RGBA", "LA")
+    img = img.convert("RGBA" if has_alpha else "RGB")
+    img.thumbnail((PAGE_PHOTO_SIDE, PAGE_PHOTO_SIDE), Image.LANCZOS)
+    buf = io.BytesIO()
+    if has_alpha:
+        img.save(buf, "WEBP", quality=85)
+        return "image/webp", buf.getvalue()
+    img.save(buf, "JPEG", quality=84, optimize=True)
+    return "image/jpeg", buf.getvalue()
+
+
+def html_page(title: str, html: str, photo: tuple[str, bytes] | None = None, libs_dir: str | None = None) -> MediaFile:
+    """HTML-страница -> файл .html: целый документ, UTF-8, жёсткий CSP первым в документе; библиотеки
+    (<script src="lib/…">) и шрифты встроены в файл, фото из чата подставлено вместо __PHOTO__."""
+    from . import weblibs
+
     if not isinstance(html, str) or not html.strip():
         raise MediaError("html: нужен код страницы")
     if len(html) > MAX_HTML_CHARS:
@@ -458,13 +495,20 @@ def html_page(title: str, html: str) -> MediaFile:
     body = _META_REFRESH.sub("", html)
     body = _BASE_TAG.sub("", body)
     body = re.sub(r"^\s*<!doctype[^>]*>", "", body, flags=re.IGNORECASE)
-    csp = f'<meta http-equiv="Content-Security-Policy" content="{HTML_CSP}">'
+    if photo is not None and PHOTO_MARK in body:
+        mime, data = photo
+        body = body.replace(PHOTO_MARK, f"data:{mime};base64," + base64.b64encode(data).decode())
+    low = body.lower()
+    wrap = "<html" not in low and "<body" not in low  # просто кусок разметки — оборачиваем в страницу
+    has_title = "<title" in low
+    emb = weblibs.embed(body, libs_dir)
+    body = emb.html
+    csp = f'<meta http-equiv="Content-Security-Policy" content="{html_csp(emb.script_src, emb.font_src)}">'
     # наш CSP — самым первым в документе: до любого скрипта страницы (браузер сам поместит его в <head>)
     head = ('<meta charset="utf-8">' + csp + '<meta name="viewport" content="width=device-width, initial-scale=1">')
-    low = body.lower()
-    if "<html" not in low and "<body" not in low:  # просто кусок разметки — оборачиваем в страницу
+    if wrap:
         body = f"<title>{_esc(title)}</title><body>{body}</body>"
-    elif "<title" not in low:
+    elif not has_title:
         head += f"<title>{_esc(title)}</title>"
     body = "<!doctype html>\n" + head + "\n" + body
     return MediaFile("document", body.encode("utf-8"), MIME["html"], _safe_name(title, "html"))
