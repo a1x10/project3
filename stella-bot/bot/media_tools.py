@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
@@ -163,7 +164,116 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         ctx.after.append(send)
         return "ролик соберётся и уйдёт в чат сразу после твоего сообщения (секунд 10–30)"
 
+    async def make_cartoon(args: dict[str, Any]) -> str:
+        from .anim_beta import runner
+        from .anim_beta import spec as anim_spec
+
+        if not getattr(settings, "anim_enabled", True):
+            raise ToolError("мультики сейчас выключены владельцем")
+        if ctx.sender is None:
+            raise ToolError("мультик — только когда о нём просят")
+        if getattr(ctx, "cartoon_queued", False):
+            raise ToolError("за один ответ — один мультик")
+        await budget.take()
+        day_key = f"anim:{ctx.chat_id}:{date.today().isoformat()}"
+        used = await db.kv_get(day_key)
+        if not ctx.is_admin and used and used[1] >= getattr(settings, "anim_per_day", 8):
+            raise ToolError("на сегодня мультиков в этом чате хватит, давай завтра")
+        busy = runner.can_start(ctx.chat_id)
+        if busy:
+            raise ToolError(busy)
+        try:
+            plan, warnings, caption = await asyncio.to_thread(anim_spec.parse, args)
+        except anim_spec.SpecError as exc:
+            raise ToolError(str(exc)) from exc
+        eta_s = runner.estimate_seconds(plan)
+        eta = runner.human_eta(eta_s)
+        ctx.cartoon_queued = True
+        ctx.media_queued += 1
+        media_key = f"media:{ctx.chat_id}:{date.today().isoformat()}"
+        await db.kv_add(media_key, 1)
+        await db.kv_add(day_key, 1)
+        runner.STATE.busy_chats.add(ctx.chat_id)  # сразу: второй мультик в этот чат не встанет в очередь
+        actions = ctx.actions
+        released = asyncio.Event()
+
+        async def wait_reply() -> None:
+            try:
+                await asyncio.wait_for(released.wait(), 120)
+            except asyncio.TimeoutError:
+                pass  # её ответ так и не ушёл — шлём всё равно
+
+        async def deliver() -> None:
+            task = asyncio.ensure_future(runner.render(plan, ctx.chat_id))  # рисует, пока она пишет ответ
+            started = time.monotonic()
+            try:
+                done, _ = await asyncio.wait({task}, timeout=eta_s * 1.5 + 10)
+                if not done:
+                    await wait_reply()
+                    await actions.say("ещё чуть-чуть, мультик почти готов ⏳")
+                data = await task
+            except runner.RenderError as exc:
+                await db.kv_add(day_key, -1)
+                await db.kv_add(media_key, -1)
+                await wait_reply()
+                await actions.say(f"мультик не получился 😕 {exc}")
+                return
+            except Exception:
+                log.exception("мультик: ошибка")
+                await db.kv_add(day_key, -1)
+                await db.kv_add(media_key, -1)
+                await wait_reply()
+                await actions.say("мультик не получился 😕 попробуй ещё раз")
+                return
+            finally:
+                if not task.done():
+                    task.cancel()
+                runner.STATE.busy_chats.discard(ctx.chat_id)
+            await wait_reply()
+            log.info("мультик готов за %.0f с (обещала %.0f)", time.monotonic() - started, eta_s)
+            await actions.send_file(media.MediaFile("video", data, media.MIME["mp4"], "cartoon.mp4"), caption)
+
+        async def release() -> None:  # сразу после её сообщения; очередь ответов чата не ждёт рендер
+            if not getattr(ctx, "replied", 0):
+                await actions.say(f"делаю мультик 🎬 будет готов {eta}")
+            released.set()
+
+        ctx.after.append(release)
+        actions.spawn(deliver())
+        total = sum(s["dur"] for s in plan["scenes"])
+        note = f" Поправила в сценарии: {'; '.join(warnings)}." if warnings else ""
+        return (f"мультик ({total:.0f} с) уже рисуется, будет готов {eta}. Обязательно скажи в ответе своими "
+                f"словами, что делаешь мультик и что ждать примерно {eta}; сам ролик придёт отдельным сообщением."
+                + note)
+
     shape = {"type": "string", "enum": ["square", "wide", "tall"], "description": "квадрат, 16:9 или вертикальное"}
+    from .anim_beta import spec as anim_spec
+
+    color = {"type": "string", "description": "#RRGGBB"}
+    cartoon_schema = {"type": "object", "properties": {
+        "format": shape,
+        "caption": {"type": "string"},
+        "cast": {"type": "object", "description": "id -> персонаж (до 4)", "additionalProperties": {
+            "type": "object", "properties": {"kind": {"type": "string", "enum": list(anim_spec.KINDS)},
+                                             "color": color, "eyes": color}, "required": ["kind"]}},
+        "things": {"type": "object", "description": "id -> 3D-предмет (до 3)", "additionalProperties": {
+            "type": "object", "properties": {"shape": {"type": "string", "enum": list(anim_spec.SHAPES)},
+                                             "color": color, "size": {"type": "number"}}, "required": ["shape"]}},
+        "scenes": {"type": "array", "items": {"type": "object", "properties": {
+            "seconds": {"type": "number"},
+            "background": {"type": "string", "enum": list(anim_spec.BACKGROUNDS)},
+            "zoom": {"type": "number"},
+            "place": {"type": "object", "additionalProperties": {"type": "object", "properties": {
+                "x": {"type": "number"}, "y": {"type": "number"},
+                "facing": {"type": "string", "enum": ["left", "right"]}}}},
+            "events": {"type": "array", "items": {"type": "object", "properties": {
+                "t": {"type": "number"}, "who": {"type": "string"},
+                "do": {"type": "string", "enum": list(anim_spec.ACTS)}, "to": {"type": "number"},
+                "say": {"type": "string"}, "emotion": {"type": "string", "enum": list(anim_spec.EMOTIONS)},
+                "dur": {"type": "number"}, "fx": {"type": "string", "enum": ["confetti"]},
+                "x": {"type": "number"}, "y": {"type": "number"}}}},
+        }, "required": ["events"]}},
+    }, "required": ["scenes"]}
     return [
         ToolSpec(
             "make_sticker",
@@ -235,8 +345,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         ),
         ToolSpec(
             "make_video",
-            "Сделать короткое видео (до 40 с, без звука) — слайдшоу из сцен с плавным приближением и затуханием, "
-            "и отправить в чат. Сцена: {svg?: рисунок (" + SVG_RULES + " viewBox под форму видео: square "
+            "Сделать короткое видео (до 40 с, без звука) — слайдшоу из картинок с плавным приближением и затуханием, "
+            "и отправить в чат (мультик с движением — make_cartoon). Сцена: {svg?: рисунок (" + SVG_RULES + " viewBox под форму видео: square "
             "0 0 720 720, wide 0 0 1280 720, tall 0 0 720 1280), text?: крупный текст, если нет рисунка, "
             "caption?: подпись снизу, seconds: 1–8, bg?: цвет фона #RRGGBB}. До 12 сцен.",
             {"type": "object", "properties": {
@@ -251,5 +361,20 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 "caption": {"type": "string"},
             }, "required": ["scenes"]},
             make_video,
+        ),
+        ToolSpec(
+            "make_cartoon",
+            "Сделать МУЛЬТИК с настоящим движением (до 20 с, без звука): персонажи ходят, машут, прыгают, танцуют, "
+            "крутятся, говорят (рот двигается, реплика в пузыре), меняют эмоции; 3D-предметы вращаются; конфетти; "
+            "камера плавно приближается. Рисует сервер по твоему сценарию — сама не рисуешь и код не пишешь. "
+            "Ролик придёт отдельным сообщением; инструмент вернёт примерное время — ОБЯЗАТЕЛЬНО скажи в ответе, что "
+            "делаешь мультик и сколько ждать. Пока бета: kind — cat, fox, bunny, bear, toy (3D-зверёк); shape — gem, "
+            "star, donut, ball; фон — meadow (день), sunset, night. cast: {id: {kind, color?, eyes?}} до 4; "
+            "things: {id: {shape, color?, size? 0.4–1.4}} до 3; scenes (1–4): {seconds, background, zoom? 1–1.3, "
+            "place: {id: {x 0..1, y (только предметам), facing?}}, events: [{t: секунда сцены, who, do?: walk (to: "
+            "x)|wave|jump|dance|spin, say?: до 80 знаков, emotion?, dur?}, {t, fx: confetti, x, y}]}. Пиши живо: "
+            "4–10 событий на сцену, короткие реплики, смена эмоций. Эмодзи не рисуются (можно ♥ ★ ♪ ☺).",
+            cartoon_schema,
+            make_cartoon,
         ),
     ]
