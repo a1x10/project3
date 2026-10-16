@@ -290,9 +290,23 @@ async def test_real_screenshots_errors_and_no_network():
                                 'onclick="document.body.style.background=\'blue\'">Играть</button>'
                                 '<script>fetch("https://example.com").catch(()=>{}); null.x</script>').data
     shots = await page_shots.shoot(page)
-    assert len(shots.images) == 4 and all(img[:2] == b"\xff\xd8" for _, img in shots.images)
+    labels = [label for label, _ in shots.images]
+    assert all(img[:2] == b"\xff\xd8" for _, img in shots.images)
     assert shots.overflow and shots.page_errors() == 1
-    assert "после нажатия на первую кнопку" in [label for label, _ in shots.images]
+    assert "через 2.5 с после нажатия на главную кнопку" in labels and labels[-1].startswith("маленький телефон")
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_single_screen_game_shows_pause_and_final_screen():
+    from bot import page_shots
+
+    game = media.html_page("g", """<style>body{margin:0;height:100vh;overflow:hidden;background:#111;color:#fff}</style>
+<button data-primary onclick="st.textContent='игра'">Играть</button>
+<button data-pause onclick="st.textContent = st.textContent === 'пауза' ? 'игра' : 'пауза'">II</button>
+<h1 id=st>старт</h1><script>window.__studioEnd = () => { st.textContent = 'финал'; };</script>""").data
+    labels = [label for label, _ in (await page_shots.shoot(game)).images]
+    assert "пауза (нажата кнопка data-pause)" in labels and "экран финала (window.__studioEnd)" in labels
+    assert "после прокрутки вниз на экран" not in labels and len(labels) == 6
 
 
 # ---------- в чате: задание → «делаю, минуты через 3» → файл ----------
