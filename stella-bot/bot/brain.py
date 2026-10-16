@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import logging
 import random
 import time
@@ -199,6 +200,7 @@ class Brain:
         # память — своим отдельным слотом, чтобы фоновая выжимка не задерживала живые ответы
         self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
         self.reminders = Reminders(db, settings)
+        self._make_voice()
         from .sandbox import CodeSandbox
 
         self.sandbox = CodeSandbox(model=settings.sandbox_model, timeout=150)
@@ -261,6 +263,32 @@ class Brain:
     def on_settings_changed(self) -> None:
         """Настройки поменяли в панели: пересобрать то, что от них зависит."""
         self.system = system_prompt(self.s)
+        if getattr(self, "transcriber", None) and (self.transcriber.model_size != self.s.voice_stt_model
+                                                    or self.speaker.voice != self.s.voice_tts_voice):
+            self._make_voice()
+
+    def _make_voice(self) -> None:
+        from .voice import Speaker, Transcriber
+
+        models = os.path.join(self.s.data_dir, "models")
+        self.transcriber = Transcriber(self.s.voice_stt_model, os.path.join(models, "whisper"))
+        self.speaker = Speaker(self.s.voice_tts_voice, os.path.join(models, "piper"))
+
+    async def _transcribe(self, inc: Incoming) -> str:
+        """Голосовое -> текст (если включено и на сервере есть модель). Пустая строка — не получилось."""
+        from .voice import VoiceError
+
+        if not self.s.voice_enabled or not self.transcriber.available:
+            return ""
+        if inc.duration and inc.duration > self.s.voice_max_seconds:
+            return ""
+        try:
+            data = await self.evo.media_base64(inc.raw_key, inc.raw_message)
+            text = await self.transcriber.transcribe(data or b"") if data else ""
+        except (EvolutionError, VoiceError) as exc:
+            log.info("голосовое не расшифровалось: %s", exc)
+            return ""
+        return text.strip()
 
     async def _tunnel_loop(self) -> None:
         """Узнаём адрес Cloudflare-туннеля и присылаем владельцу ссылку на панель, когда он меняется."""
@@ -384,6 +412,10 @@ class Brain:
             if synced is None or time.monotonic() - synced[0] > GROUP_SYNC_EVERY:
                 self._start_group_sync(chat["id"], inc.chat_jid)
 
+        if inc.kind == "audio" and self._age_seconds(inc) <= self.s.reply_stale_minutes * 60:
+            heard = await self._transcribe(inc)  # она «слышит» голосовые: дальше это обычный текст
+            if heard:
+                inc.text = heard
         text = await self._readable_mentions(inc)
         quoted_is_bot = False
         if inc.quoted_id:
@@ -433,9 +465,9 @@ class Brain:
                           and (chat.get("chime_level") or self.s.chime_default) != "off")
         level = classify(inc, stems=self.stems, bot=self.bot, quoted_is_bot=quoted_is_bot, talking_with_sender=talking,
                          bot_spoke_recently=spoke_recently)
-        if inc.kind == "audio":
+        if inc.kind == "audio" and not inc.text:
             if level == DIRECT:
-                self._decision(inc, "голосовое — прошу написать текстом")
+                self._decision(inc, "голосовое не расшифровалось — прошу написать текстом")
                 self.spawn(self._send_command_result(chat, inc, self._canned(VOICE_REPLIES)))
             return
         if level != DIRECT and self.over_budget():
@@ -759,6 +791,10 @@ class Brain:
 
         self.sandbox.model = self.s.sandbox_model
         extra = build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)
+        if self.s.voice_enabled:
+            from .voice import build_voice_tools
+
+            extra += build_voice_tools(self.db, self.s, ctx, speaker=self.speaker)
         if chat["is_group"] or self.s.is_admin(phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else ""):
             extra += build_group_tools(
                 self.db, self.s, ctx, api=GroupApi(self.evo), chat=chat, is_group_admin=self.is_group_admin,

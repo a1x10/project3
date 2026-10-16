@@ -1,0 +1,13 @@
+# Голосовые (по желанию, ~480 МБ к образу): распознавание речи и ответ голосом прямо на сервере.
+# Не нужны — соберите без них: WITH_VOICE=false в .env, затем docker compose up -d --build
+faster-whisper==1.2.1
+piper-tts==1.8.0
+# зависимости — закреплены, чтобы сборка не тянула совсем свежие версии
+ctranslate2==4.8.2
+onnxruntime==1.30.0
+av==19.0.0
+tokenizers==0.23.2
+numpy==2.5.3
+huggingface-hub==1.33.0
+hf-xet==1.6.0
+filelock==4.0.9

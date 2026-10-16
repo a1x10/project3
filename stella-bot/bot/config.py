@@ -70,6 +70,12 @@ class Settings:
     # она «видит» фото и стикеры, которые ей присылают (и на которые отвечают с вопросом к ней)
     vision_enabled: bool = field(default_factory=lambda: _bool("VISION_ENABLED", True))
     vision_max_images: int = field(default_factory=lambda: _int("VISION_MAX_IMAGES", 3))
+    # голосовые: понимает (faster-whisper) и может ответить голосом (piper) — всё на сервере, бесплатно.
+    # base — легче (~0.3 ГБ памяти), small — точнее (~0.5–0.7 ГБ). Модели скачиваются при первом голосовом.
+    voice_enabled: bool = field(default_factory=lambda: _bool("VOICE_ENABLED", True))
+    voice_stt_model: str = field(default_factory=lambda: _str("VOICE_STT_MODEL", "base"))
+    voice_tts_voice: str = field(default_factory=lambda: _str("VOICE_TTS_VOICE", "ru_RU-irina-medium"))
+    voice_max_seconds: int = field(default_factory=lambda: _int("VOICE_MAX_SECONDS", 180))
     # читает присланные файлы: PDF, Word, Excel, PowerPoint, текст
     documents_enabled: bool = field(default_factory=lambda: _bool("DOCUMENTS_ENABLED", True))
     # запуск кода в песочнице Anthropic — ТОЛЬКО по просьбе владельца (OWNER_PHONE)

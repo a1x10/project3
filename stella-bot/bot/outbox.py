@@ -146,6 +146,10 @@ class Outbox:
         if file.kind == "sticker":
             wa_id = await self.evo.send_sticker(chat["jid"], b64, delay_ms=self._delay(self.rng.randint(800, 1600)))
             label = "(свой стикер)"
+        elif file.kind == "audio":  # голосовое — именно как голосовое, а не как аудиофайл
+            wa_id = await self.evo.send_voice(chat["jid"], b64, delay_ms=self._delay(self.rng.randint(1500, 3000)))
+            label = f"[голосовое] {caption}".strip()
+            caption = ""
         else:
             delay = self._delay(self.rng.randint(1500, 3000))
             wa_id = await self.evo.send_media(chat["jid"], file.kind, b64, file.mimetype, file.filename, caption,
@@ -153,7 +157,8 @@ class Outbox:
             label = f"[{ {'image': 'картинка', 'video': 'видео'}.get(file.kind, 'файл') }: {file.filename}]"
         self.remember_sent(wa_id)
         await self.db.add_message(chat["id"], "assistant", f"{label} {caption}".strip(), wa_message_id=wa_id,
-                                  sender_name=self.s.bot_name, kind="sticker" if file.kind == "sticker" else file.kind)
+                                  sender_name=self.s.bot_name,
+                                  kind={"sticker": "sticker", "audio": "audio"}.get(file.kind, file.kind))
         return wa_id
 
     async def send_poll(self, chat: dict[str, Any], question: str, options: list[str], multiple: bool) -> str | None:
