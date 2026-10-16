@@ -47,6 +47,20 @@ BLOCKS_SCHEMA = {
 }
 
 
+STUDIO_WORDS = {
+    "page": {"one": "страница", "acc": "страницу", "many": "страниц", "off": "HTML-страницы сейчас выключены владельцем",
+             "brief": "brief: опиши подробно, что сделать (повод, тексты, стиль, что двигается и нажимается)",
+             "almost": "ещё чуть-чуть, страница почти готова ⏳", "fail": "страница не получилась 😕",
+             "doing": "делаю страницу ✨", "arrives": "файл придёт", "skip": "Код писать не нужно."},
+    "deck": {"one": "презентация", "acc": "презентацию", "many": "презентаций",
+             "off": "презентации из студии сейчас выключены владельцем",
+             "brief": "brief: опиши подробно (тема, для кого, сколько слайдов, факты и цифры, стиль)",
+             "almost": "ещё чуть-чуть, презентация почти готова ⏳", "fail": "презентация не получилась 😕",
+             "doing": "делаю презентацию 🎨", "arrives": "PowerPoint и PDF придут",
+             "skip": "Слайды писать не нужно."},
+}
+
+
 class _Budget:
     """Не больше MAX_MEDIA_PER_REPLY файлов за ответ и MEDIA_PER_DAY на чат в сутки."""
 
@@ -127,35 +141,38 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                          args.get("slides"))
         return await budget.queue(file, str(args.get("caption") or "")[:500])
 
-    async def make_html(args: dict[str, Any]) -> str:
+    async def studio_job(args: dict[str, Any], kind: str) -> str:
+        """Страница или презентация из студии: проверить лимиты, сказать «делаю, будет через N», сделать в фоне,
+        прислать файлы ответом на просьбу (неудача — сообщение и возврат лимитов)."""
         from . import html_studio, weblibs
         from .sandbox import is_owner
 
+        w = STUDIO_WORDS[kind]
         if not getattr(settings, "html_enabled", True):
-            raise ToolError("HTML-страницы сейчас выключены владельцем")
+            raise ToolError(w["off"])
         if ctx.sender is None:
-            raise ToolError("страница — только когда о ней просят")
+            raise ToolError(f"{w['one']} — только когда о ней просят")
         if getattr(ctx, "html_queued", False):
-            raise ToolError("за один ответ — одна страница")
-        title = " ".join(str(args.get("title") or "").split())[:80] or "страница"
+            raise ToolError(f"за один ответ — одна {w['one']}")
+        title = " ".join(str(args.get("title") or "").split())[:80] or w["one"]
         brief = str(args.get("brief") or "").strip()
         if len(brief) < 20:
-            raise ToolError("brief: опиши подробно, что сделать (повод, тексты, стиль, что двигается и нажимается)")
+            raise ToolError(w["brief"])
         await budget.take()
         owner = is_owner(settings, ctx)
         today = date.today().isoformat()
         day_key, all_key = f"html:{ctx.chat_id}:{today}", f"html:all:{today}"
         used = await db.kv_get(day_key)
         if not ctx.is_admin and used and used[1] >= settings.html_per_day:
-            raise ToolError("на сегодня страниц в этом чате хватит, давай завтра")
+            raise ToolError(f"на сегодня {w['many']} в этом чате хватит, давай завтра")
         used_all = await db.kv_get(all_key)
         if not owner and used_all and used_all[1] >= settings.html_per_day_total:
-            raise ToolError("на сегодня страниц хватит, давай завтра")
+            raise ToolError(f"на сегодня {w['many']} хватит, давай завтра")
         spent = await db.kv_get(f"spend:{today}")
         if not owner and settings.daily_budget_usd > 0 and spent and spent[1] >= settings.daily_budget_usd:
-            raise ToolError("на сегодня бюджет кончился — страницу сделаю завтра")
+            raise ToolError(f"на сегодня бюджет кончился — {w['acc']} сделаю завтра")
         if ctx.chat_id in html_studio.STATE.busy_chats:
-            raise ToolError("я уже делаю страницу для этого чата — подожди, пока пришлю")
+            raise ToolError(f"я уже делаю {w['acc']} для этого чата — подожди, пока пришлю")
         photo = seen = None
         if args.get("use_photo"):
             if ctx.quoted_media is None:
@@ -173,7 +190,7 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         media_key = f"media:{ctx.chat_id}:{today}"
         for key in (media_key, day_key, all_key):
             await db.kv_add(key, 1)
-        html_studio.STATE.busy_chats.add(ctx.chat_id)  # сразу: вторая страница в этот чат не встанет в очередь
+        html_studio.STATE.busy_chats.add(ctx.chat_id)  # сразу: второй заказ в этот чат не встанет в очередь
         actions = ctx.actions
         released = asyncio.Event()
 
@@ -183,7 +200,7 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             except asyncio.TimeoutError:
                 pass  # её ответ так и не ушёл — шлём всё равно
 
-        async def refund() -> None:  # страница не дошла — лимиты не тратим
+        async def refund() -> None:  # файл не дошёл — лимиты не тратим
             for key in (media_key, day_key, all_key):
                 await db.kv_add(key, -1)
 
@@ -201,24 +218,25 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 await actions.say(text)
 
         async def deliver() -> None:
-            libs = asyncio.ensure_future(weblibs.ensure())  # библиотеки докачиваются, пока пишется страница
+            libs = asyncio.ensure_future(weblibs.ensure())  # библиотеки докачиваются, пока пишется код
             task = asyncio.ensure_future(html_studio.run(
-                settings, brief, title, seen, build=lambda html: media.html_page(title, html, photo).data))
+                settings, brief, title, seen, build=lambda html: media.html_page(title, html, photo).data,
+                kind=kind))
             try:
                 done, _ = await asyncio.wait({task}, timeout=eta_s * 1.5 + 30)
                 if not done:
                     await wait_reply()
                     if not await is_paused():
-                        await actions.say("ещё чуть-чуть, страница почти готова ⏳")
+                        await actions.say(w["almost"])
                 result = await task
             except html_studio.StudioError as exc:
                 if exc.cost_usd and ctx.on_cost is not None:
                     await ctx.on_cost(exc.cost_usd)
-                await fail(f"страница не получилась 😕 {exc}")
+                await fail(f"{w['fail']} {exc}")
                 return
             except Exception:
-                log.exception("страница: ошибка")
-                await fail("страница не получилась 😕 попробуй ещё раз")
+                log.exception("студия (%s): ошибка", kind)
+                await fail(f"{w['fail']} попробуй ещё раз")
                 return
             finally:
                 if not task.done():
@@ -231,28 +249,39 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             except Exception:
                 log.warning("библиотеки для страницы не скачались — подключатся с CDN", exc_info=True)
             try:
-                file = await asyncio.to_thread(media.html_page, title, result.html, photo)
+                if kind == "deck":
+                    files = list(await asyncio.to_thread(media.deck_files, title, result.shots.slides))
+                else:
+                    files = [await asyncio.to_thread(media.html_page, title, result.html, photo)]
             except media.MediaError as exc:
-                await fail(f"страница не получилась 😕 {exc}")
+                await fail(f"{w['fail']} {exc}")
                 return
             await wait_reply()
-            if await is_paused():  # пока делалась, чат поставили на паузу — молчим
+            if await is_paused():  # пока делалось, чат поставили на паузу — молчим
                 await refund()
                 return
-            sent = await actions.send_file(file, caption, reply=True)
+            sent = await actions.send_file(files[0], caption, reply=True)
             if sent is False:
                 await refund()
+                return
+            for extra in files[1:]:  # у презентации ещё PDF — чтобы листать прямо в телефоне
+                await actions.send_file(extra, "")
 
         async def release() -> None:  # сразу после её сообщения; очередь ответов чата не ждёт студию
             if not getattr(ctx, "replied", 0):
-                await actions.say(f"делаю страницу ✨ будет готова {eta}")
+                await actions.say(f"{w['doing']} будет готова {eta}")
             released.set()
 
         ctx.after.append(release)
         actions.spawn(deliver())
-        return (f"страница «{title}» уже делается в студии, будет готова {eta}. Обязательно скажи в ответе своими "
-                f"словами, что делаешь и что ждать примерно {eta}; файл придёт отдельным сообщением. Код писать "
-                "не нужно.")
+        return (f"{w['one']} «{title}» уже делается в студии, будет готова {eta}. Обязательно скажи в ответе своими "
+                f"словами, что делаешь и сколько ждать ({eta}); {w['arrives']} отдельным сообщением. {w['skip']}")
+
+    async def make_html(args: dict[str, Any]) -> str:
+        return await studio_job(args, "page")
+
+    async def make_deck(args: dict[str, Any]) -> str:
+        return await studio_job(args, "deck")
 
     async def make_spreadsheet(args: dict[str, Any]) -> str:
         await budget.take()
@@ -390,6 +419,28 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 f"словами, что делаешь мультик и что ждать примерно {eta}; сам ролик придёт отдельным сообщением."
                 + note)
 
+    from . import page_shots
+
+    # презентации 10/10 делает студия (слайды рисуются в браузере); нет браузера — простая из списка слайдов
+    deck_studio = settings.html_enabled and settings.deck_studio and page_shots.available()
+    deck_tool = ToolSpec(
+        "make_presentation",
+        "Сделать презентацию уровня Apple Keynote: дизайн-студия (Opus) по твоему заданию придумывает историю, "
+        "рисует каждый слайд (иллюстрации, диаграммы, 3D, красивые шрифты), проверяет и доводит его, пишет текст "
+        "выступления в заметки. Придут PowerPoint (.pptx) и PDF отдельными сообщениями через несколько минут. Ты "
+        "пишешь только brief — подробное задание.",
+        {"type": "object", "properties": {
+            "title": {"type": "string", "description": "название (и имя файла)"},
+            "brief": {"type": "string", "description": (
+                "подробное задание: тема и цель, для кого (класс, работа, друзья), сколько слайдов, что обязательно "
+                "должно быть (факты, цифры, имена, планы, требования учителя — студия чата не видит; свежие факты "
+                "сначала найди в интернете и положи сюда), стиль и цвета, если просили, автор для обложки")},
+            "use_photo": {"type": "boolean",
+                          "description": "встроить фото, на которое ответили или которое прислали с просьбой"},
+            "caption": {"type": "string", "description": "подпись к файлу (необязательно)"},
+        }, "required": ["title", "brief"]},
+        make_deck,
+    )
     shape = {"type": "string", "enum": ["square", "wide", "tall"], "description": "квадрат, 16:9 или вертикальное"}
     from .anim_beta import spec as anim_spec
 
@@ -456,7 +507,7 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             }, "required": ["title", "blocks"]},
             make_document,
         ),
-        ToolSpec(
+        deck_tool if deck_studio else ToolSpec(
             "make_presentation",
             "Сделать презентацию PowerPoint (.pptx) и отправить файлом. Слайды: {title, bullets: [3–6 коротких "
             "пунктов], notes?: что говорить, svg?: картинка к слайду (" + SVG_RULES + " viewBox 0 0 900 900)}.",
@@ -477,8 +528,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             "make_html",
             "Сделать HTML-страницу и прислать файлом .html (открывается в браузере телефона): игру, викторину, "
             "открытку-поздравление с 3D и анимацией, сайт, лендинг, шпаргалку, калькулятор, таймер. Код пишешь НЕ "
-            "ты: отдельная дизайн-студия делает страницу минуты 2–5 (3D, анимации, шрифты), а ты пишешь только "
-            "brief — подробное задание. Файл придёт отдельным сообщением.",
+            "ты: отдельная дизайн-студия (Opus) делает и доводит страницу несколько минут (3D, анимации, шрифты), а "
+            "ты пишешь только brief — подробное задание. Файл придёт отдельным сообщением.",
             {"type": "object", "properties": {
                 "title": {"type": "string", "description": "короткое название (и имя файла)"},
                 "brief": {"type": "string", "description": (

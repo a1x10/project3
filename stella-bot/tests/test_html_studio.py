@@ -208,7 +208,7 @@ def polish_env(monkeypatch):
 
     calls = {"gen": [], "shots": [], "after_errors": 0, "polish_fail": False, "shots_fail": False}
 
-    async def gen(settings, brief, title, image=None, *, draft=None, shots=None):
+    async def gen(settings, brief, title, image=None, *, draft=None, shots=None, kind="page"):
         calls["gen"].append(draft)
         if draft is not None and calls["polish_fail"]:
             raise html_studio.StudioError("слишком большой", 0.7)
@@ -225,6 +225,7 @@ def polish_env(monkeypatch):
         return []
 
     monkeypatch.setattr(html_studio, "generate", gen)
+    monkeypatch.setattr(html_studio.STATE, "seconds", 180.0)
     monkeypatch.setattr(page_shots, "shoot", shoot)
     monkeypatch.setattr(page_shots, "available", lambda: True)
     monkeypatch.setattr(weblibs, "ensure", no_download)
@@ -287,7 +288,7 @@ async def test_real_screenshots_errors_and_no_network():
 def studio(monkeypatch):
     calls = {"n": 0, "delay": 0.0, "fail": None, "args": []}
 
-    async def run(settings, brief, title, image=None, build=None):
+    async def run(settings, brief, title, image=None, build=None, kind="page"):
         calls["n"] += 1
         calls["args"].append((brief, title, image))
         await asyncio.sleep(calls["delay"])
@@ -302,6 +303,7 @@ def studio(monkeypatch):
 
     monkeypatch.setattr(html_studio, "run", run)
     monkeypatch.setattr(weblibs, "ensure", no_download)
+    monkeypatch.setattr(html_studio.STATE, "seconds", 180.0)
     html_studio.STATE.busy_chats.clear()
     yield calls
     html_studio.STATE.busy_chats.clear()
@@ -471,3 +473,153 @@ async def test_paused_chat_gets_no_page(brain, studio):
     assert not [m for m in brain.evo.sent if m["type"] == "media"]
     used = await brain.db.kv_get(f"html:{await _chat_id(brain)}:{date.today().isoformat()}")
     assert not used or used[1] == 0
+
+
+# ---------- презентации 10/10: слайды из студии -> PowerPoint + PDF ----------
+DECK = """<!doctype html><html><head><style>
+body{margin:0;background:#111} .slide{width:1920px;height:1080px;position:relative;overflow:hidden;
+background:linear-gradient(135deg,#1b1640,#4a1d6b);color:#fff;font-family:'Unbounded',sans-serif}
+h1{font-size:96px;margin:120px} .long{position:absolute;left:1700px;top:500px;font-size:48px;white-space:nowrap}
+.tiny{font-size:12px;position:absolute;bottom:40px;left:120px}
+</style></head><body>
+<section class="slide"><h1>Марс</h1><aside class="notes">Начните с вопроса залу.</aside></section>
+<section class="slide"><h1>Вода</h1><div class="long">Этот текст уезжает за край слайда</div></section>
+<section class="slide"><h1>Итог</h1><p class="tiny">мелкая сноска</p></section>
+</body></html>"""
+
+
+def _jpeg(color=(40, 20, 90), size=(1920, 1080)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_real_deck_slides_notes_and_problems():
+    from bot import page_shots
+
+    shots = await page_shots.shoot_deck(media.html_page("Марс", DECK).data)
+    assert len(shots.slides) == 3 and shots.slides[0].notes == "Начните с вопроса залу."
+    assert Image.open(io.BytesIO(shots.slides[1].jpeg)).size == (1920, 1080)
+    assert Image.open(io.BytesIO(shots.images[0][1])).size == (1280, 720) and shots.images[2][0] == "слайд 3"
+    assert any(p.startswith("слайд 2: текст вылезает") for p in shots.problems)
+    assert any(p.startswith("слайд 3: мелкий текст") for p in shots.problems)
+    assert not any(p.startswith("слайд 1") for p in shots.problems) and shots.page_errors() == 0
+
+
+def test_deck_files_pptx_with_notes_and_pdf():
+    from pptx import Presentation
+
+    from bot.page_shots import Slide
+
+    pptx, pdf = media.deck_files("Марс: 10/10", [Slide(_jpeg(), "что сказать"), Slide(_jpeg((200, 50, 50)))])
+    assert pptx.filename == "Марс 1010.pptx" and pptx.mimetype == media.MIME["pptx"] and pdf.filename.endswith(".pdf")
+    prs = Presentation(io.BytesIO(pptx.data))
+    assert len(prs.slides) == 2 and prs.slide_width == 12192000
+    assert prs.slides[0].notes_slide.notes_text_frame.text == "что сказать"
+    pic = prs.slides[0].shapes[0]
+    assert (pic.left, pic.top, pic.width, pic.height) == (0, 0, prs.slide_width, prs.slide_height)
+    assert pdf.data.startswith(b"%PDF") and pdf.data.count(b"/Type /Page\n") + pdf.data.count(b"/Type /Page ") >= 2
+    with pytest.raises(media.MediaError):
+        media.deck_files("x", [])
+
+
+async def test_deck_generate_uses_deck_prompt_and_problems(settings, monkeypatch):
+    from bot.page_shots import DeckShots
+
+    fake = FakeClient(PAGE)
+    monkeypatch.setattr(html_studio, "_client", fake)
+    await html_studio.generate(settings, BRIEF, "Марс", kind="deck")
+    assert fake.calls[0]["system"] == html_studio.DECK_SYSTEM and 'class="slide"' in html_studio.DECK_SYSTEM
+    shots = DeckShots(images=[("слайд 1", b"j")], problems=["слайд 1: мелкий текст (меньше 20 px) — 2 шт."])
+    await html_studio.generate(settings, BRIEF, "Марс", draft="<section class=slide></section>", shots=shots,
+                               kind="deck")
+    texts = "\n".join(b["text"] for b in fake.calls[1]["messages"][0]["content"] if b["type"] == "text")
+    assert "Проверка нашла" in texts and "мелкий текст" in texts and "10 из 10" in texts
+
+
+@pytest.fixture
+def deck_env(monkeypatch, polish_env):
+    from bot import page_shots
+    from bot.page_shots import DeckShots, Slide
+
+    state = {"slides_before": 3, "slides_after": 3}
+
+    async def shoot_deck(page, timeout=0):
+        polish_env["shots"].append(page)
+        n = state["slides_before"] if len(polish_env["shots"]) == 1 else state["slides_after"]
+        return DeckShots([Slide(b"j", f"n{i}") for i in range(n)], [("слайд", b"j")] * n)
+
+    monkeypatch.setattr(page_shots, "shoot_deck", shoot_deck)
+    return state
+
+
+async def test_deck_make_renders_and_keeps_more_complete_version(settings, polish_env, deck_env):
+    res = await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode(), kind="deck")
+    assert res.html == "<h1>v2</h1>" and len(res.shots.slides) == 3
+    polish_env["shots"].clear()
+    deck_env["slides_after"] = 1  # доводка потеряла слайды — берём черновик
+    res = await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode(), kind="deck")
+    assert res.html == "<h1>v1</h1>" and len(res.shots.slides) == 3
+    settings.html_polish = False  # без доводки слайды всё равно снимаются
+    polish_env["shots"].clear()
+    polish_env["gen"].clear()
+    res = await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode(), kind="deck")
+    assert polish_env["gen"] == [None] and len(res.shots.slides) == 3
+    polish_env["shots"].clear()
+    deck_env["slides_before"] = 0
+    with pytest.raises(html_studio.StudioError, match="слайды"):
+        await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode(), kind="deck")
+
+
+async def test_deck_without_browser_fails_cleanly(settings, polish_env, monkeypatch):
+    from bot import page_shots
+
+    monkeypatch.setattr(page_shots, "available", lambda: False)
+    with pytest.raises(html_studio.StudioError, match="нет браузера") as exc:
+        await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode(), kind="deck")
+    assert exc.value.cost_usd == 2.0
+
+
+async def test_presentation_in_chat_arrives_as_pptx_and_pdf(brain, studio, monkeypatch):
+    from bot import page_shots
+    from bot.page_shots import DeckShots, Slide
+
+    monkeypatch.setattr(page_shots, "available", lambda: True)
+
+    async def run(settings, brief, title, image=None, build=None, kind="page"):
+        studio["args"].append((brief, title, kind))
+        return html_studio.StudioResult("<section class=slide></section>", 0.9, 1.0,
+                                        shots=DeckShots([Slide(_jpeg(), "привет залу"), Slide(_jpeg())]))
+
+    monkeypatch.setattr(html_studio, "run", run)
+
+    async def talk(tools, prompt):
+        assert "brief" in tools["make_presentation"].input_schema["properties"]
+        out = await tools["make_presentation"].handler({"title": "Марс", "brief": "презентация про Марс для 7 класса, "
+                                                        "12 слайдов, вода, роверы, колонизация", "caption": "держи"})
+        assert "PowerPoint и PDF придут" in out and "Слайды писать не нужно" in out
+        return "делаю презентацию, минуты через 3 🎨"
+
+    brain.llm.queue = [talk]
+    await feed(brain, upsert("стелла сделай презентацию про марс", msg_id="ASK7"))
+    assert [m["type"] for m in brain.evo.sent] == ["text", "media", "media"]
+    pptx, pdf = brain.evo.sent[1], brain.evo.sent[2]
+    assert pptx["filename"] == "Марс.pptx" and pptx["caption"] == "держи" and pptx["quoted"]["key"]["id"] == "ASK7"
+    assert pdf["filename"] == "Марс.pdf" and pdf["mimetype"] == media.MIME["pdf"]
+    assert studio["args"][0][2] == "deck"
+
+
+async def test_simple_presentation_without_browser(brain, monkeypatch):
+    from bot import page_shots
+
+    monkeypatch.setattr(page_shots, "available", lambda: False)
+    seen = {}
+
+    async def grab(tools, prompt):
+        seen.update(tools)
+        return "ок"
+
+    brain.llm.queue = [grab]
+    await feed(brain, upsert("стелла привет"))
+    assert "slides" in seen["make_presentation"].input_schema["properties"]  # старая простая — из списка слайдов
