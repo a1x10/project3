@@ -265,7 +265,7 @@ dl { margin: 0; }
   padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius);
   background: var(--warn-soft); color: var(--warn); font-size: 14.5px;
 }
-.notice::before { content: "!"; flex: none; width: 20px; height: 20px; border-radius: 50%; background: currentColor; color: var(--bg); font-weight: 800; font-size: 13px; line-height: 20px; text-align: center; }
+.notice::before { content: "!"; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--warn); color: var(--bg); font-weight: 800; font-size: 13px; line-height: 20px; text-align: center; }
 
 .updated { text-align: right; margin: -4px 0 12px; }
 
@@ -297,6 +297,7 @@ dl { margin: 0; }
 .badge.accent { background: var(--accent-soft); color: var(--accent); }
 
 .chat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.chat-head .btn { flex: none; white-space: nowrap; }
 .chat-title-wrap { flex: 1 1 auto; min-width: 0; }
 .chat-title { font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #chat-badges { margin: 0 0 10px; }
@@ -339,8 +340,12 @@ dl { margin: 0; }
 .person-head .who { flex: 1 1 auto; min-width: 0; }
 .person-head .name { font-weight: 700; overflow-wrap: anywhere; }
 .person-head .meta { font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
-.person-head .chev { flex: none; color: var(--muted); transition: transform .15s; }
-.person-head[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.person-head .chev {
+  flex: none; display: inline-block; width: 10px; height: 10px; margin: 0 4px 4px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg); transition: transform .15s;
+}
+.person-head[aria-expanded="true"] .chev { transform: rotate(-135deg); margin-bottom: -4px; }
 .person-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 
 .kv-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 44px; gap: 6px; margin-bottom: 6px; }

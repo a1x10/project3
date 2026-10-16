@@ -53,6 +53,7 @@
   const setKids = (box, ...kids) => box.replaceChildren(...clean(kids));
   const showEmpty = (box, text) => box.replaceChildren(h("p", { class: "placeholder", text }));
   const on = (id, ev, fn) => $(id).addEventListener(ev, fn);
+  const setVal = (ids, v) => ids.forEach((id) => { $(id).value = v; });
 
   // ---------- хранилища (могут бросать исключения — всё в try) ----------
   function storage(name) {
@@ -64,7 +65,6 @@
   }
   const local = storage("localStorage");
   const sess = storage("sessionStorage");
-
   const getToken = () => sess.get(K.token) || memToken;
   function setToken(token, expiresIn) {
     memToken = sess.set(K.token, token) ? "" : token;
@@ -112,7 +112,7 @@
     const d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60);
     return d ? `${d} д ${hr} ч` : hr ? `${hr} ч ${m} мин` : `${m} мин`;
   }
-  function switchText(v) {
+  function switchText(v) { // LLM_SWITCH_AT — дата, с которой бот берёт запасную модель
     const s = String(v);
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
     if (!m) return s;
@@ -139,8 +139,7 @@
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLocal)) return null;
     return (u.origin + u.pathname).replace(/\/+$/, "");
   }
-
-  // Порядок: панель на самом боте → его origin; иначе #server=… → localStorage → спросить.
+  // Порядок: панель отдаёт сам бот → его origin; иначе #server=… → localStorage → спросить.
   function resolveServer() {
     let notice = null, fromHash = null;
     const m = /(?:^#|&)server=([^&]*)/.exec(location.hash || "");
@@ -154,13 +153,10 @@
     if (/\/panel(\/|$)/.test(location.pathname) && !onPages && /^https?:$/.test(location.protocol)) {
       return { server: location.origin, notice: null };
     }
-    if (fromHash) {
-      if (saved && saved !== fromHash) notice = [`Адрес сервера взят из ссылки: ${hostOf(fromHash)}. Вводите пароли, только если это ваш бот.`, "warn"];
-      return { server: fromHash, notice };
-    }
-    return { server: saved || "", notice };
+    if (!fromHash) return { server: saved || "", notice };
+    if (saved && saved !== fromHash) notice = [`Адрес сервера взят из ссылки: ${hostOf(fromHash)}. Вводите пароли, только если это ваш бот.`, "warn"];
+    return { server: fromHash, notice };
   }
-
   function setServer(url) {
     if (url !== S.server) clearToken(); // токен другого сервера не годится
     S.server = url;
@@ -171,23 +167,16 @@
   class ApiError extends Error {
     constructor(status, code, detail, handled) {
       super(code || "error");
-      this.status = status;
-      this.code = code ? String(code) : "";
-      this.detail = detail ? String(detail) : "";
-      this.handled = Boolean(handled);
+      Object.assign(this, { status, code: code ? String(code) : "", detail: detail ? String(detail) : "", handled: Boolean(handled) });
     }
   }
-
   async function request(method, path, body, token) {
     if (!S.server) throw new ApiError(0, "network");
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     const headers = { Accept: "application/json" };
     const init = { method, headers, credentials: "omit", cache: "no-store", mode: "cors", redirect: "error", referrerPolicy: "no-referrer", signal: ctrl.signal };
-    if (body !== undefined) {
-      headers["Content-Type"] = "application/json";
-      init.body = JSON.stringify(body);
-    }
+    if (body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
     if (token) headers.Authorization = "Bearer " + token;
     try {
       const res = await fetch(S.server + API + path, init);
@@ -200,21 +189,18 @@
       clearTimeout(timer);
     }
   }
-
-  // Запрос с токеном. Любой 401 → токен стираем, возвращаемся ко входу.
+  // Запрос с токеном. Любой 401 → стираем токен и возвращаемся ко входу.
   async function api(method, path, body) {
     const token = getToken();
     if (!token) { expire(); throw new ApiError(401, "unauthorized", "", true); }
-    const payload = body === undefined && (method === "POST" || method === "PUT") ? {} : body;
-    const r = await request(method, path, payload, token);
+    const r = await request(method, path, body === undefined && method !== "GET" && method !== "DELETE" ? {} : body, token);
     if (r.status === 401) {
-      if (getToken() === token) expire(); // ответ на старый токен после нового входа игнорируем
+      if (getToken() === token) expire(); // 401 на старый токен после нового входа игнорируем
       throw new ApiError(401, "unauthorized", "", true);
     }
     if (!r.ok) throw new ApiError(r.status, r.data && r.data.error, r.data && r.data.detail);
     return r.data || {};
   }
-
   function errText(e) {
     if (!(e instanceof ApiError)) return "Что-то пошло не так. Попробуйте ещё раз";
     if (e.status === 0) return e.code === "timeout" ? "Сервер долго не отвечает. Попробуйте ещё раз" : NO_SERVER;
@@ -223,7 +209,6 @@
     return `${base} (${/^[\w.-]{1,40}$/.test(e.code) ? e.code : "код " + e.status})`;
   }
   const showError = (e) => { if (!(e && e.handled)) toast(errText(e), "bad"); };
-
   function toast(text, kind) {
     const el = $("toast");
     el.textContent = text;
@@ -232,7 +217,6 @@
     clearTimeout(S.toastTimer);
     S.toastTimer = setTimeout(() => { el.hidden = true; }, kind === "bad" ? 6000 : 3000);
   }
-
   // Блокирует элементы на время запроса (нет двойных нажатий); первый — тот, что нажали.
   async function busy(els, fn) {
     const list = (Array.isArray(els) ? els : [els]).filter(Boolean);
@@ -251,14 +235,13 @@
     }
   }
 
-  // ---------- вход (два шага, один запрос) ----------
+  // ---------- вход: два шага в интерфейсе, один запрос ----------
   function setLoginMsg(text, kind) {
     const el = $("login-msg");
     el.textContent = text || "";
     el.className = "login-msg" + (kind ? " " + kind : "");
     el.hidden = !text;
   }
-
   function renderServerBox(edit) {
     const editing = Boolean(edit) || !S.server;
     $("server-show").hidden = !S.server;
@@ -267,7 +250,6 @@
     $("server-field").hidden = !editing;
     if (editing) $("server-input").value = S.server || "";
   }
-
   function goStep(n) {
     $("step1").hidden = n !== 1;
     $("step2").hidden = n !== 2;
@@ -276,7 +258,6 @@
     const target = n === 2 ? $("p2") : S.server ? $("p1") : $("server-input");
     setTimeout(() => target.focus(), 0);
   }
-
   const isLocked = () => S.lockUntil > Date.now();
   function lockFor(sec) {
     const s = Math.max(1, Math.ceil(Number(sec) || 60));
@@ -289,19 +270,16 @@
   function updateLock() {
     const left = Math.ceil((S.lockUntil - Date.now()) / 1000);
     const locked = left > 0;
-    $("step1-btn").disabled = locked || S.loginBusy;
-    $("step2-btn").disabled = locked || S.loginBusy;
+    $("step1-btn").disabled = $("step2-btn").disabled = locked || S.loginBusy;
     $("lock-timer").hidden = !locked;
     if (locked) {
       $("lock-timer").textContent = `Можно снова через ${Math.floor(left / 60)}:${pad(left % 60)}`;
     } else if (S.lockTimer) {
       clearInterval(S.lockTimer);
-      S.lockTimer = 0;
-      S.lockUntil = 0;
+      S.lockTimer = S.lockUntil = 0;
       setLoginMsg("Можно попробовать снова", "");
     }
   }
-
   function onStep1(e) {
     e.preventDefault();
     if (S.loginBusy || isLocked()) return;
@@ -321,7 +299,6 @@
     setLoginMsg("", "");
     goStep(2);
   }
-
   async function onStep2(e) {
     e.preventDefault();
     if (S.loginBusy || isLocked()) return;
@@ -329,8 +306,7 @@
     if (!$("p2").value) { setLoginMsg("Введите пароль 2", "bad"); $("p2").focus(); return; }
     let body = { p1: S.p1, p2: $("p2").value };
     S.p1 = "";
-    $("p1").value = "";
-    $("p2").value = "";
+    setVal(["p1", "p2"], "");
     S.loginBusy = true;
     updateLock();
     setLoginMsg("Проверяю…", "");
@@ -345,7 +321,7 @@
       enterApp();
       return;
     }
-    goStep(1);
+    goStep(1); // какой из паролей неверен — не сообщаем
     if (r && r.status === 429) { lockFor(data.retry_after); return; }
     if (!r) setLoginMsg(NO_SERVER, "bad");
     else if (r.status === 401) setLoginMsg("Неверные пароли", "bad");
@@ -353,7 +329,6 @@
     else setLoginMsg(`Не получилось войти (код ${r.status})${data.detail ? ": " + clip(String(data.detail), 160) : ""}`, "bad");
     updateLock();
   }
-
   function showLogin(msg, kind) {
     stopApp();
     $("app").hidden = true;
@@ -364,7 +339,6 @@
     goStep(1);
     updateLock();
   }
-
   // Убираем из памяти и DOM всё, что относится к сессии.
   function stopApp() {
     clearInterval(S.beat);
@@ -373,7 +347,7 @@
       settings: null, settingCtl: [], settingsDirty: false, log: [], logAuto: false,
     });
     ["ov-body", "chats-list", "chat-msgs", "people-list", "people-chat", "settings-body", "log-list"].forEach((id) => $(id).replaceChildren());
-    ["send-text", "about-text", "log-filter"].forEach((id) => { $(id).value = ""; });
+    setVal(["send-text", "about-text", "log-filter"], "");
     $("about-notes").textContent = "";
     $("log-auto").checked = false;
     $("chat-view").hidden = true;
@@ -381,7 +355,6 @@
     $("settings-dirty").hidden = true;
     if (history.state && history.state.stellaChat) history.replaceState(null, "");
   }
-
   function enterApp() {
     $("login").hidden = true;
     $("app").hidden = false;
@@ -394,28 +367,24 @@
     const saved = sess.get(K.tab);
     selectTab(TABS.includes(saved) ? saved : "overview", false);
   }
-
   function expire() {
     clearToken();
     if (!$("app").hidden) showLogin("Сессия закончилась, войдите снова", "bad");
   }
-
   function idleLogout() {
     const token = getToken();
     clearToken();
     if (token) request("POST", "/logout", {}, token).catch(() => { /* ошибки не важны */ });
     showLogin("Вы вышли автоматически: 30 минут без действий", "");
   }
-
   async function logout() {
     await busy($("logout-btn"), async () => {
       const token = getToken();
       clearToken();
-      if (token) { try { await request("POST", "/logout", {}, token); } catch (_) { /* всё равно выходим */ } }
+      if (token) await request("POST", "/logout", {}, token).catch(() => { /* всё равно выходим */ });
     });
     showLogin("Вы вышли", "ok");
   }
-
   async function logoutAll() {
     if (!confirm("Выйти на всех устройствах? Потом нужно будет снова ввести пароли.")) return;
     const ok = await busy($("logout-all"), async () => { await api("POST", "/logout_all"); return true; });
@@ -430,7 +399,6 @@
     S.lastActive = now;
     if (now - S.lastSaved > 5000) { S.lastSaved = now; sess.set(K.active, now); }
   }
-
   function heartbeat() {
     if ($("app").hidden) return;
     const now = Date.now();
@@ -447,9 +415,8 @@
     S.tab = name;
     sess.set(K.tab, name);
     for (const t of TABS) {
-      const b = $("tab-" + t);
-      b.setAttribute("aria-selected", t === name ? "true" : "false");
-      b.tabIndex = t === name ? 0 : -1;
+      $("tab-" + t).setAttribute("aria-selected", t === name ? "true" : "false");
+      $("tab-" + t).tabIndex = t === name ? 0 : -1;
       $("panel-" + t).hidden = t !== name;
     }
     if (focus) $("tab-" + name).focus();
@@ -460,7 +427,6 @@
     else if (name === "settings") { if (!S.settingsDirty) loadSettings(); }
     else if (name === "log") loadLog(false);
   }
-
   function onTabKey(e) {
     const i = TABS.indexOf(S.tab);
     const map = { ArrowRight: (i + 1) % TABS.length, ArrowLeft: (i + TABS.length - 1) % TABS.length, Home: 0, End: TABS.length - 1 };
@@ -472,7 +438,6 @@
   // ---------- 1. Обзор ----------
   const kv = (label, value) => h("div", { class: "kv" }, h("dt", { text: label }), h("dd", null, value));
   const stat = (n, label) => h("div", { class: "stat" }, h("b", { text: String(Number(n) || 0) }), h("span", { text: label }));
-
   async function loadOverview(silent) {
     if (S.loading.overview) return;
     S.loading.overview = true;
@@ -489,7 +454,6 @@
       S.loading.overview = false;
     }
   }
-
   function renderOverview(st) {
     const wa = String(st.whatsapp || "неизвестно");
     const waCls = wa === "open" ? "ok" : wa === "connecting" ? "warn" : "bad";
@@ -529,7 +493,6 @@
         h("div", { class: "stats" }, stat(st.groups, "группы"), stat(st.dms, "лички"), stat(st.chats, "всего"))),
       h("p", { class: "updated muted small", text: `Обновлено в ${fmtTime(new Date().toISOString(), true)}` }));
   }
-
   async function bulkAction(btn, path, question, done) {
     if (!confirm(question)) return;
     await busy(btn, async () => {
@@ -546,12 +509,9 @@
   const sortChats = (list) => list.slice().sort((a, b) =>
     (Number(Boolean(b.is_group)) - Number(Boolean(a.is_group))) || (msgTime(b) - msgTime(a)) ||
     String(a.title || "").localeCompare(String(b.title || ""), "ru"));
-
   function pauseInfo(c) {
     const until = toDate(c.paused_until);
-    if (until && until.getTime() > Date.now()) {
-      return (c.paused_by_owner ? "ты пишешь сам · до " : "пауза до ") + fmtTime(c.paused_until);
-    }
+    if (until && until.getTime() > Date.now()) return (c.paused_by_owner ? "ты пишешь сам · до " : "пауза до ") + fmtTime(c.paused_until);
     return c.paused_by_owner && !c.paused_until ? "ты пишешь сам" : "";
   }
   const grudgeBadge = (c) => (Number(c.grudges) > 0 ? h("span", { class: "badge bad", text: `обиды: ${Number(c.grudges)}` }) : null);
@@ -571,7 +531,6 @@
     }
     return S.chats;
   }
-
   function renderChats() {
     const box = $("chats-list");
     if (!S.chats || !S.chats.length) { showEmpty(box, "Пока пусто"); return; }
@@ -580,7 +539,6 @@
       : null);
     setKids(box, section("Группы", S.chats.filter((c) => c.is_group)), section("Личные", S.chats.filter((c) => !c.is_group)));
   }
-
   function chatItem(c) {
     const pause = pauseInfo(c);
     const meta = [c.is_group ? "группа" : "личка", `режим: ${chimeText(c.chime_level)}`,
@@ -592,7 +550,6 @@
     btn.addEventListener("click", () => openChat(c.id));
     return h("li", null, btn);
   }
-
   function openChat(id) {
     const c = (S.chats || []).find((x) => x.id === id);
     if (!c) return;
@@ -600,10 +557,8 @@
     $("chats-list-view").hidden = true;
     $("chat-view").hidden = false;
     if (!(history.state && history.state.stellaChat)) history.pushState({ stellaChat: true }, "");
-    $("send-text").value = "";
-    $("about-text").value = "";
-    $("about-text").disabled = true;
-    $("about-save").disabled = true;
+    setVal(["send-text", "about-text"], "");
+    $("about-text").disabled = $("about-save").disabled = true; // пока «Про чат» не загрузился
     $("about-notes").textContent = "Загрузка…";
     updateAboutCount();
     showEmpty($("chat-msgs"), "Загрузка…");
@@ -612,24 +567,20 @@
     loadMessages();
     loadAbout();
   }
-
   function closeChat() {
     Object.assign(S, { chat: null, chatSeq: S.chatSeq + 1 });
     $("chat-view").hidden = true;
     $("chats-list-view").hidden = false;
     $("chat-msgs").replaceChildren();
-    $("send-text").value = "";
-    $("about-text").value = "";
+    setVal(["send-text", "about-text"], "");
     $("about-notes").textContent = "";
     if (S.chats) renderChats();
     loadChats();
   }
-
-  // Кнопка «назад» телефона тоже закрывает чат (через popstate).
+  // Системная кнопка «назад» на телефоне тоже закрывает чат (через popstate).
   function backToList() {
     if (history.state && history.state.stellaChat) history.back(); else closeChat();
   }
-
   function renderChatHead() {
     const c = S.chat;
     if (!c) return;
@@ -645,12 +596,9 @@
     $("unpause-btn").disabled = !pause;
     $("chime-select").value = CHIME.has(c.chime_level) ? c.chime_level : "";
   }
-
   async function loadMessages() {
-    const c = S.chat;
+    const c = S.chat, seq = S.chatSeq, box = $("chat-msgs");
     if (!c) return;
-    const seq = S.chatSeq;
-    const box = $("chat-msgs");
     try {
       const r = await api("GET", chatPath(c.id, "/messages?limit=60"));
       if (seq === S.chatSeq) renderMessages(Array.isArray(r.messages) ? r.messages : []);
@@ -660,7 +608,6 @@
       if (!box.querySelector(".msg")) showEmpty(box, "Не удалось загрузить сообщения");
     }
   }
-
   function renderMessages(list) {
     const box = $("chat-msgs");
     if (!list.length) { showEmpty(box, "Пока пусто"); return; }
@@ -675,12 +622,9 @@
     }));
     box.scrollTop = box.scrollHeight;
   }
-
   async function onSend(e) {
     e.preventDefault();
-    const c = S.chat;
-    const ta = $("send-text");
-    const text = ta.value.trim();
+    const c = S.chat, ta = $("send-text"), text = ta.value.trim();
     if (!c || $("send-btn").disabled) return;
     if (!text) { toast("Напишите текст", "bad"); ta.focus(); return; }
     if (!confirm(`Стелла отправит в «${c.title || "чат"}»:\n\n${clip(text, 300)}`)) return;
@@ -692,7 +636,6 @@
       setTimeout(() => { if (seq === S.chatSeq) loadMessages(); }, 1500);
     });
   }
-
   // Действие в «Управлении»: на время запроса блокируем все кнопки карточки.
   async function chatAction(el, fn) {
     const c = S.chat;
@@ -701,26 +644,19 @@
     await busy([el, ...others], () => fn(c));
     if (S.chat === c) renderChatHead();
   }
-
-  function onPause(btn) {
+  const onPause = (btn) => chatAction(btn, async (c) => {
     const minutes = Number(btn.dataset.pause);
-    chatAction(btn, async (c) => {
-      const r = await api("POST", chatPath(c.id, "/pause"), { minutes });
-      c.paused_until = r.paused_until || new Date(Date.now() + minutes * 60000).toISOString();
-      c.paused_by_owner = false;
-      toast(`Пауза до ${fmtTime(c.paused_until)}`);
-    });
-  }
-
-  function onUnpause() {
-    chatAction($("unpause-btn"), async (c) => {
-      await api("POST", chatPath(c.id, "/unpause"));
-      c.paused_until = null;
-      c.paused_by_owner = false;
-      toast("Пауза снята");
-    });
-  }
-
+    const r = await api("POST", chatPath(c.id, "/pause"), { minutes });
+    c.paused_until = r.paused_until || new Date(Date.now() + minutes * 60000).toISOString();
+    c.paused_by_owner = false;
+    toast(`Пауза до ${fmtTime(c.paused_until)}`);
+  });
+  const onUnpause = () => chatAction($("unpause-btn"), async (c) => {
+    await api("POST", chatPath(c.id, "/unpause"));
+    c.paused_until = null;
+    c.paused_by_owner = false;
+    toast("Пауза снята");
+  });
   function onChime() {
     const level = $("chime-select").value;
     if (!CHIME.has(level)) return;
@@ -730,33 +666,32 @@
       toast(`Режим: ${CHIME.get(level)}`);
     });
   }
-
-  function onPoke() {
-    chatAction($("poke-btn"), async (c) => {
-      const seq = S.chatSeq;
-      let r;
-      try {
-        r = await api("POST", chatPath(c.id, "/poke"));
-      } catch (e) {
-        if (e.status !== 0 || e.code !== "timeout") throw e;
-        toast("Сервер долго отвечает — возможно, она ещё пишет. Обновите чат чуть позже");
-        return;
-      }
-      toast(r.sent ? "Стелла написала в чат" : "Стелла решила пока промолчать");
-      if (r.sent) setTimeout(() => { if (seq === S.chatSeq) loadMessages(); }, 2000);
-    });
-  }
-
-  async function loadAbout() {
-    const c = S.chat;
-    if (!c) return;
+  const onPoke = () => chatAction($("poke-btn"), async (c) => {
     const seq = S.chatSeq;
+    let r;
+    try {
+      r = await api("POST", chatPath(c.id, "/poke"));
+    } catch (e) {
+      if (e.status !== 0 || e.code !== "timeout") throw e;
+      toast("Сервер долго отвечает — возможно, она ещё пишет. Обновите чат чуть позже");
+      return;
+    }
+    if (r.queued) {
+      toast("Стелла придумывает, что написать — загляните в чат через минуту");
+      setTimeout(() => { if (seq === S.chatSeq) loadMessages(); }, 30000);
+      return;
+    }
+    toast(r.sent ? "Стелла написала в чат" : "Чат на паузе или ей нечего сказать");
+    if (r.sent) setTimeout(() => { if (seq === S.chatSeq) loadMessages(); }, 2000);
+  });
+  async function loadAbout() {
+    const c = S.chat, seq = S.chatSeq;
+    if (!c) return;
     try {
       const r = await api("GET", chatPath(c.id, "/about"));
       if (seq !== S.chatSeq) return;
       $("about-text").value = valueText(r.about);
-      $("about-text").disabled = false;
-      $("about-save").disabled = false;
+      $("about-text").disabled = $("about-save").disabled = false;
       $("about-notes").textContent = r.notes ? valueText(r.notes) : "Пока пусто";
       updateAboutCount();
     } catch (e) {
@@ -765,12 +700,9 @@
       showError(e);
     }
   }
-
   const updateAboutCount = () => { $("about-count").textContent = `${$("about-text").value.length} / ${ABOUT_MAX}`; };
-
   function onAboutSave() {
-    const c = S.chat;
-    const ta = $("about-text");
+    const c = S.chat, ta = $("about-text");
     if (!c) return;
     if (ta.value.length > ABOUT_MAX) { toast(`Слишком длинно: максимум ${ABOUT_MAX} символов`, "bad"); return; }
     busy([$("about-save"), ta], async () => {
@@ -778,36 +710,29 @@
       toast("Сохранено");
     });
   }
-
-  function onChatRefresh() {
-    busy($("chat-refresh"), async () => {
-      await loadMessages();
-      if ($("about-text").disabled) await loadAbout();
-      const list = await loadChats();
-      const fresh = S.chat && list ? list.find((x) => x.id === S.chat.id) : null;
-      if (fresh) { S.chat = fresh; renderChatHead(); }
-    });
-  }
+  const onChatRefresh = () => busy($("chat-refresh"), async () => {
+    await loadMessages();
+    if ($("about-text").disabled) await loadAbout();
+    const list = await loadChats();
+    const fresh = S.chat && list ? list.find((x) => x.id === S.chat.id) : null;
+    if (fresh) { S.chat = fresh; renderChatHead(); }
+  });
 
   // ---------- 3. Люди ----------
   function fillPeopleSelect() {
-    const sel = $("people-chat");
-    const list = S.chats || [];
+    const sel = $("people-chat"), list = S.chats || [];
     if (S.peopleChatId === null || !list.some((c) => c.id === S.peopleChatId)) S.peopleChatId = list.length ? list[0].id : null;
     setKids(sel, list.map((c) => h("option", { value: String(c.id), text: `${c.title || "Без названия"} (${c.is_group ? "группа" : "личка"})` })));
     if (S.peopleChatId !== null) sel.value = String(S.peopleChatId);
     sel.disabled = !list.length;
   }
-
   async function loadPeopleTab() {
     if (!S.chats) await loadChats(); else fillPeopleSelect();
     if (S.chats && S.chats.length) await loadPeople();
     else showEmpty($("people-list"), S.chats ? "Пока пусто — нет чатов" : "Не удалось загрузить список чатов");
   }
-
   async function loadPeople() {
-    const id = S.peopleChatId;
-    const box = $("people-list");
+    const id = S.peopleChatId, box = $("people-list");
     if (id === null) { showEmpty(box, "Пока пусто"); return; }
     const seq = ++S.peopleSeq;
     showEmpty(box, "Загрузка…");
@@ -824,9 +749,7 @@
       showEmpty(box, "Не удалось загрузить");
     }
   }
-
   const personName = (p) => p.name || p.push_name || p.ref || "Без имени";
-
   function personCard(chatId, p) {
     const bodyId = `person-body-${++S.uid}`;
     const body = h("div", { class: "person-body", id: bodyId, hidden: true });
@@ -834,7 +757,7 @@
       p.phone_masked || "", `сообщений: ${Number(p.msg_count) || 0}`].filter(Boolean).join(" · ");
     const head = h("button", { type: "button", class: "person-head", "aria-expanded": "false", "aria-controls": bodyId },
       h("div", { class: "who" }, h("div", { class: "name", text: personName(p) }), h("div", { class: "meta", text: meta })),
-      h("span", { class: "chev", "aria-hidden": "true", text: "▾" }));
+      h("span", { class: "chev", "aria-hidden": "true" }));
     head.addEventListener("click", () => {
       const open = head.getAttribute("aria-expanded") !== "true";
       head.setAttribute("aria-expanded", open ? "true" : "false");
@@ -843,8 +766,7 @@
     });
     return h("div", { class: "person" }, head, body);
   }
-
-  // Изменения анкеты: удалённое поле уходит как "" (сервер его стирает).
+  // Что поменялось в анкете. Удалённое поле уходит как "" — сервер его стирает.
   function profileDiff(profile, recs) {
     const now = new Map();
     for (const r of recs) {
@@ -858,7 +780,6 @@
     for (const [k, v] of now) if (has(k) ? valueText(profile[k]).trim() !== v : v !== "") fields[k] = v;
     return { fields };
   }
-
   function renderPersonBody(body, chatId, p) {
     const profile = p.profile && typeof p.profile === "object" && !Array.isArray(p.profile) ? p.profile : {};
     const personPath = (tail) => chatPath(chatId, `/people/${encodeURIComponent(String(p.id))}${tail}`);
@@ -895,7 +816,6 @@
       toast("Анкета сохранена");
       renderPersonBody(body, chatId, p);
     }));
-
     const facts = Array.isArray(p.facts) ? p.facts : [];
     const forgetBtn = h("button", { type: "button", class: "btn danger wide", text: "Забыть все факты", disabled: !facts.length });
     forgetBtn.addEventListener("click", () => {
@@ -907,7 +827,6 @@
         renderPersonBody(body, chatId, p);
       });
     });
-
     setKids(body,
       h("h4", { class: "sub-title", text: "Анкета" }),
       recs.length ? null : h("p", { class: "muted small", text: "Пока пусто — можно добавить поле" }),
@@ -924,7 +843,6 @@
     S.settingsDirty = v;
     $("settings-dirty").hidden = !v;
   }
-
   async function loadSettings() {
     const box = $("settings-body");
     if (!S.settings) showEmpty(box, "Загрузка…");
@@ -937,7 +855,6 @@
       if (!S.settings) showEmpty(box, "Не удалось загрузить");
     }
   }
-
   function renderSettings(list) {
     S.settings = list;
     S.settingCtl = [];
@@ -945,11 +862,9 @@
     if (list.length) setKids($("settings-body"), list.map(settingField));
     else showEmpty($("settings-body"), "Пока пусто");
   }
-
   function settingField(d, i) {
     const id = `set-${i}`;
     const hintId = d.hint ? `${id}-hint` : null;
-    const keyTag = h("span", { class: "key", text: String(d.key) });
     const common = { id, "aria-describedby": hintId };
     let el;
     if (d.type === "bool") {
@@ -971,31 +886,27 @@
     el.addEventListener("input", () => setDirty(true));
     el.addEventListener("change", () => setDirty(true));
     S.settingCtl.push({ d, el });
-    const label = String(d.label || d.key);
+    const label = String(d.label || d.key), keyTag = h("span", { class: "key", text: String(d.key) });
     return h("div", { class: "setting" },
       d.type === "bool" ? h("label", { class: "check", for: id }, el, h("span", { text: label }), keyTag) : h("label", { for: id }, label, keyTag),
       d.type === "bool" ? null : el,
       hintId ? h("p", { class: "hint", id: hintId, text: String(d.hint) }) : null);
   }
-
   function readSetting({ d, el }) {
     const label = d.label || d.key;
     if (d.type === "bool") return { v: el.checked };
     if (d.type !== "number") return { v: el.value };
-    const raw = el.value.trim();
-    const n = Number(raw);
+    const raw = el.value.trim(), n = Number(raw);
     if (raw === "" || !Number.isFinite(n)) return { err: `«${label}»: нужно число` };
     const lo = d.min ?? null, hi = d.max ?? null;
     if ((lo !== null && n < lo) || (hi !== null && n > hi)) return { err: `«${label}»: от ${lo ?? "…"} до ${hi ?? "…"}` };
     return { v: n };
   }
-
   function sameValue(d, v) {
     if (d.type === "bool") return Boolean(d.value) === v;
     if (d.type === "number") return d.value !== null && d.value !== "" && Number(d.value) === v;
     return valueText(d.value) === v;
   }
-
   async function saveSettings() {
     const changed = Object.create(null);
     for (const ctl of S.settingCtl) {
@@ -1031,7 +942,6 @@
       S.loading.log = false;
     }
   }
-
   function renderLog() {
     const box = $("log-list");
     const atBottom = !box.querySelector(".log-line") || box.scrollHeight - box.scrollTop - box.clientHeight < 40;
@@ -1040,7 +950,7 @@
     if (!lines.length) { showEmpty(box, S.log.length ? "Ничего не найдено" : "Пока пусто"); return; }
     setKids(box, lines.map((l) => {
       const up = String(l.level || "INFO").toUpperCase();
-      const lv = /^[A-Z]{1,10}$/.test(up) ? up : "INFO"; // уровень идёт в имя класса — только буквы
+      const lv = /^[A-Z]{1,10}$/.test(up) ? up : "INFO"; // уровень попадает в имя класса — только буквы
       return h("div", { class: `log-line lvl-${lv}` },
         h("span", { class: "t", text: fmtTime(l.at, true) }), " ",
         h("span", { class: "l", text: lv }), " ",
@@ -1082,13 +992,11 @@
 
     on("people-chat", "change", (e) => { S.peopleChatId = Number(e.target.value); loadPeople(); });
     on("people-refresh", "click", (e) => busy(e.currentTarget, async () => { await loadChats(); await loadPeople(); }));
-
     on("settings-save", "click", saveSettings);
     on("settings-refresh", "click", (e) => {
       if (S.settingsDirty && !confirm("Есть несохранённые изменения. Сбросить их?")) return;
       busy(e.currentTarget, loadSettings);
     });
-
     on("log-refresh", "click", (e) => busy(e.currentTarget, () => loadLog(false)));
     on("log-filter", "input", renderLog);
     on("log-auto", "change", (e) => { S.logAuto = e.target.checked; if (S.logAuto) loadLog(true); });
@@ -1113,11 +1021,9 @@
     if (server) local.set(K.server, server);
     if (server !== prevSaved) clearToken();
     bindEvents();
-
     const token = getToken();
     if (!token || !server) { showLogin(notice ? notice[0] : "", notice ? notice[1] : ""); return; }
-    const last = Number(sess.get(K.active)) || 0;
-    const exp = Number(sess.get(K.exp)) || 0;
+    const last = Number(sess.get(K.active)) || 0, exp = Number(sess.get(K.exp)) || 0;
     if (last && Date.now() - last > IDLE_MS) {
       clearToken();
       request("POST", "/logout", {}, token).catch(() => { /* ошибки не важны */ });
