@@ -12,9 +12,9 @@ from datetime import date
 from typing import Callable, Sequence
 
 from ..config import Settings
-from .base import LLM, LLMError, LLMRefusal, LLMReply, ToolSpec
+from .base import LLM, Image, LLMError, LLMRefusal, LLMReply, ToolSpec
 
-__all__ = ["LLM", "LLMError", "LLMRefusal", "LLMReply", "ToolSpec", "SwitchingLLM", "make_backend"]
+__all__ = ["LLM", "Image", "LLMError", "LLMRefusal", "LLMReply", "ToolSpec", "SwitchingLLM", "make_backend"]
 
 log = logging.getLogger("stella.llm")
 
@@ -64,7 +64,8 @@ class SwitchingLLM:
         return self._cache[key], kind, model
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
         backend, _, default_model = self._backend()
+        kwargs = {"images": images} if images else {}
         return await backend.ask(system=system, prompt=prompt, tools=tools, model=model or default_model,
-                                 max_turns=max_turns)
+                                 max_turns=max_turns, **kwargs)

@@ -146,6 +146,33 @@ def render_svg(svg: str, width: int, height: int) -> Image.Image:
         raise MediaError("не получилось нарисовать SVG") from exc
 
 
+# ---------- картинка для модели (она «видит» фото и стикеры) ----------
+MODEL_IMAGE_SIDE = 1568  # больше модели не нужно — только дороже
+
+
+def image_for_model(data: bytes) -> tuple[str, bytes] | None:
+    """Фото/стикер из WhatsApp -> (media_type, байты) для модели: первый кадр, не больше 1568 px.
+    None — если это не картинка."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.seek(0)
+        img.load()
+    except Exception:
+        return None
+    if img.width * img.height > 50_000_000:
+        return None
+    has_alpha = img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or img.mode in ("RGBA", "LA")
+    img = img.convert("RGBA" if has_alpha else "RGB")
+    img.thumbnail((MODEL_IMAGE_SIDE, MODEL_IMAGE_SIDE), Image.LANCZOS)
+    buf = io.BytesIO()
+    if has_alpha:  # стикеры с прозрачностью — на белом фоне, чтобы модель видела контуры
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    img.save(buf, "JPEG", quality=85)
+    return "image/jpeg", buf.getvalue()
+
+
 # ---------- стикеры и картинки ----------
 def to_sticker(img: Image.Image) -> bytes:
     """Квадрат 512×512 с прозрачным фоном, WebP до 100 КБ."""

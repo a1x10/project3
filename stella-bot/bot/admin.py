@@ -83,6 +83,11 @@ class AdminAuth:
     def enabled(self) -> bool:
         return bool(self.s.panel_password_1 and self.s.panel_password_2)
 
+    def weak(self) -> bool:
+        """Короткие или только из цифр — подбираются легко (держится на блокировках)."""
+        pw = self.s.panel_password_1 + self.s.panel_password_2
+        return len(pw) < 16 or pw.isdigit()
+
     @staticmethod
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
@@ -439,6 +444,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
             "groups": sum(1 for c in chats if c["is_group"]),
             "dms": sum(1 for c in chats if not c["is_group"]),
             "own_lid_known": any(j.endswith("@lid") for j in brain.bot.jids),
+            "weak_passwords": auth_of(request).weak(),
             "tunnel_url": brain.tunnel_url,
             "uptime_s": int(time.monotonic() - brain.started_at),
             "switch_at": s.llm_switch_at.isoformat() if s.llm_switch_at else None,
