@@ -668,12 +668,12 @@ class _Parser:
         if found is None:
             raise SpecError(path, f"актёра «{_short(value)}» нет в cast — опиши его в cast (base) или возьми из "
                                   "имеющихся", tuple(dict.fromkeys(tuple(self.cast) + C.BASES)))
-        self.add_cast(aid, {"base": found[0]}, f"{path}", auto=True)
+        self.add_cast(aid, {"base": found[0]}, path)
         if aid != "stella":  # Стелла — это сама она, её можно не описывать
             self.warn(f"{path}: актёра «{_short(value)}» не было в cast — добавила ({self.cast[aid].base})")
         return aid
 
-    def add_cast(self, aid: str, raw: Any, path: str, auto: bool = False) -> None:
+    def add_cast(self, aid: str, raw: Any, path: str) -> None:
         if len(self.cast) >= C.MAX_CAST:
             raise SpecError(path, f"актёров больше {C.MAX_CAST} — оставь до {C.MAX_CAST}", tuple(self.cast))
         self.cast[aid] = self.cast_spec(aid, raw, path, len(self.cast))

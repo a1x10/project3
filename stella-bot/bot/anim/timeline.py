@@ -314,10 +314,12 @@ class _Build:
         n = len(who)
         sync = b.do == "dance" and b.style == "sync"
         stagger = 0.0 if n < 2 or sync else STAGGER * k
+        meet: dict[str, float] = {}  # hug/high_five: когда актёры сошлись — тогда и эмоция со значком
         if b.do in PAIR and who:
-            end = max(end, self.pairs(st, b, who, t))
+            end = max(end, self.pairs(st, b, who, t, meet))
         for j, a in enumerate(who):
-            end = max(end, self.actor_beat(st, b, a, t + j * stagger, skip_do=b.do in PAIR))
+            end = max(end, self.actor_beat(st, b, a, t + j * stagger, skip_do=b.do in PAIR,
+                                           react_at=meet.get(a)))
         if b.effect is not None:
             e = b.effect
             dur = (e.seconds if e.seconds is not None else EFFECT_SECONDS.get(e.kind, 2.5)) * k
@@ -342,8 +344,10 @@ class _Build:
                 end = max(end, t + dur)
         return end
 
-    def actor_beat(self, st: _Stage, b: BeatSpec, a: str, t: float, *, skip_do: bool) -> float:
+    def actor_beat(self, st: _Stage, b: BeatSpec, a: str, t: float, *, skip_do: bool,
+                   react_at: float | None = None) -> float:
         k = self.k
+        tr = t if react_at is None else react_at
         end = t
         line_dur = 0.0
         if b.line:
@@ -356,9 +360,9 @@ class _Build:
         if b.do is not None and not skip_do:
             end = max(end, self.action(st, b, a, b.do, t, line_dur))
         if b.emotion is not None:
-            self.emo_base.setdefault(a, []).append((t, b.emotion))
+            self.emo_base.setdefault(a, []).append((tr, b.emotion))
         if b.mark is not None:
-            self.marks.append(MarkEvent(a, b.mark, t, t + MARK_SECONDS))
+            self.marks.append(MarkEvent(a, b.mark, tr, tr + MARK_SECONDS))
         if (b.emotion or b.mark or b.look) and b.do is None and not b.line:
             end = max(end, t + REACT * k)
         if b.seconds is not None:
@@ -458,7 +462,7 @@ class _Build:
             return {"target": target, "tx": tx}
         return {}
 
-    def pairs(self, st: _Stage, b: BeatSpec, who: list[str], t: float) -> float:
+    def pairs(self, st: _Stage, b: BeatSpec, who: list[str], t: float, meet: dict[str, float]) -> float:
         """hug/high_five: оба подходят друг к другу (два walk), потом действие у обоих."""
         k = self.k
         do = b.do or "hug"
@@ -498,6 +502,7 @@ class _Build:
             self.add_clip(st, Clip(a, do, t_act, t_act + dur, 0, {"target": p, "tx": tb}))
             self.add_clip(st, Clip(p, do, t_act, t_act + dur, 0, {"target": a, "tx": ta}))
             st.face[a], st.face[p] = sgn, -sgn
+            meet[a] = meet[p] = t_act
             if do == "hug":
                 for x in (a, p):
                     if not (x in who and b.emotion):

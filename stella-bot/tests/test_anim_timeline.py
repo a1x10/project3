@@ -315,6 +315,11 @@ def test_hug_and_high_five_bring_actors_together():
     assert ha.params == {"target": "b", "tx": pytest.approx(wb.params["x1"])}
     assert hb.params == {"target": "a", "tx": pytest.approx(wa.params["x1"])}
     assert {e.emotion for e in plan.emotions} == {"love"}  # обнимашки — с любовью, если эмоция не задана
+    plan = plan_of([{"who": "a", "do": "hug", "target": "b", "mark": "hearts", "emotion": "happy"}], cast=cast,
+                   place={"a": {"x": 0.2}, "b": {"x": 0.8}})
+    hug = clips(plan, "a", "hug")[0]
+    assert plan.marks[0].t0 == pytest.approx(hug.t0)  # значок и эмоция — когда обнялись, а не когда пошли
+    assert next(e for e in plan.emotions if e.actor == "a").t0 == pytest.approx(hug.t0)
     # одиночный who + target; уже рядом — без ходьбы
     plan = plan_of([{"who": "a", "do": "high_five", "target": "c"}], cast=cast,
                    place={"a": {"x": 0.4}, "c": {"x": 0.61}, "b": {"x": 0.9}})
