@@ -43,6 +43,8 @@ class Kit:
     under: list[Draw2D] = field(default_factory=list)  # 2D до деталей (нитка шарика, пламя ракеты)
     over: list[Draw2D] = field(default_factory=list)  # 2D поверх (огоньки свечей, искры)
     seed: int = 0
+    head: Obj | None = None  # у игрушек: деталь-голова (над ней — значки эмоций)
+    head_r: float = 0.3  # её радиус в единицах мира
 
     def lv(self, frac: float, lo: int = 8) -> int:
         return lod_level(max(lo, self.seg * frac))
@@ -272,6 +274,7 @@ def _sparkle(ctx: cairo.Context, x: float, y: float, r: float, alpha: float) -> 
 
     if r < 0.5 or alpha <= 0.01:
         return
+    ctx.new_path()
     g = cairo.RadialGradient(x, y, 0, x, y, r * 1.2)
     g.add_color_stop_rgba(0, 1, 1, 1, 0.5 * alpha)
     g.add_color_stop_rgba(1, 1, 1, 1, 0)
@@ -304,7 +307,7 @@ DEFAULTS: dict[str, tuple[str, str, float, float]] = {
     "trophy": ("#ffd23f", "gold", 0.2, 0.35),
     "disco_ball": ("#e8e4ff", "chrome", 0.15, 0.3),
     "rocket": ("#f4f6ff", "plastic", 0.12, 0.45),
-    "christmas_tree": ("#3ec46d", "toon", 0.22, 0.2),
+    "christmas_tree": ("#3ec46d", "clay", 0.22, 0.2),
     "text3d": ("#ffd23f", "gold", 0.0, 0.0),
 }
 
@@ -623,7 +626,7 @@ def _b_tree(k: Kit) -> None:
           _m("#8b5a2b", "clay"), pos=(0, -0.84, 0), scale=(0.15, 0.17, 0.15), bias=0.2)
     star = _cached(k.cache, ("ex_star_small",), lambda: Extrusion([star_contour(1.0, 0.48)], 0.4, 0.1).build())
     k.add(star, _m("#ffd23f", "gold"), pos=(0, 0.76, 0), scale=0.2, bias=-2.0)
-    ball = k.sph(k.lv(0.5, 10))
+    ball = k.sph(k.lv(0.3, 8))
     rnd = rng(k.seed, "tree")
     cols = ["#ff3b3b", "#ffd23f", "#3ec1ff", "#ff7eb6", "#b48cff"]
     for i in range(8):
@@ -719,7 +722,7 @@ def draw_prop(ctx: cairo.Context, prop: PropSpec, t: float, x: float, y: float, 
         root = Obj(None, rot=(0.0, yaw0 + mo.spin, 0.0), parent=tilt_n)
         kit = Kit(cache, seg, mat, t + phase, root, seed=seed)
         build_prop(kind, kit)
-        if estimate_tris(kit.parts) <= OBJECT_BUDGET or seg <= 8:
+        if estimate_tris(kit.parts, cam) <= OBJECT_BUDGET or seg <= 8:
             break
         lower = lod_level(seg - 1)
         if lower >= seg:
@@ -728,13 +731,16 @@ def draw_prop(ctx: cairo.Context, prop: PropSpec, t: float, x: float, y: float, 
     st["objects"] += 1
     for fn in kit.under:
         ctx.save()
+        ctx.new_path()
         fn(ctx, cam)
         ctx.restore()
     draw_parts(ctx, cam, kit.parts, outline_px(size_px), st)
     for fn in kit.over:
         ctx.save()
+        ctx.new_path()
         fn(ctx, cam)
         ctx.restore()
+    ctx.new_path()
 
 
 def _frame_width(ctx: cairo.Context) -> float | None:

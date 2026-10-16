@@ -208,6 +208,20 @@ def test_bad_inputs_do_not_crash() -> None:
     draw_prop3d(ctx, PropSpec(id="x", kind="text3d", text="🦄🦄 ok ❤"), 0.0, 48, 48, 30, cache)
 
 
+def test_callers_current_point_does_not_leak() -> None:
+    """Путь не входит в save/restore cairo: текущая точка вызывающего (после show_text и т. п.) не должна
+    превращаться в лишнюю линию к первой дуге (кружки-«игрушки» на ёлке, искры)."""
+    for kind in ("christmas_tree", "disco_ball", "gem"):
+        s, ctx = _surface(200, 200)
+        ctx.move_to(0, 0)
+        draw_prop3d(ctx, PropSpec(id="c", kind=kind), 0.37, 150, 150, 70, {})
+        assert not _drawn(s)[:80, :80].any(), kind
+    s, ctx = _surface(200, 200)
+    ctx.move_to(0, 0)
+    draw_title3d(ctx, PlannedTitle(0, "Ёж", "gold3d", "pop", "bottom", 0.0, 9.0), 2.0, 200, 200, {})
+    assert not _drawn(s)[:60, :60].any()
+
+
 def test_text3d_prop_fits_frame_width() -> None:
     s, ctx = _surface(200, 120)
     draw_prop3d(ctx, PropSpec(id="t", kind="text3d", text="ДЛИННАЯ ФРАЗА", anim="none"), 0.0, 100, 60, 80, {})
@@ -258,9 +272,21 @@ def test_triangle_budget_and_lod() -> None:
         s, ctx = _surface(720, 720)
         draw_toy3d(ctx, FakeLook(base), Pose(), 360, 710, 700, 1, cache, FaceSpy())
         assert 0 < render3d.stats(cache)["tris"] <= budget, base
-    # детализация растёт с размером на экране
+    # детализация растёт с размером на экране; quality=fast — грубее
     assert M.lod_for_radius(20) < M.lod_for_radius(200)
     assert M.lod_for_radius(200, "fast") < M.lod_for_radius(200)
+    counts = {}
+    for q in ("normal", "fast"):
+        cache = {}
+        s, ctx = _surface(300, 300)
+        draw_prop3d(ctx, PropSpec(id="q", kind="donut"), 0.0, 150, 150, 250, cache, quality=q)
+        assert _non_uniform(s)
+        counts[q] = render3d.stats(cache)["tris"]
+        s, ctx = _surface(300, 300)
+        draw_title3d(ctx, PlannedTitle(0, "Быстро", "gold3d", "pop", "top", 0.0, 9.0), 2.0, 300, 300, cache,
+                     quality=q)
+        assert _non_uniform(s)
+    assert counts["fast"] < counts["normal"]
 
 
 # ======================= заголовки =======================
@@ -371,6 +397,13 @@ def test_toy_with_real_faces_if_available() -> None:
         s, ctx = _surface(160, 220)
         draw_toy3d(ctx, look, Pose(emotion="happy", mouth_open=0.5), 80, 210, 180, 1, {}, chars.draw_face)
         assert _non_uniform(s)
+        # значки над головой (их рисует 3D-игрушка рисовалками chars.marks)
+        s0, c0 = _surface(160, 220)
+        s1, c1 = _surface(160, 220)
+        draw_toy3d(c0, look, Pose(), 80, 210, 150, 1, {}, chars.draw_face)
+        draw_toy3d(c1, look, Pose(marks=(("hearts", 0.5), ("question", 0.5), ("_puff", 0.4))), 80, 210, 150, 1, {},
+                   chars.draw_face)
+        assert int(np.count_nonzero(_drawn(s1))) > int(np.count_nonzero(_drawn(s0)))
 
 
 # ======================= детерминизм =======================
