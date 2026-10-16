@@ -44,7 +44,7 @@ def env(r: np.ndarray) -> np.ndarray:
     y = r[:, 1]
     sky = np.array([0.55, 0.75, 1.0])
     hor = np.array([1.0, 0.97, 0.92])
-    gnd = np.array([0.36, 0.32, 0.42])
+    gnd = np.array([0.44, 0.4, 0.52])
     up = np.clip(y, 0, 1) ** 0.45
     dn = np.clip(-y, 0, 1) ** 0.35
     c = np.where((y >= 0)[:, None], hor * (1 - up[:, None]) + sky * up[:, None],
@@ -147,7 +147,8 @@ def metal_stops(kind: str, color: RGB) -> list[tuple[float, RGB]]:
                 (1.0, (1.0, 0.88, 0.4))]
     if kind == "chrome":
         c = mix(color, (0.9, 0.93, 1.0), 0.6)
-        return [(0.0, (0.98, 0.99, 1.0)), (0.45, mix(c, (0.62, 0.7, 0.86), 0.5)), (0.55, mix(c, (0.3, 0.33, 0.46), 0.6)),
+        return [(0.0, (0.98, 0.99, 1.0)), (0.45, mix(c, (0.62, 0.7, 0.86), 0.5)),
+                (0.55, mix(c, (0.3, 0.33, 0.46), 0.6)),
                 (1.0, mix(c, (0.86, 0.9, 0.98), 0.5))]
     if kind == "gem":
         return [(0.0, lighten(color, 0.55)), (0.45, lighten(color, 0.15)), (0.55, mul(color, 0.7)),

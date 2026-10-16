@@ -486,7 +486,6 @@ def _torso(ctx: cairo.Context, look: Look, pose: Pose, R: Rig, facing: int) -> N
 
 # ---------- то, что за спиной и на шее ----------
 def _cape(ctx: cairo.Context, look: Look, pose: Pose, R: Rig) -> None:
-    b = look.build
     col = look.accent
     sw = pose.hair_swing
     flow = 10 + 26 * abs(sw)
@@ -505,7 +504,6 @@ def _cape(ctx: cairo.Context, look: Look, pose: Pose, R: Rig) -> None:
     g.add_color_stop_rgb(0, *mul(col, 0.65))
     g.add_color_stop_rgb(1, *mul(col, 0.95))
     fill_ink(ctx, g, 4.0)
-    del b
 
 
 def _cape_collar(ctx: cairo.Context, look: Look, R: Rig) -> None:
@@ -641,7 +639,12 @@ def _top_y(look: Look, r: float) -> float:
 
 
 def _hand_in_face(look: Look, R: Rig, s: int) -> bool:
+    """Рука у лица (кисть в овале головы и предплечье смотрит внутрь, к лицу) — её рисуем поверх головы.
+    Поднятая рука (машет) остаётся за головой."""
     hx_, hy = R.hands[s]
+    ex = R.elbows[s][0]
+    if (hx_ - ex) * s > 2.0:
+        return False
     cx, cy = R.head
     rx = R.head_r * look.build.head_w * 0.95
     ry = R.head_r * 0.95
@@ -666,23 +669,18 @@ def _ghost(ctx: cairo.Context, look: Look, pose: Pose) -> tuple[float, float, fl
     cel_shadow(ctx, path, col, -12.0, -6.0, 0.85)
     for s in (-1, 1):  # ручки-«крылышки»
         a, _ = pose.arm_l if s < 0 else pose.arm_r
-        lift = (a - 0.25) * 18
-        ellipse(ctx, s * 74, y0 + 22 - lift + 5 * math.sin(t * 5 + s), 17, 11, s * (0.5 + a * 0.3))
-        fill_ink(ctx, body_grad(s * 74, y0 + 20, 16, col), 4.0)
+        ny = y0 + 22 - (a - 0.25) * 18 + 5 * math.sin(t * 5 + s)
+        ellipse(ctx, s * 74, ny, 17, 11, s * (0.5 + a * 0.3))
+        fill_ink(ctx, body_grad(s * 74, ny, 18, col), 4.0)
     if "scarf" in look.accessories:
         ellipse(ctx, 0, y0 + 46, 60, 10)
         fill_ink(ctx, look.accent, 3.5)
     draw_face(ctx, look, pose, pose.yaw * 6, y0 + 4, 60, pose.yaw)
-    head_accessories(ctx, _ghost_head(look), pose, 60, pose.yaw * 19, y0 - 58)
+    head_accessories(ctx, look, pose, 60, pose.yaw * 19, y0 - 58)
     return 0.0, y0, 60.0
 
 
-def _ghost_head(look: Look) -> Look:
-    return look
-
-
 def _monster(ctx: cairo.Context, look: Look, pose: Pose, R: Rig) -> None:
-    b = look.build
     bx = R.hip[0]
     cy = R.hip[1] - 62
     rx, ry = 76.0 * (1 - 0.15 * abs(R.yaw)), 80.0
@@ -719,7 +717,6 @@ def _monster(ctx: cairo.Context, look: Look, pose: Pose, R: Rig) -> None:
     for s in (-1, 1):
         if s != R.back and _hand_in_face(look, R, s):
             _arm(ctx, look, pose, R, s, False)
-    del b
 
 
 def _toy_fallback(ctx: cairo.Context, look: Look, pose: Pose, R: Rig) -> None:
@@ -799,14 +796,19 @@ def _draw_body(ctx: cairo.Context, look: Look, pose: Pose, R: Rig, facing: int) 
     return R.head, R.head_r
 
 
-def _local_marks(ctx: cairo.Context, look: Look, pose: Pose, R: Rig, facing: int) -> None:
-    """Внутренние значки в пространстве куклы: пыль у ног (позади тела рисовать не нужно — она у земли)."""
+def _inner_marks(look: Look, pose: Pose, R: Rig) -> list[tuple[str, float, float, float]]:
+    """Внутренние значки, привязанные к телу: искра — у кистей, пыль — у ступни (точки в единицах куклы)."""
+    out = []
     for kind, p in pose.marks:
-        if kind == "_dust":
-            for s in (-1, 1):
-                fx_, fy_ = R.feet[s]
-                draw_dust(ctx, p, fx_, 2.0 + min(0.0, -pose.bob) * 0 + 0.0, 1.0, 1)
-                break
+        if kind == "_spark":
+            l, r = R.hands[-1], R.hands[1]
+            pt = ((l[0] + r[0]) / 2, (l[1] + r[1]) / 2)
+            if abs(l[0] - r[0]) > 40:  # руки врозь — искра у поднятой
+                pt = r if r[1] < l[1] else l
+            out.append((kind, p, pt[0], pt[1]))
+        elif kind == "_dust":
+            out.append((kind, p, R.feet[1][0], 0.0))
+    return out
 
 
 def draw_character(ctx: cairo.Context, look: Look, pose: Pose, x: float, y: float, height_px: float,
@@ -818,69 +820,52 @@ def draw_character(ctx: cairo.Context, look: Look, pose: Pose, x: float, y: floa
         return
     f = -1 if facing < 0 else 1
     scale = max(0.0, pose.scale)
-    u = height_px / HEIGHT * scale  # пикселей на единицу
-    alpha = max(0.0, min(1.0, pose.alpha))
-    if look.kind == "ghost":
-        alpha *= 0.92
+    k = height_px / HEIGHT  # пикселей на единицу при scale = 1
+    u = k * scale
+    alpha = max(0.0, min(1.0, pose.alpha)) * (0.92 if look.kind == "ghost" else 1.0)
     R = rig(look, pose)
     sq = max(0.5, min(1.6, pose.squash))
     head_dev: tuple[float, float] | None = None
-    marks_dev: list[tuple[str, float, float, float]] = []
-    if u > 0.004 and alpha > 0.004:
-        ctx.save()
-        ctx.translate(x, y)
+    head_r = R.head_r
+    inner_dev: list[tuple[str, float, float, float]] = []
+    drawn = u > 0.004 and alpha > 0.004
+    ctx.save()
+    ctx.translate(x, y)
+    if drawn:
         group = alpha < 0.999
-        if group:
-            # группа только по рамке персонажа — не по всему кадру
-            ctx.rectangle(-height_px * 0.9, -height_px * 1.5, height_px * 1.8, height_px * 1.6)
+        if group:  # прозрачность — группой только по рамке персонажа, не по всему кадру
+            ext = height_px * max(1.0, scale)
+            ctx.rectangle(-ext, -ext * 2.2, ext * 2, ext * 2.5)
             ctx.clip()
             ctx.push_group()
         ctx.scale(u * f / math.sqrt(sq), u * sq)
-        hc, hr = _draw_body(ctx, look, pose, R, f)
+        hc, head_r = _draw_body(ctx, look, pose, R, f)
         head_dev = ctx.user_to_device(*hc)
-        for kind, p in pose.marks:
-            if kind == "_spark":
-                pt = ((R.hands[-1][0] + R.hands[1][0]) / 2, (R.hands[-1][1] + R.hands[1][1]) / 2)
-                if abs(R.hands[-1][0] - R.hands[1][0]) > 40:
-                    pt = R.hands[1] if R.hands[1][1] < R.hands[-1][1] else R.hands[-1]
-                marks_dev.append(("_spark", p, *ctx.user_to_device(*pt)))
-            elif kind == "_dust":
-                for s in (-1, 1):
-                    fx_, _ = R.feet[s]
-                    marks_dev.append(("_dust", p, *ctx.user_to_device(fx_, 0.0)))
-                    break
+        inner_dev = [(kd, p, *ctx.user_to_device(px, py)) for kd, p, px, py in _inner_marks(look, pose, R)]
         if group:
             ctx.pop_group_to_source()
             ctx.paint_with_alpha(alpha)
-        ctx.restore()
-        hr_px = hr
-    else:
-        hr_px = R.head_r
-    # значки — в экранных координатах (не зеркалим)
-    if pose.marks:
-        if head_dev is None:
-            ctx.save()
-            ctx.translate(x, y)
-            ctx.scale(height_px / HEIGHT * f, height_px / HEIGHT)
-            hc = R.head if look.kind not in ("ghost", "monster", "toy") else (0.0, -170.0)
-            head_dev = ctx.user_to_device(*hc)
-            ctx.restore()
-        hx_, hy_ = ctx.device_to_user(*head_dev)
-        mu = height_px / HEIGHT * max(0.6, min(1.6, scale if scale > 0.05 else 1.0))
-        body_c = ctx.device_to_user(*head_dev)
-        for kind, p in pose.marks:
-            if kind == "_puff":
-                cx_, cy_ = x, y - height_px * 0.42 * (sq if sq else 1.0) + pose.bob * height_px / HEIGHT
-                draw_puff(ctx, p, cx_, cy_, height_px / HEIGHT)
-            elif not kind.startswith("_") and alpha > 0.02 and scale > 0.05:
-                draw_mark(ctx, kind, p, hx_, hy_, mu, f, hr_px, pose.t)
-        for kind, p, dx, dy in marks_dev:
-            px, py = ctx.device_to_user(dx, dy)
-            if kind == "_spark":
-                draw_spark(ctx, p, px, py, height_px / HEIGHT)
-            elif kind == "_dust":
-                draw_dust(ctx, p, px, y, height_px / HEIGHT, f)
-        del body_c
+    elif pose.marks:
+        ctx.scale(k * f, k)
+        hc = R.head if look.kind not in ("ghost", "monster", "toy") else (0.0, -170.0)
+        head_dev = ctx.user_to_device(*hc)
+    ctx.restore()
+    if not pose.marks or head_dev is None:
+        return
+    # значки — в экранных координатах (буквы не зеркалятся)
+    hx_, hy_ = ctx.device_to_user(*head_dev)
+    mu = k * max(0.6, min(1.6, scale if scale > 0.05 else 1.0))
+    for kind, p in pose.marks:
+        if kind == "_puff":
+            draw_puff(ctx, p, x, y - height_px * 0.42 + pose.bob * k, k)
+        elif not kind.startswith("_") and alpha > 0.02 and scale > 0.05:
+            draw_mark(ctx, kind, p, hx_, hy_, mu, f, head_r, pose.t)
+    for kind, p, dx, dy in inner_dev:
+        px, py = ctx.device_to_user(dx, dy)
+        if kind == "_spark":
+            draw_spark(ctx, p, px, py, k)
+        elif kind == "_dust":
+            draw_dust(ctx, p, px, y, k, f)
 
 
 def head_anchor(look: Look, pose: Pose, x: float, y: float, height_px: float, facing: int) -> tuple[float, float]:
@@ -893,17 +878,21 @@ def head_anchor(look: Look, pose: Pose, x: float, y: float, height_px: float, fa
     if kind == "ghost":
         hx_, hy_ = 0.0, -112 + pose.bob + 6 * math.sin(pose.t * 3)
         top = hy_ - 70 - _hat_extra(look, 60)
-    elif kind == "monster":
-        hx_ = R.hip[0]
-        top = R.hip[1] - 62 - 80 - 18 - max(cr.ears_top(look, 70) * 0.8, _hat_extra(look, 66))
+    elif kind == "monster":  # лицо монстра — на пушистом теле, шапка над ним
+        th = R.head_rot * 0.6
+        top_local = min(-94.0 - _hat_extra(look, 66) * 1.08, -110.0)
+        hx_ = R.hip[0] + R.yaw * 6 + top_local * math.sin(th) * 0.5
+        top = R.hip[1] - 84 - math.sqrt((80 * math.sin(th)) ** 2 + (top_local * math.cos(th)) ** 2)
     elif kind == "toy":
         hx_, top = 0.0, -270.0 + pose.bob
     else:
         r = R.head_r
         top_local = min(_top_y(look, r) - _hat_extra(look, r), cr.head_top(look, r) - cr.ears_top(look, r))
-        ca, sa = math.cos(R.head_rot), math.sin(R.head_rot)
-        hx_ = R.head[0] - top_local * sa
-        top = R.head[1] + top_local * ca
+        # верх наклонённой головы: эллипс с полуосями (ширина головы, высота до макушки с шапкой)
+        th = R.head_rot
+        half_w = r * look.build.head_w * 1.15
+        hx_ = R.head[0] + top_local * math.sin(th) * 0.5
+        top = R.head[1] - math.sqrt((half_w * math.sin(th)) ** 2 + (top_local * math.cos(th)) ** 2)
     top -= 10.0
     return x + hx_ * u * f / math.sqrt(sq), y + top * u * sq
 
@@ -911,7 +900,7 @@ def head_anchor(look: Look, pose: Pose, x: float, y: float, height_px: float, fa
 def _hat_extra(look: Look, r: float) -> float:
     acc = look.accessories
     if "wizard_hat" in acc:
-        return r * 1.5
+        return r * 1.55 + 8
     if "party_hat" in acc:
         return 80.0
     if "crown" in acc:

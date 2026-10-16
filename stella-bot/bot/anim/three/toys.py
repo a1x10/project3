@@ -26,11 +26,12 @@ from .shade import Material
 
 FaceFn = Callable[[Any, Any, Pose, float, float, float, float], None]
 
-TOY_COLORS: dict[str, tuple[str, str]] = {  # (основной, акцент) по умолчанию
-    "robot3d": ("#ff9f1c", "#ff3d6e"),
-    "penguin3d": ("#2b3a67", "#ff3d6e"),
-    "snowman3d": ("#fbfdff", "#ff3d6e"),
+TOY_COLORS: dict[str, tuple[str, str]] = {  # (основной, акцент) по умолчанию — как у chars.build_look
+    "robot3d": ("#f2f4f8", "#ffb627"),
+    "penguin3d": ("#2e3a66", "#ffb627"),
+    "snowman3d": ("#ffffff", "#ff7a1a"),
 }
+SCARF = (1.0, 0.24, 0.43)  # шарф пингвина и снеговика (если основной цвет белый)
 BASE_TURN = 0.28  # игрушка чуть развёрнута в сторону взгляда (как 2D-герои «в три четверти»)
 INK = (0.12, 0.09, 0.16)
 
@@ -44,21 +45,10 @@ def _rgb(v: Any, default: str) -> RGB:
     return hx(default)
 
 
-def _face_look(look: Any, base: str) -> Any:
-    """Look для лица: у робота-3D лицо — экран с огоньками, как у 2D-робота (base «robot»)."""
-    if dataclasses.is_dataclass(look) and not isinstance(look, type) and hasattr(look, "base"):
-        try:
-            return dataclasses.replace(look, base=base)  # type: ignore[type-var]
-        except (TypeError, ValueError):
-            return look
-    return look
-
-
 def _face_decal(face_fn: FaceFn, look: Any, pose: Pose, p: tuple[float, float, float],
-                n: tuple[float, float, float], r: float, yaw_k: float = 0.6,
-                before: Callable[[cairo.Context, float], None] | None = None):
+                n: tuple[float, float, float], r: float, yaw_k: float = 0.6):
     """Наклейка-лицо: в точке p (локальные координаты детали) с нормалью n; r — радиус лица в единицах мира.
-    before(ctx, ppu) — что нарисовать под лицом в той же плоскости (экран робота)."""
+    Лицо рисуется в касательной плоскости: сжимается при повороте, наклоняется с головой, тает у края."""
     def draw(ctx: cairo.Context, cam: Camera3D, M: np.ndarray, T: np.ndarray) -> None:
         nn = np.asarray(n, float)
         up = np.array([0.0, 1.0, 0.0])
@@ -79,10 +69,6 @@ def _face_decal(face_fn: FaceFn, look: Any, pose: Pose, p: tuple[float, float, f
         alpha = min(1.0, (k - 0.2) / 0.12)
         if alpha < 1.0:
             ctx.push_group()
-        if before is not None:
-            ctx.save()
-            before(ctx, ppu)
-            ctx.restore()
         face_fn(ctx, look, dataclasses.replace(pose, yaw=yaw), 0.0, 0.0, r * ppu, yaw)
         if alpha < 1.0:
             ctx.pop_group_to_source()
@@ -92,29 +78,6 @@ def _face_decal(face_fn: FaceFn, look: Any, pose: Pose, p: tuple[float, float, f
 
 
 # ======================= робот =======================
-def _robot_screen(w: float, h: float) -> Callable[[cairo.Context, float], None]:
-    """Тёмный экран-лицо робота (в пикселях: w, h — полуширина и полувысота в единицах мира)."""
-    def draw(ctx: cairo.Context, ppu: float) -> None:
-        from ..draw import rrect
-
-        W, H = w * ppu, h * ppu
-        rrect(ctx, -W, -H, 2 * W, 2 * H, min(W, H) * 0.45)
-        g = cairo.LinearGradient(0, -H, 0, H)
-        g.add_color_stop_rgb(0, 0.1, 0.12, 0.3)
-        g.add_color_stop_rgb(1, 0.03, 0.04, 0.12)
-        ctx.set_source(g)
-        ctx.fill_preserve()
-        ctx.set_source_rgb(*INK)
-        ctx.set_line_width(max(1.5, ppu * 0.025))
-        ctx.stroke()
-        # блик стекла
-        rrect(ctx, -W * 0.82, -H * 0.8, W * 0.9, H * 0.28, H * 0.14)
-        ctx.set_source_rgba(1, 1, 1, 0.1)
-        ctx.fill()
-
-    return draw
-
-
 def _chest_panel(t: float, accent: RGB):
     """Панель на груди робота: три огонька мигают по очереди."""
     def draw(ctx: cairo.Context, cam: Camera3D, M: np.ndarray, T: np.ndarray) -> None:
@@ -153,8 +116,9 @@ def _build_robot(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, acc
     dark = Material(hx("#5c677d"), "plastic")
     acc = Material(accent, "candy")
     box = k.sph(k.seg, 0.32)
-    small = k.sph(k.lv(0.55, 10))
-    capsule = cached(k.cache, ("capsule", k.lv(0.5, 10)), lambda: _capsule(k.lv(0.5, 10)))
+    small = k.sph(k.lv(0.45, 8))
+    cn = k.lv(0.45, 8)
+    capsule = cached(k.cache, ("capsule", cn), lambda: _capsule(cn))
     # ноги
     for s, leg in ((1, pose.leg_l), (-1, pose.leg_r)):
         hip = float(leg[0]) if math.isfinite(leg[0]) else 0.0
@@ -167,9 +131,9 @@ def _build_robot(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, acc
     # голова на «шее»: наклон головы — вокруг шеи
     neck = Obj(None, pos=(0.0, 0.08, 0.0), rot=(0.0, 0.0, -_num(pose.head_tilt, 0.0, -0.6, 0.6) * fc), parent=root)
     head = k.add(box, white, pos=(0, 0.4, 0), scale=(0.5, 0.38, 0.42), parent=neck, bias=-0.04)
-    sw, sh = 0.36, 0.26
-    head.decals.append(_face_decal(face_fn, _face_look(look, "robot"), pose, (0.0, 0.0, 0.995), (0.0, 0.0, 1.0),
-                                   0.3, before=_robot_screen(sw, sh)))
+    # лицо робота-3D — экран с огоньками (его рисует face_fn: у chars.draw_face для robot3d — экран)
+    head.decals.append(_face_decal(face_fn, look, pose, (0.0, 0.0, 0.995), (0.0, 0.0, 1.0), 0.42))
+    head.clip_decals = True
     stalk = cached(k.cache, ("lathe", "stalk", 8), lambda: lathe(rounded_profile(1.0, -1.0, 1.0, 0.0), 8,
                                                                     convex=True))
     wob = 0.12 * math.sin(k.t * 4.0)
@@ -194,11 +158,11 @@ def _build_robot(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, acc
 def _capsule(n: int):  # type: ignore[no-untyped-def]
     """Капсула высотой 2 и радиусом 1 (по y), ось — y."""
     prof = [(0.0, -1.0)]
-    for i in range(1, 5):
-        a = -math.pi / 2 + math.pi / 2 * i / 4
+    for i in range(1, 4):
+        a = -math.pi / 2 + math.pi / 2 * i / 3
         prof.append((math.cos(a), -0.5 + 0.5 * math.sin(a)))
-    for i in range(1, 5):
-        a = math.pi / 2 * i / 4
+    for i in range(1, 4):
+        a = math.pi / 2 * i / 3
         prof.append((math.cos(a), 0.5 + 0.5 * math.sin(a)))
     prof[-1] = (0.0, 1.0)
     return lathe(prof, n, convex=True)
@@ -219,7 +183,7 @@ def _ellipse_on_sphere(cx: float, cy: float, rx: float, ry: float, n: int = 40) 
 
 def _build_penguin(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, accent: RGB, fc: int) -> None:
     root = k.root
-    orange = Material(hx("#ff9f1c"), "toon")
+    orange = Material(accent, "toon")
     mesh = k.sph(k.seg)
     sx, sy, sz = 0.6, 0.92, 0.56
     by = -0.04
@@ -234,14 +198,8 @@ def _build_penguin(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
     fy = 0.42
     fz = math.sqrt(max(0.0, 1 - fy * fy))
     body.decals.append(_face_decal(face_fn, look, pose, (0.0, fy, fz), (0.0, fy * 0.3, fz), 0.27))
+    body.clip_decals = True
 
-    def on_body(lx: float, ly: float, out: float = 0.0) -> tuple[float, float, float]:
-        lz = math.sqrt(max(0.0, 1 - lx * lx - ly * ly)) + out
-        return (lx * sx, by + ly * sy, lz * sz)
-
-    cone_m = cached(k.cache, ("cone", 12), lambda: _cone(12))
-    k.add(cone_m, orange, pos=on_body(0.0, 0.3, 0.12), rot=(math.pi / 2, 0.0, 0.0), scale=(0.07, 0.09, 0.06),
-          parent=holder, bias=-0.5, outline=0.8)
     flap = float(pose.wing_flap) if math.isfinite(pose.wing_flap) else 0.0
     flip_m = k.sph(k.lv(0.55, 10))
     for s, arm in ((1, pose.arm_l), (-1, pose.arm_r)):
@@ -256,19 +214,13 @@ def _build_penguin(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
         knee = float(leg[1]) if math.isfinite(leg[1]) else 0.0
         k.add(foot_m, orange, pos=(s * 0.21, -0.95 + 0.1 * min(knee, 1.4), 0.22 + 0.2 * hip),
               rot=(0.0, s * 0.25, 0.0), scale=(0.16, 0.055, 0.24), bias=-0.3)
-    scarf = Material(accent, "toon")
+    scarf = Material(SCARF, "toon")
     ring = k.tor(1.0, 0.16, k.lv(0.8, 16), 8)
     k.add(ring, scarf, pos=(0, 0.1, 0), rot=(0.06, 0.0, 0.0), scale=(0.6, 0.5, 0.56), parent=holder,
           split=body, outline=0.85)
     tail = k.sph(k.lv(0.5, 10), 0.4)
     k.add(tail, scarf, pos=(0.22, -0.06, 0.52), rot=(0.25, 0.0, 0.25), scale=(0.075, 0.15, 0.03), parent=holder,
           bias=-0.7, outline=0.85)
-
-
-def _cone(n: int):  # type: ignore[no-untyped-def]
-    from .mesh import cone
-
-    return cone(n, 1.0, 2.0, 0.2)
 
 
 # ======================= снеговик =======================
@@ -288,15 +240,14 @@ def _build_snowman(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
     neck = Obj(None, pos=(0.0, 0.25, 0.0), rot=(0.0, 0.0, -_num(pose.head_tilt, 0.0, -0.6, 0.6) * fc), parent=root)
     head = k.add(k.sph(k.lv(0.8, 12)), snow, pos=(0, 0.25, 0), scale=0.27, parent=neck, bias=-0.02)
     head.decals.append(_face_decal(face_fn, look, pose, (0.0, 0.18, 0.98), (0.0, 0.18, 0.98), 0.2))
-    cone_m = cached(k.cache, ("cone", 12), lambda: _cone(12))
-    k.add(cone_m, Material(hx("#ff8c1a"), "toon"), pos=(0.0, 0.24, 0.36), rot=(math.pi / 2, 0.0, 0.0),
-          scale=(0.045, 0.12, 0.045), parent=neck, bias=-0.6, outline=0.8)
+    head.clip_decals = True
     hat_pv = Obj(None, pos=(0.0, 0.47, 0.0), rot=(-0.12, 0.0, 0.14), parent=neck)
     hat_m = cached(k.cache, ("lathe", "hat", k.lv(0.7, 12)), lambda: lathe(_hat_profile(), k.lv(0.7, 12)))
     k.add(hat_m, Material((0.17, 0.15, 0.24), "plastic"), parent=hat_pv, bias=-0.2)
     band = cached(k.cache, ("lathe", "band", k.lv(0.7, 12)),
                   lambda: lathe(rounded_profile(1.0, -1.0, 1.0, 0.0), k.lv(0.7, 12), convex=True))
-    k.add(band, Material(color if luminance(color) < 0.75 else accent, "candy"), pos=(0.0, 0.085, 0.0),
+    scarf_c = color if luminance(color) < 0.75 else SCARF
+    k.add(band, Material(scarf_c, "candy"), pos=(0.0, 0.085, 0.0),
           scale=(0.197, 0.035, 0.197), parent=hat_pv, bias=-0.21, outline=0.7)
     # руки-веточки: угол от «вниз»; у снеговика по умолчанию торчат в стороны
     stick = cached(k.cache, ("capsule", 8), lambda: _capsule(8))
@@ -308,7 +259,6 @@ def _build_snowman(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
         k.add(stick, wood, pos=(0, -0.2, 0), scale=(0.022, 0.22, 0.022), parent=pv, outline=0.7, bias=0.02)
         tw = Obj(None, pos=(0.0, -0.3, 0.0), rot=(0.0, 0.0, -s * (0.7 + 0.3 * e)), parent=pv)
         k.add(stick, wood, pos=(0, -0.06, 0), scale=(0.016, 0.07, 0.016), parent=tw, outline=0.7, bias=0.02)
-    scarf_c = color if luminance(color) < 0.75 else accent
     scarf = Material(scarf_c, "toon")
     k.add(k.tor(1.0, 0.3, k.lv(0.8, 16), 8), scarf, pos=(0, 0.27, 0), rot=(0.1, 0.0, 0.0),
           scale=(0.27, 0.2, 0.26), split=head, outline=0.85)
@@ -353,8 +303,9 @@ def _toy_colors(base: str, look: Any) -> tuple[RGB, RGB]:
     accent = _rgb(getattr(look, "accent", None), da)
     if base == "penguin3d" and luminance(color) > 0.55:  # белому пингвину не видно брюшка — тёмная спинка
         color = mix(color, hx(dc), 0.7)
-    if base == "robot3d" and luminance(color) > 0.8:  # белый корпус сливается с белой головой
-        color = mix(color, (0.55, 0.62, 0.78), 0.4)
+    if base == "robot3d" and luminance(color) > 0.8:  # белый корпус слился бы с белой головой: корпус — акцентом
+        color = accent if luminance(accent) < 0.8 else mix(color, (0.55, 0.62, 0.78), 0.4)
+        accent = SCARF
     return color, accent
 
 

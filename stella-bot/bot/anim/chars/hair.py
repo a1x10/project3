@@ -86,9 +86,9 @@ def hair_back(ctx: cairo.Context, look: Look, pose: Pose, r: float, fx: float) -
 
             def tail(ox: float = ox, oy: float = oy, s: int = s, sws: float = sws) -> None:
                 ctx.move_to(ox, oy)
-                ctx.curve_to(ox + s * 56 * k, oy + 4 * k, ox + s * 64 * k + sws, oy + 84 * k, ox + s * 22 * k + sws * 1.4,
-                             oy + 132 * k)
-                ctx.curve_to(ox + s * 22 * k + sws, oy + 88 * k, ox - s * 4 * k, oy + 44 * k, ox - s * 10 * k,
+                ctx.curve_to(ox + s * 50 * k, oy + 6 * k, ox + s * 56 * k + sws, oy + 82 * k,
+                             ox + s * 20 * k + sws * 1.4, oy + 132 * k)
+                ctx.curve_to(ox + s * 27 * k + sws, oy + 87 * k, ox + s * 2 * k, oy + 43 * k, ox - s * 9 * k,
                              oy + 16 * k)
                 ctx.close_path()
             tail()

@@ -100,10 +100,7 @@ def _index(plan: Plan) -> _Index:
         for lst in shots.values():
             lst.sort(key=lambda c: (c.t0, c.layer))
         emos = sorted((e for e in plan.emotions if e.actor == a), key=lambda e: e.t0)
-        turns = []
-        for c in plan.clips:
-            if c.actor == a and c.action in ("turn", "spin") or (c.actor == a and c.action in MOVES):
-                turns.append(c.t0)
+        turns = [c.t0 for c in plan.clips if c.actor == a and (c.action in ("turn", "spin") or c.action in MOVES)]
         ix.actors[a] = _ActorIx(
             shots=shots, emotions=emos, emo_t0=[e.t0 for e in emos],
             marks=[m for m in plan.marks if m.actor == a], lines=[ln for ln in plan.lines if ln.actor == a],
@@ -229,6 +226,11 @@ def _units(c: _Ctx, frac: float) -> float:
     return frac * c.units_w
 
 
+def up_angle(b: Build) -> float:
+    """Угол «руки вверх»: у широкоголовых зверей — ниже и шире, иначе кисти прячутся за головой."""
+    return 2.5 if b.body in ("human", "alien", "robot") else 2.1
+
+
 # ---------- действия ----------
 def a_idle(c: _Ctx) -> P:
     return {}
@@ -319,7 +321,7 @@ def _jump(c: _Ctx, h: float, arms_up: float, crouch_end: float = 0.18, land: flo
 
 
 def a_jump(c: _Ctx) -> P:
-    return _jump(c, float(c.params.get("height", 0.5)), 2.4)
+    return _jump(c, float(c.params.get("height", 0.5)), up_angle(c.b) - 0.1)
 
 
 def a_hop(c: _Ctx) -> P:
@@ -330,9 +332,10 @@ def a_wave(c: _Ctx) -> P:
     side = -1 if c.params.get("hand") == "l" else 1
     nm = "r" if side > 0 else "l"
     w = min(ease_out_back(c.lt / 0.25), smoothstep((c.dur - c.lt) / 0.22))
-    wobble = 0.38 * math.sin(12.0 * c.lt)
-    return {f"arm_{nm}0": lerp(0.25, 2.35, w), f"arm_{nm}1": lerp(0.3, 0.45 + wobble, w), f"hand_{nm}": "open",
-            "head_tilt": 0.08 * side * w}
+    # предплечье качается наружу от головы (2.4..3.05 рад), чтобы ладонь всегда была видна сбоку
+    fore = 2.72 + 0.32 * math.sin(12.0 * c.lt)
+    return {f"arm_{nm}0": lerp(0.25, 2.0, w), f"arm_{nm}1": lerp(0.3, fore - 2.0, w), f"hand_{nm}": "open",
+            "head_tilt": -0.08 * side * w}
 
 
 def a_clap(c: _Ctx) -> P:
@@ -455,9 +458,10 @@ def _dance(c: _Ctx) -> P:
     elif style == "robot":
         step = int(lt / 0.25)
         frac = (lt % 0.25) / 0.25
-        poses = (((1.57, 1.57), (1.57, -1.57), 0.15, 0.3), ((1.57, -1.57), (1.57, 1.57), -0.15, -0.3),
-                 ((0.0, 1.57), (1.57, 1.57), 0.0, 0.4), ((1.57, 1.57), (0.0, 1.57), 0.12, -0.4),
-                 ((2.9, 0.0), (0.3, 0.0), -0.12, 0.0), ((0.3, 0.0), (2.9, 0.0), 0.12, 0.0))
+        # углы «под 90°», кисти — в стороны от большой головы, а не за ней
+        poses = (((1.57, 0.95), (1.57, -1.57), 0.15, 0.3), ((1.57, -1.57), (1.57, 0.95), -0.15, -0.3),
+                 ((0.2, 1.37), (1.57, 0.0), 0.0, 0.4), ((1.57, 0.0), (0.2, 1.37), 0.12, -0.4),
+                 ((2.2, 0.0), (0.3, 0.0), -0.12, 0.0), ((0.3, 0.0), (2.2, 0.0), 0.12, 0.0))
 
         def pick(i: int) -> tuple:
             return poses[int(hash01(c.aseed, "robot", i) * len(poses)) % len(poses)]
@@ -472,7 +476,8 @@ def _dance(c: _Ctx) -> P:
         up = 0.5 + 0.5 * math.cos(math.pi * beat)
         hip = math.sin(math.pi * beat)
         la, lb = ik(c.b, -1, (-(c.b.waist_w + 4), c.b.hip_y - 6))
-        out = {"arm_r0": lerp(-0.45, 2.55, up), "arm_r1": 0.0, "hand_r": "point", "arm_l0": la, "arm_l1": lb,
+        out = {"arm_r0": lerp(-0.45, up_angle(c.b) + 0.05, up), "arm_r1": 0.0,
+               "hand_r": "point", "arm_l0": la, "arm_l1": lb,
                "hand_l": "fist", "lean": 0.08 * hip, "dx": 5 * hip, "head_tilt": -0.12 * (up - 0.5),
                "leg_l1": 0.35 * max(0.0, hip), "leg_r1": 0.35 * max(0.0, -hip), "yaw": 0.2,
                "bob": -3 * abs(math.sin(math.pi * beat))}
@@ -491,7 +496,8 @@ def _dance(c: _Ctx) -> P:
         r_up = 0.5 + 0.5 * math.sin(math.pi * beat * 0.5)
         out = {"bob": -10 * b + 3, "squash": 1 + 0.07 * (b - 0.5), "leg_l1": 0.35 * (1 - b), "leg_r1": 0.35 * (1 - b),
                "leg_l0": -0.12 * (1 - b), "leg_r0": 0.12 * (1 - b),
-               "arm_r0": lerp(0.6, 2.5, r_up), "arm_r1": 0.3, "arm_l0": lerp(0.6, 2.5, 1 - r_up), "arm_l1": 0.3,
+               "arm_r0": lerp(0.6, up_angle(c.b), r_up), "arm_r1": 0.3,
+               "arm_l0": lerp(0.6, up_angle(c.b), 1 - r_up), "arm_l1": 0.3,
                "head_tilt": 0.1 * math.sin(math.pi * beat), "hand_l": "fist", "hand_r": "fist", "yaw": 0.1}
     for k in list(out):
         if k in ("hand_l", "hand_r", "flip", "marks"):
@@ -548,7 +554,8 @@ def a_float(c: _Ctx) -> P:
     bob = -(24 + 8 * math.sin(2 * math.pi * 0.5 * c.lt)) * e
     sw = math.sin(2 * math.pi * 0.5 * c.lt + 1)
     return {"bob": bob, "leg_l1": 0.35 * e, "leg_r1": 0.45 * e, "leg_l0": fwd_leg(-1, 0.15 * e, 0)[0],
-            "leg_r0": fwd_leg(1, 0.05 * e, 0)[0], "arm_l0": 0.25 + 0.4 * e + 0.1 * sw, "arm_r0": 0.25 + 0.4 * e - 0.1 * sw,
+            "leg_r0": fwd_leg(1, 0.05 * e, 0)[0], "arm_l0": 0.25 + 0.4 * e + 0.1 * sw,
+            "arm_r0": 0.25 + 0.4 * e - 0.1 * sw,
             "arm_l1": 0.5, "arm_r1": 0.5, "lean": 0.04 * sw * e, "wings": e}
 
 
@@ -559,7 +566,8 @@ def _sit_pose(b: Build, k: float) -> P:
     drop = (b.thigh + b.shin) * 0.8
     return {"bob": drop * k, "leg_l0": fwd_leg(-1, 1.45 * k, 0)[0], "leg_r0": fwd_leg(1, 1.4 * k, 0)[0],
             "leg_l1": 0.2 * k, "leg_r1": 0.15 * k, "arm_l0": lerp(0.25, 0.45, k), "arm_r0": lerp(0.25, 0.45, k),
-            "arm_l1": lerp(0.3, 0.0, k), "arm_r1": lerp(0.3, 0.0, k), "lean": -0.03 * k}
+            "arm_l1": lerp(0.3, 0.0, k), "arm_r1": lerp(0.3, 0.0, k), "lean": -0.03 * k,
+            "yaw": lerp(REST_YAW, 0.55, k)}  # вполоборота — ноги «вперёд» читаются
 
 
 def a_sit(c: _Ctx) -> P:
@@ -601,8 +609,8 @@ def a_facepalm(c: _Ctx) -> P:
 
 
 def a_nod(c: _Ctx) -> P:
-    n = max(0.0, math.sin(2 * math.pi * 2.0 * c.lt / max(0.8, c.dur) * 1.0)) * _env(c.lt, c.dur, 0.1, 0.15)
-    return {"look_y": 0.9 * n, "lean": 0.05 * n, "head_tilt": 0.05 * n}
+    n = max(0.0, math.sin(2 * math.pi * 2.0 * c.lt / max(0.8, c.dur))) * _env(c.lt, c.dur, 0.1, 0.15)
+    return {"look_y": 1.0 * n, "lean": 0.09 * n, "head_tilt": 0.07 * n, "bob": 3 * n, "squash": 1 - 0.02 * n}
 
 
 def a_shake_head(c: _Ctx) -> P:
@@ -614,7 +622,8 @@ def a_shake_head(c: _Ctx) -> P:
 def a_bow(c: _Ctx) -> P:
     e = _env(c.lt, c.dur, 0.3, 0.35)
     return {"lean": 0.38 * e, "look_y": 0.8 * e, "arm_l0": lerp(0.25, 0.05, e), "arm_r0": lerp(0.25, 0.05, e),
-            "arm_l1": lerp(0.3, 0.05, e), "arm_r1": lerp(0.3, 0.05, e), "head_tilt": 0.0}
+            "arm_l1": lerp(0.3, 0.05, e), "arm_r1": lerp(0.3, 0.05, e), "head_tilt": 0.1 * e,
+            "yaw": lerp(REST_YAW, 0.62, e)}  # поклон вполоборота — наклон читается как «вперёд»
 
 
 def _partner_units(c: _Ctx) -> float:
@@ -642,15 +651,15 @@ def a_high_five(c: _Ctx) -> P:
     lt, d = c.lt, c.dur
     dist = _partner_units(c)
     contact = min(0.42, d * 0.4)
-    hc = _head_c(c.b, 0.0, 0.0, 0.3)
-    up = ik(c.b, 1, (dist * 0.5, hc[1] - c.b.head_r * 0.9), 0.06)
+    # чиби-руки коротки, а головы большие: ладони встречаются под подбородками, между актёрами
+    up = ik(c.b, 1, (dist * 0.5, c.b.hip_y - c.b.torso * 1.02), 0.06)
     if lt < 0.12:
         k = smoothstep(lt / 0.12)
         a, bnd = lerp(0.25, -0.3, k), lerp(0.3, 0.6, k)
     else:
         k = min(ease_out_back((lt - 0.12) / (contact - 0.12)), smoothstep((d - lt) / 0.28))
         a, bnd = lerp(-0.3 if lt < contact else 0.25, up[0], k), lerp(0.6 if lt < contact else 0.3, up[1], k)
-    out: P = {"arm_r0": a, "arm_r1": bnd, "hand_r": "open", "look_y": -0.5 * k, "look_x": 0.5}
+    out: P = {"arm_r0": a, "arm_r1": bnd, "hand_r": "open", "look_y": 0.2 * k, "look_x": 0.6, "yaw": 0.35}
     if lt >= contact:
         v = (lt - contact) / max(0.2, d - contact)
         out["bob"] = -10 * _bell(v / 0.5)
@@ -676,7 +685,8 @@ def a_celebrate(c: _Ctx) -> P:
         out.update(squash=1 - 0.15 * math.exp(-6 * v) * math.cos(10 * v) * (1 - v))
     e = min(smoothstep(lt / 0.15), smoothstep((d - lt) / 0.25))
     pump = 0.15 * math.sin(2 * math.pi * 4 * lt)
-    out.update(arm_l0=lerp(0.25, 2.5 + pump, e), arm_r0=lerp(0.25, 2.5 - pump, e), arm_l1=0.25, arm_r1=0.25,
+    up = up_angle(c.b)
+    out.update(arm_l0=lerp(0.25, up + pump, e), arm_r0=lerp(0.25, up - pump, e), arm_l1=0.25, arm_r1=0.25,
                hand_l="fist", hand_r="fist")
     return out
 
@@ -819,29 +829,20 @@ def _apply(base: P, act: P, w: float) -> None:
 
 
 def _layer_weights(clips: list[Clip], t: float) -> list[tuple[Clip, float]]:
-    """(клип, вес) активных клипов слоя в момент t — по времени. Соседние клипы переходят друг в друга напрямую."""
+    """(клип, вес) клипов слоя, влияющих на момент t. Клип входит за FADE от начала и выходит за FADE после
+    конца (держа последнюю позу); соседние клипы так переходят друг в друга без рывков."""
     out = []
-    for i, c in enumerate(clips):
+    for c in clips:
         if c.t0 > t:
             break
-        nxt = clips[i + 1] if i + 1 < len(clips) else None
-        adjacent = nxt is not None and nxt.t0 <= c.t1 + 0.05
-        if t >= c.t1 + FADE and not (adjacent and nxt is not None and t < nxt.t0 + FADE):
+        if t >= c.t1 + FADE:
             continue
-        prv = clips[i - 1] if i > 0 else None
-        if prv is not None and c.t0 <= prv.t1 + 0.05:
-            win = smoothstep((t - c.t0) / FADE)  # из предыдущего
-        else:
-            win = smoothstep((t - c.t0) / FADE) if c.action not in ("appear", "poof") else 1.0
-        if t <= c.t1 or adjacent:
+        instant = c.action in ("appear", "poof", "spin")
+        win = 1.0 if instant else smoothstep((t - c.t0) / FADE)
+        wout = 1.0 if t <= c.t1 else 1.0 - smoothstep((t - c.t1) / FADE)
+        if c.action == "poof" and t > c.t1:
             wout = 1.0
-        else:
-            wout = 1.0 - smoothstep((t - c.t1) / FADE)
-        if adjacent and nxt is not None and t >= nxt.t0 + FADE:
-            continue
         w = win * wout
-        if c.action in MOVES or c.action in ("appear", "poof", "turn", "spin"):
-            w = 1.0 if c.t0 <= t <= c.t1 else w  # ходьба и появление — без «размытого» входа
         if w > 1e-4:
             out.append((c, w))
     return out
@@ -879,7 +880,8 @@ def root_x(moves: list[Clip], x_place: float, t: float) -> tuple[float, Clip | N
     return x, None
 
 
-def _facing(clips: list[Clip], place: ActorShot, t: float, xf: Callable[[float], float]) -> tuple[int, bool, float | None]:
+def _facing(clips: list[Clip], place: ActorShot, t: float,
+            xf: Callable[[float], float]) -> tuple[int, bool, float | None]:
     """(куда смотрит ±1, «в камеру», мировой yaw во время поворота или None)."""
     f = 1 if place.facing >= 0 else -1
     cam = place.facing == 0
@@ -933,18 +935,16 @@ def _scale(clips: list[Clip], t: float) -> float:
 
 # ---------- эмоции ----------
 def _emotion(A: _ActorIx, t: float, shot_t0: float) -> tuple[str, float, EmotionSpan | None]:
+    """(эмоция, сила, отрезок): новая эмоция набирает силу за 0.25 с (с 0.35 — без «пустого» лица)."""
     i = bisect.bisect_right(A.emo_t0, t) - 1
     if i < 0:
         return "neutral", 1.0, None
     e = A.emotions[i]
-    if not (e.t0 <= t < e.t1 or (t >= e.t1 and i == len(A.emotions) - 1 and t - e.t1 < 1e-6)):
-        if t >= e.t1:
-            return "neutral", 1.0, None
-    if e.t0 <= shot_t0 + 1e-6 or e.t0 < 1e-6:
-        w = 1.0
-    else:
-        w = 0.35 + 0.65 * smoothstep((t - e.t0) / EMO_FADE)
-    return e.emotion, w, e
+    if t >= e.t1:
+        return "neutral", 1.0, None
+    if e.t0 <= shot_t0 + 1e-6:
+        return e.emotion, 1.0, e
+    return e.emotion, 0.35 + 0.65 * smoothstep((t - e.t0) / EMO_FADE), e
 
 
 def _emotion_body(emo: str, w: float, t: float, since: float, b: Build, base: P) -> None:
@@ -1082,6 +1082,13 @@ def actor_frame(plan: Plan, actor: str, t: float, *, shot: int | None = None) ->
     base["arm_l0"] += lf["arm"]
     base["arm_r0"] += lf["arm"]
     base["dx"] += lf["dx"]
+    # остановка после шага: корпус по инерции качнётся вперёд и пружиной вернётся (2.5 Гц, ζ = 0.3)
+    done = [c for c in moves if c.t1 <= t]
+    if done and move is None:
+        dt = t - done[-1].t1
+        if dt < 1.0:
+            kick = 0.12 if done[-1].action == "run" else 0.07
+            base["lean"] += kick * math.exp(-0.3 * 2 * math.pi * 2.5 * dt) * math.sin(2 * math.pi * 2.5 * dt * 0.95)
     emo, emo_w, span = _emotion(A, t, sh.t0)
     _emotion_body(emo, emo_w, t, t - span.t0 if span else 99.0, b, base)
     # ---- клипы: L0, потом L1
@@ -1182,7 +1189,7 @@ def actor_frame(plan: Plan, actor: str, t: float, *, shot: int | None = None) ->
         return _invisible(actor, lane, t)
     dx_frac = base["dx"] * facing / units_w
     xx = x + dx_frac
-    half = 0.45 * height / max(1.0, plan.w) * max(1.0, scale)
+    half = 0.3 * height / max(1.0, plan.w) * max(1.0, scale)  # полуширина с хвостами и руками
     visible = (xx + half > 0.0) and (xx - half < 1.0)
     # ---- моргание и вторичное движение
     bl = max(blink(t, A.aseed, A.forced_blinks), clamp(base["blink"]))
@@ -1226,7 +1233,8 @@ def actor_frame(plan: Plan, actor: str, t: float, *, shot: int | None = None) ->
         hair_swing=clamp(hair, -1.0, 1.0), tail_swing=tail, ear_swing=ear, wing_flap=wing, marks=marks,
         scale=max(0.0, scale), alpha=clamp(alpha), t=t,
     )
-    return ActorFrame(actor, visible and pose.scale > 0.005, pose, xx, lane, facing, lift, speaking)
+    puffing = any(m[0] == "_puff" for m in marks)
+    return ActorFrame(actor, visible and (pose.scale > 0.005 or puffing), pose, xx, lane, facing, lift, speaking)
 
 
 def _marks(A: _ActorIx, emo: str, span: EmotionSpan | None, t: float, shot_t0: float,

@@ -62,7 +62,7 @@ def gouraud_pattern(pts: np.ndarray, cols: np.ndarray) -> cairo.Pattern:
     P = pts.reshape(-1, 6).tolist()
     C = cols.reshape(len(cols), -1).tolist()
     if rgba:
-        for p, c in zip(P, C):
+        for p, c in zip(P, C, strict=True):
             begin(ptr)
             move(ptr, p[0], p[1])
             line(ptr, p[2], p[3])
@@ -72,7 +72,7 @@ def gouraud_pattern(pts: np.ndarray, cols: np.ndarray) -> cairo.Pattern:
             corner(ptr, 2, c[8], c[9], c[10], c[11])
             end(ptr)
     else:
-        for p, c in zip(P, C):
+        for p, c in zip(P, C, strict=True):
             begin(ptr)
             move(ptr, p[0], p[1])
             line(ptr, p[2], p[3])
@@ -100,7 +100,7 @@ def fill_flat(ctx: cairo.Context, pts: np.ndarray, cols: np.ndarray, px: float =
     C = np.clip(cols, 0, 1).tolist()
     rgba = len(C[0]) == 4
     move, line, close, fill = ctx.move_to, ctx.line_to, ctx.close_path, ctx.fill
-    for poly, c in zip(P, C):
+    for poly, c in zip(P, C, strict=True):
         move(*poly[0])
         for q in poly[1:]:
             line(*q)
@@ -127,4 +127,9 @@ def paint_triangles(ctx: cairo.Context, pts: np.ndarray, cols: np.ndarray, smoot
         ctx.paint()
         ctx.restore()
         return
-    fill_flat(ctx, pts, cols.mean(1))
+    # без сглаживания и с небольшим раздуванием: соседние треугольники стыкуются без светлых «волосков»,
+    # а ступеньки внешнего края закрывает контур силуэта
+    ctx.save()
+    ctx.set_antialias(cairo.ANTIALIAS_NONE)
+    fill_flat(ctx, pts, cols.mean(1), 0.5)
+    ctx.restore()
