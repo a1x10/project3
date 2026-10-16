@@ -73,6 +73,7 @@ async def test_documents_presentation_spreadsheet(brain):
             assert "двух файлов" in str(exc)
         return "готово"
 
+    brain.s.deck_studio = False  # простая презентация из списка слайдов (без браузера на сервере — она)
     brain.llm.queue = [make]
     await feed(brain, upsert("стелла сделай доклад и презу"))
     files = [m for m in brain.evo.sent if m["type"] == "media"]

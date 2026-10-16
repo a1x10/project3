@@ -438,6 +438,32 @@ def presentation(title: str, subtitle: str, slides: Any) -> MediaFile:
     return MediaFile("document", buf.getvalue(), MIME["pptx"], _safe_name(title, "pptx"))
 
 
+def deck_files(title: str, slides: list[Any]) -> tuple[MediaFile, MediaFile]:
+    """Слайды из студии (снимки 1920×1080 + заметки) -> PowerPoint (картинка на весь слайд, заметки выступающего)
+    и PDF (страница на слайд, 13.33×7.5 дюйма — как в PowerPoint)."""
+    from pptx import Presentation
+    from pptx.util import Emu
+
+    if not slides:
+        raise MediaError("нет ни одного слайда")
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Emu(12192000), Emu(6858000)  # 16:9
+    blank = prs.slide_layouts[6]
+    pages = []
+    for s in slides:
+        slide = prs.slides.add_slide(blank)
+        slide.shapes.add_picture(io.BytesIO(s.jpeg), 0, 0, width=prs.slide_width, height=prs.slide_height)
+        if s.notes:
+            slide.notes_slide.notes_text_frame.text = s.notes[:3000]
+        pages.append(Image.open(io.BytesIO(s.jpeg)).convert("RGB"))
+    buf = io.BytesIO()
+    prs.save(buf)
+    pptx = MediaFile("document", buf.getvalue(), MIME["pptx"], _safe_name(title, "pptx"))
+    buf = io.BytesIO()
+    pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:], resolution=144.0, quality=90, title=title[:100])
+    return pptx, MediaFile("document", buf.getvalue(), MIME["pdf"], _safe_name(title, "pdf"))
+
+
 # ---------- HTML-страница ----------
 MAX_HTML_CHARS = 400_000
 PHOTO_MARK = "__PHOTO__"  # сюда подставляется фото из чата (data:)

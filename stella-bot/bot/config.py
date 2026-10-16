@@ -81,6 +81,8 @@ class Settings:
     # доводка по скриншотам (нужен браузер в образе: WITH_BROWSER=true) и с каким усилием
     html_polish: bool = field(default_factory=lambda: _bool("HTML_POLISH", True))
     html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "high"))
+    # презентации тоже делает студия (слайды рисуются в браузере -> PowerPoint + PDF); false — простые из списка
+    deck_studio: bool = field(default_factory=lambda: _bool("DECK_STUDIO", True))
     html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 4))  # на чат в сутки (админам — без лимита)
     html_per_day_total: int = field(default_factory=lambda: _int("HTML_PER_DAY_TOTAL", 20))  # на всех (кроме владельца)
     html_concurrency: int = field(default_factory=lambda: _int("HTML_CONCURRENCY", 2))

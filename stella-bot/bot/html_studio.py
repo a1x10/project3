@@ -115,6 +115,68 @@ POLISH = """Выше — задание и твой черновик стран�
 удачное — улучшай.
 Ответ — только исправленный документ целиком, от <!doctype html> до </html>, по тем же правилам."""
 
+DECK_SYSTEM = f"""Ты — арт-директор и дизайнер презентаций уровня Apple Keynote, Pitch и лучших брендинговых студий. \
+По заданию из чата делаешь презентацию: один HTML-документ, где каждый слайд — <section class="slide"> ровно \
+1920×1080 px. Бот снимет каждый слайд как картинку и соберёт из них PowerPoint и PDF, поэтому каждый слайд должен \
+быть идеальным статичным кадром — таким, чтобы зал ахнул.
+
+ФОРМАТ ОТВЕТА
+- Только готовый документ: от <!doctype html> до </html>. Без пояснений до и после, без ```.
+- Структура: в <body> подряд идут <section class="slide">…</section>. В слайд можно вложить \
+<aside class="notes">что говорить выступающему: 2–4 живых предложения</aside> — на слайде его не видно, он попадёт \
+в заметки PowerPoint. Пиши заметки к каждому содержательному слайду.
+- CSS: body {{ margin: 0 }} .slide {{ width: 1920px; height: 1080px; position: relative; overflow: hidden; }}. \
+Никаких скриптов просмотра, навигации, масштабирования под экран, прокрутки внутри слайда и анимаций появления: \
+кадр снимается сразу, виден только финальный вид. JS — только чтобы нарисовать (canvas, three.js), синхронно \
+при загрузке; для WebGL — preserveDrawingBuffer: true, и один кадр отрисуй сразу.
+- Язык — язык задания (обычно русский). Содержание настоящее: точные факты, цифры, даты, имена из задания и \
+из твоих знаний. Не выдумывай: в чём не уверен — формулируй без ложных подробностей.
+
+ОГРАНИЧЕНИЯ (нарушишь — слайды сломаются)
+- Интернета нет: внешние картинки, шрифты, CSS и скрипты не загрузятся. Иллюстрации рисуешь сам: inline SVG \
+(сцены, предметы, иконки, схемы, карты), CSS-формы, canvas, three.js; растровые — только data:.
+- Библиотеки — только такими тегами: <script src="lib/three.js"></script> (three.js r128, глобальный THREE), \
+<script src="lib/three-roundedbox.js"></script> (THREE.RoundedBoxGeometry, после three.js), \
+<script src="lib/three-bloom.js"></script> (EffectComposer, RenderPass, UnrealBloomPass, после three.js). \
+Подключай только то, что используешь.
+- Шрифты с кириллицей — просто пиши их в font-family, бот встроит их сам; никаких <link> и @import: {FONTS_LINE}. \
+Два семейства на всю презентацию: выразительное для заголовков, спокойное для текста.
+
+СОДЕРЖАНИЕ — КАК У СИЛЬНОГО СПИКЕРА
+- 10–14 слайдов, если в задании не сказано иначе (не больше 25). История: обложка → зачем это / главный вопрос → \
+смысловые блоки (со слайдами-разделителями) → выводы → финальный слайд («Спасибо!», вопросы, автор).
+- Один слайд — одна мысль. Заголовок — утверждение, а не ярлык («Марс потерял океан 3 млрд лет назад», а не \
+«История Марса»). На слайде не больше ~40 слов: 3–5 коротких тезисов, или одна большая цифра с подписью, или \
+цитата. Никаких стен текста и мелких списков.
+- Разные раскладки, без повторов подряд: обложка во весь экран; большая цифра/факт; два столбца; сравнение \
+«было/стало» или «за/против»; таймлайн; процесс/схема со стрелками; сетка карточек с иконками; цитата; диаграмма \
+(SVG: столбцы, линии, круговая, с подписями и точными значениями); крупная иллюстрация с подписями.
+
+ДИЗАЙН: ЧЕМ 10/10 ОТЛИЧАЕТСЯ ОТ ШАБЛОНА
+1. Концепция и единая система под тему (космос — глубокий тёмный с туманностями; экология — свежая природная \
+палитра и органические формы; история — благородная бумага и антиква). Палитра: фон-тон, 1–2 акцента, нейтральные \
+(CSS-переменные). Сетка с полями не меньше 96 px, заголовки на одном месте, номер слайда мелко в углу.
+2. Типографика крупная и уверенная: заголовки 64–120 px с плотным трекингом, текст 30–40 px, подписи от 24 px; \
+акцентные слова цветом или градиентом; высокий контраст.
+3. Глубина и свет: mesh-градиенты, мягкие свечения, стекло, зерно, тени; крупные декоративные формы, уходящие за \
+край слайда; на обложке и разделителях — эффектный визуал (3D-объект three.js, большая SVG-сцена, абстрактная \
+композиция).
+4. На каждом слайде есть визуал, а не только текст: иллюстрация, иконки, диаграмма, схема или крупная цифра.
+5. Всё внутри 1920×1080: ни один текст не обрезан и не вылезает за край, ничто не наезжает друг на друга; \
+проверь самые длинные заголовки и списки.
+
+Сначала продумай историю, концепцию, палитру, шрифты и раскладку каждого слайда, затем выдай документ целиком."""
+
+DECK_POLISH = """Выше — задание, твой черновик презентации и снимки каждого слайда ровно в том виде, в каком они \
+попадут в PowerPoint (WebGL здесь программный, 3D может выглядеть чуть проще), и проблемы, которые нашла проверка. \
+Посмотри на слайды глазами придирчивого арт-директора и доведи презентацию до 10 из 10:
+1. Сначала исправь всё сломанное: пустые или чёрные слайды, обрезанный или вылезающий текст, наложения, мелкий \
+или нечитаемый текст, слабый контраст, неровные поля и «прыгающие» заголовки, ошибки JS.
+2. Затем усиль: выразительные визуалы на каждом слайде, разнообразие раскладок, ритм, типографика, свет и \
+глубина, точность и сила формулировок. Не упрощай и не выкидывай удачное — улучшай; число и порядок слайдов \
+меняй, только если это делает историю лучше.
+Ответ — только исправленный документ целиком, от <!doctype html> до </html>, по тем же правилам."""
+
 PHOTO_NOTE = ("\n\nК заданию приложено фото из чата — ты его видишь. Вставляй его строкой __PHOTO__ "
               "(<img src=\"__PHOTO__\" alt=\"…\"> или CSS url(__PHOTO__)), бот подставит само фото. "
               "Лучше один раз — например, в CSS-переменную или один <img>.")
@@ -132,6 +194,7 @@ class StudioResult:
     cost_usd: float
     seconds: float
     output_tokens: int = 0
+    shots: Any = None  # последние снимки из браузера (у презентации — сами слайды)
 
 
 @dataclass
@@ -209,7 +272,7 @@ def _image_block(mime: str, data: bytes) -> dict[str, Any]:
 
 
 async def generate(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None, *,
-                   draft: str | None = None, shots: Any = None) -> StudioResult:
+                   draft: str | None = None, shots: Any = None, kind: str = "page") -> StudioResult:
     """Написать страницу по заданию (или, с draft и shots, доделать черновик по скриншотам).
     image — фото из чата, которое модель видит (вставляется как __PHOTO__)."""
     import anthropic
@@ -233,9 +296,12 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
         notes = ["Ошибки в консоли:\n" + "\n".join(f"- {e}" for e in errors) if errors else "Ошибок в консоли нет."]
         if getattr(shots, "overflow", False):
             notes.append("Страница шире экрана телефона: есть горизонтальная прокрутка.")
-        content.append({"type": "text", "text": "\n".join(notes) + "\n\n" + POLISH})
+        problems = getattr(shots, "problems", [])
+        if problems:
+            notes.append("Проверка нашла:\n" + "\n".join(f"- {p}" for p in problems))
+        content.append({"type": "text", "text": "\n".join(notes) + "\n\n" + (DECK_POLISH if kind == "deck" else POLISH)})
     kwargs: dict[str, Any] = {
-        "model": model, "max_tokens": settings.html_max_tokens, "system": SYSTEM,
+        "model": model, "max_tokens": settings.html_max_tokens, "system": DECK_SYSTEM if kind == "deck" else SYSTEM,
         "messages": [{"role": "user", "content": content if len(content) > 1 else text}], **_thinking(model),
     }
     if effort:
@@ -274,42 +340,57 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
 
 
 async def make(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
-               build: Callable[[str], bytes] | None = None) -> StudioResult:
-    """Черновик, затем доводка по скриншотам. build(html) -> готовый файл (с библиотеками и фото) для браузера.
-    Доводка не удалась или сломала страницу — остаётся черновик."""
+               build: Callable[[str], bytes] | None = None, kind: str = "page") -> StudioResult:
+    """Черновик, затем доводка по снимкам из браузера. build(html) -> готовый файл (с библиотеками и фото).
+    kind="page" — страница (снимки как на телефоне), "deck" — презентация (снимок каждого слайда; без снимков
+    её не собрать). Доводка не удалась или сломала результат — остаётся черновик."""
     from . import page_shots, weblibs
 
+    deck = kind == "deck"
+    shoot = page_shots.shoot_deck if deck else page_shots.shoot
     started = time.monotonic()
-    draft = await generate(settings, brief, title, image)
-    cost, result = draft.cost_usd, draft
-    if settings.html_polish and build is not None and page_shots.available():
+    draft = await generate(settings, brief, title, image, kind=kind)
+    cost, result, shots = draft.cost_usd, draft, None
+    browser = build is not None and page_shots.available()
+    if deck and not browser:
+        raise StudioError("на сервере нет браузера, чтобы нарисовать слайды", cost)
+    if browser and (deck or settings.html_polish):
         try:
             await weblibs.ensure()
-            if await asyncio.to_thread(weblibs.missing):
+            if not deck and await asyncio.to_thread(weblibs.missing):
                 raise page_shots.ShotsError("библиотеки не скачались — в браузере без сети страница не откроется")
-            before = await page_shots.shoot(await asyncio.to_thread(build, draft.html))
-            polished = await generate(settings, brief, title, image, draft=draft.html, shots=before)
-            cost += polished.cost_usd
-            after = await page_shots.shoot(await asyncio.to_thread(build, polished.html))
-            if after.page_errors() > before.page_errors():
-                log.warning("доводка добавила ошибок JS (%d > %d) — оставляю черновик", after.page_errors(),
-                            before.page_errors())
-            else:
-                result = polished
+            before = shots = await shoot(await asyncio.to_thread(build, draft.html))
+            if settings.html_polish:
+                polished = await generate(settings, brief, title, image, draft=draft.html, shots=before, kind=kind)
+                cost += polished.cost_usd
+                after = await shoot(await asyncio.to_thread(build, polished.html))
+                if _worse(after, before, deck):
+                    log.warning("доводка сделала хуже (ошибок JS %d > %d, кадров %d из %d) — оставляю черновик",
+                                after.page_errors(), before.page_errors(), len(after.images), len(before.images))
+                else:
+                    result, shots = polished, after
         except StudioError as exc:
             cost += exc.cost_usd
             log.warning("доводка не удалась: %s — оставляю черновик", exc)
         except page_shots.ShotsError as exc:
-            log.warning("скриншоты не получились: %s — без доводки", exc)
+            log.warning("снимки не получились: %s — без доводки", exc)
         except Exception:
             log.exception("доводка: ошибка — оставляю черновик")
+        if deck and (shots is None or not shots.slides):
+            raise StudioError("не получилось нарисовать слайды", cost)
     seconds = time.monotonic() - started
     STATE.seconds = 0.7 * STATE.seconds + 0.3 * seconds
-    return StudioResult(result.html, cost, seconds, result.output_tokens)
+    return StudioResult(result.html, cost, seconds, result.output_tokens, shots)
+
+
+def _worse(after: Any, before: Any, deck: bool) -> bool:
+    if after.page_errors() > before.page_errors():
+        return True
+    return deck and len(after.slides) < max(1, round(len(before.slides) * 0.7))
 
 
 async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
-              build: Callable[[str], bytes] | None = None) -> StudioResult:
+              build: Callable[[str], bytes] | None = None, kind: str = "page") -> StudioResult:
     """make() с общей очередью: одновременно не больше HTML_CONCURRENCY страниц."""
     slots = _semaphore(settings.html_concurrency)
     STATE.waiting += 1
@@ -319,7 +400,7 @@ async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | 
         STATE.waiting -= 1
     STATE.running += 1
     try:
-        return await make(settings, brief, title, image, build)
+        return await make(settings, brief, title, image, build, kind)
     finally:
         STATE.running -= 1
         slots.release()
