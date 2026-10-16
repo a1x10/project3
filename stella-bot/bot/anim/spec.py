@@ -518,7 +518,6 @@ class _Parser:
         self.svg_renderer = svg_renderer
         self.warnings: list[str] = []
         self.cast: dict[str, CastSpec] = {}
-        self.cast_order = 0
         self.seed = 0
         self.svg_used = 0
         self.beats_total = 0
@@ -546,8 +545,8 @@ class _Parser:
             return default
         try:
             x = float(value)
-        except OverflowError:
-            x = math.inf if value > 0 else -math.inf
+        except OverflowError:  # огромное целое — просто «очень много»
+            x = hi + abs(hi - lo) + 1.0 if value > 0 else lo - abs(hi - lo) - 1.0
         if not math.isfinite(x):
             self.warn(f"{path}: число должно быть конечным")
             return default
@@ -668,9 +667,10 @@ class _Parser:
             return None
         if found is None:
             raise SpecError(path, f"актёра «{_short(value)}» нет в cast — опиши его в cast (base) или возьми из "
-                                  "имеющихся", tuple(self.cast) + C.BASES)
+                                  "имеющихся", tuple(dict.fromkeys(tuple(self.cast) + C.BASES)))
         self.add_cast(aid, {"base": found[0]}, f"{path}", auto=True)
-        self.warn(f"{path}: актёра «{_short(value)}» не было в cast — добавила ({self.cast[aid].base})")
+        if aid != "stella":  # Стелла — это сама она, её можно не описывать
+            self.warn(f"{path}: актёра «{_short(value)}» не было в cast — добавила ({self.cast[aid].base})")
         return aid
 
     def add_cast(self, aid: str, raw: Any, path: str, auto: bool = False) -> None:
@@ -687,6 +687,9 @@ class _Parser:
         base_raw = raw.get("base", raw.get("kind", raw.get("type")))
         extra: dict[str, Any] = {}
         base: str | None = None
+        if base_raw is not None and _as_str(base_raw) is None:
+            self.warn(f"{path}.base: нужна строка — подберу по id")
+            base_raw = None
         if base_raw is not None:
             text = _as_str(base_raw)
             found = self.base_of(text) if text else None
@@ -969,8 +972,8 @@ class _Parser:
         """Список id, «ALL» или None (не указан — как у предыдущего бита)."""
         if value is None:
             return None
-        if isinstance(value, str) or _is_num(value):
-            text = _as_str(value) or ""
+        if isinstance(value, str):
+            text = value
             if _key(text).replace("_", " ") in _ALL_WORDS:
                 return "ALL"
             parts = [p for p in re.split(r"\s*(?:[,;&+]| и | and )\s*", text) if p.strip()]
@@ -981,7 +984,7 @@ class _Parser:
             return None
         out: list[str] = []
         for i, p in enumerate(parts):
-            ps = _as_str(p)
+            ps = p if isinstance(p, str) else None
             if ps is not None and _key(ps).replace("_", " ") in _ALL_WORDS:
                 return "ALL"
             if ps is None:
@@ -1000,6 +1003,9 @@ class _Parser:
             return None
         d: dict[str, Any] = {"path": path, "who": self.who(value.get("who", value.get("actor")), f"{path}.who")}
         do_raw = value.get("do", value.get("action"))
+        if do_raw is not None and _as_str(do_raw) is None:
+            self.warn(f"{path}.do: нужна строка (имя действия) — пропустила")
+            do_raw = None
         d["do"] = self.enum(do_raw, _V_ACTION, f"{path}.do", required=True) if do_raw is not None else None
         line, kind = None, "say"
         for key, k in _LINE_KEYS:
@@ -1016,8 +1022,11 @@ class _Parser:
         d["to"] = self.to(value.get("to"), f"{path}.to")
         d["side"] = self.enum(value.get("from", value.get("side")), _V_SIDE, f"{path}.from")
         tgt = value.get("target")
+        if isinstance(tgt, str) and _key(tgt).replace("_", " ") in _ALL_WORDS:
+            self.warn(f"{path}.target: нужен один актёр, не «all» — пропустила")
+            tgt = None
         d["target"] = self.actor(tgt, f"{path}.target", create=True) if _as_str(tgt) else None
-        d["look"] = self.look(value.get("look"), f"{path}.look")
+        d["look"] = value.get("look")  # разберу в finish_shots: актёр может появиться в следующих битах
         d["style"] = None
         if value.get("style") is not None and d["do"] == "dance":
             d["style"] = self.enum(value.get("style"), _V_DANCE, f"{path}.style", "bounce")
@@ -1046,10 +1055,9 @@ class _Parser:
                     d["amount"] = self.num(cam.get("amount"), 0.0, 1.0, None, f"{path}.camera.amount")
                 cam = cam.get("move", cam.get("kind"))
             d["camera"] = self.enum(cam, _V_CAM_ANY, f"{path}.camera")
-            if focus is not None:
-                d["camera_focus"] = self.actor(focus, f"{path}.focus", create=False)
+            d["camera_focus"] = focus
         elif d["do"] is None and value.get("focus") is not None:
-            d["camera_focus"] = self.actor(value.get("focus"), f"{path}.focus", create=False)
+            d["camera_focus"] = value.get("focus")
         return d
 
     def to(self, value: Any, path: str) -> float | str | None:
@@ -1283,7 +1291,8 @@ class _Parser:
                 for a in ids:
                     if a not in parts:
                         parts.append(a)
-            if not d["has_place"] and (single or any_all or not parts):
+            # одна сцена — в ней все из cast; в нескольких — кто в place и в битах (без place и с «all» — все)
+            if single or (not d["has_place"] and (any_all or not parts)):
                 for a in self.cast:
                     if a not in parts:
                         parts.append(a)
@@ -1323,10 +1332,13 @@ class _Parser:
                 to = b["to"]
                 if isinstance(to, str) and to not in ("left", "right", "center", "offscreen") and to not in on:
                     to = None
-                look = b["look"]
+                look = self.look(b["look"], f"{b['path']}.look")
                 if look is not None and look not in ("camera", "left", "right") and look not in on:
                     look = None
-                focus = b["camera_focus"] if b["camera_focus"] in on else None
+                focus = None
+                if b["camera_focus"] is not None:
+                    focus = self.actor(b["camera_focus"], f"{b['path']}.focus", create=False)
+                    focus = focus if focus in on else None
                 effect = b["effect"]
                 if effect is not None:
                     if n_effects >= C.MAX_EFFECTS_PER_SHOT:
