@@ -234,9 +234,9 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                     await ctx.on_cost(exc.cost_usd)
                 await fail(f"{w['fail']} {exc}")
                 return
-            except Exception:
+            except Exception as exc:
                 log.exception("студия (%s): ошибка", kind)
-                await fail(f"{w['fail']} попробуй ещё раз")
+                await fail(f"{w['fail']} ({type(exc).__name__}) попробуй ещё раз")
                 return
             finally:
                 if not task.done():

@@ -251,6 +251,26 @@ def extract_html(text: str) -> str:
     return t
 
 
+ATTEMPTS = 2  # обрыв связи или перегрузка — ещё одна попытка
+RETRY_PAUSE = 15
+RETRY_STATUS = {408, 429, 500, 502, 503, 504, 529}
+
+
+def status_text(exc: Any) -> str:
+    """Ошибка API -> понятная причина (видна в чате и в логе)."""
+    code = getattr(exc, "status_code", 0)
+    text = str(getattr(exc, "message", "") or exc).lower()
+    if "credit balance" in text or "billing" in text:
+        return "на счёте Anthropic кончились деньги для API (пополни в console.anthropic.com)"
+    if code == 401:
+        return "ключ ANTHROPIC_API_KEY не подходит"
+    if code in (403, 404) or "model" in text and code == 400:
+        return f"модель недоступна этому ключу ({code}) — поставь HTML_MODEL=claude-sonnet-5-5"
+    if code in (429, 529) or code >= 500:
+        return f"Anthropic сейчас перегружен ({code}) — попробуй через пару минут"
+    return f"студия недоступна ({code}): {text[:120]}"
+
+
 def _thinking(model: str) -> dict[str, Any]:
     # у моделей 5-го поколения адаптивное обдумывание; глубину задаёт effort
     return {"thinking": {"type": "adaptive"}} if re.search(r"-5(?:[-.]|$)|fable", model) else {}
@@ -313,14 +333,26 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
         async with cl.messages.stream(**kwargs) as stream:
             return await stream.get_final_message()
 
-    try:
-        msg = await asyncio.wait_for(call(), timeout=settings.html_timeout)
-    except asyncio.TimeoutError as exc:
-        raise StudioError("страница делалась слишком долго — попробуй попроще") from exc
-    except anthropic.APIStatusError as exc:
-        raise StudioError(f"студия недоступна ({exc.status_code})") from exc
-    except anthropic.APIConnectionError as exc:
-        raise StudioError("студия недоступна (нет связи)") from exc
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            msg = await asyncio.wait_for(call(), timeout=settings.html_timeout)
+            break
+        except asyncio.TimeoutError as exc:
+            raise StudioError("страница делалась слишком долго — попробуй попроще") from exc
+        except anthropic.APIStatusError as exc:
+            if exc.status_code in RETRY_STATUS and attempt < ATTEMPTS:
+                log.warning("студия: %s — повторяю через %d с", exc.status_code, RETRY_PAUSE)
+                await asyncio.sleep(RETRY_PAUSE)
+                continue
+            raise StudioError(status_text(exc)) from exc
+        except Exception as exc:
+            # обрыв связи посреди долгого ответа SDK отдаёт «сырой» сетевой ошибкой (RemoteProtocolError, ReadError…)
+            if attempt < ATTEMPTS:
+                log.warning("студия: связь оборвалась (%s: %s) — повторяю", type(exc).__name__, exc)
+                await asyncio.sleep(RETRY_PAUSE)
+                continue
+            log.exception("студия: связь оборвалась")
+            raise StudioError(f"связь со студией оборвалась ({type(exc).__name__}) — попробуй ещё раз") from exc
     cost = estimate_cost(model, msg.usage)
     seconds = time.monotonic() - started
     out_tokens = getattr(msg.usage, "output_tokens", 0) or 0
