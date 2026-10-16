@@ -45,7 +45,7 @@ def _digits(value: str) -> str:
 class Settings:
     # --- модель ---
     llm_backend: str = field(default_factory=lambda: _str("LLM_BACKEND", "agent_sdk"))
-    llm_model: str = field(default_factory=lambda: _str("LLM_MODEL", "claude-sonnet-5-5"))
+    llm_model: str = field(default_factory=lambda: _str("LLM_MODEL", "claude-opus-5-5"))
     llm_effort: str = field(default_factory=lambda: _str("LLM_EFFORT", "low"))
     # Модель для фоновой выжимки фактов о людях (дешёвая)
     llm_memory_model: str = field(default_factory=lambda: _str("LLM_MEMORY_MODEL", "claude-haiku-5-5"))
@@ -53,11 +53,32 @@ class Settings:
     llm_switch_at: date | None = field(default_factory=lambda: _date("LLM_SWITCH_AT"))
     llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "messages_api"))
     llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-haiku-5-5"))
-    llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 90))
+    # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут
+    llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 180))
+    # потолок на один ответ (защита от зацикливания), $
+    llm_max_call_usd: float = field(default_factory=lambda: _float("LLM_MAX_CALL_USD", 1.5))
+    # поиск в интернете (выполняется на стороне Anthropic, к серверу доступа не даёт)
+    llm_web_search: bool = field(default_factory=lambda: _bool("LLM_WEB_SEARCH", True))
     llm_max_turns: int = field(default_factory=lambda: _int("LLM_MAX_TURNS", 5))
     daily_budget_usd: float = field(default_factory=lambda: _float("DAILY_BUDGET_USD", 12.0))
     # сколько ответов модель готовит одновременно (каждый — отдельный процесс; больше — нужна память и лимиты API)
     llm_concurrency: int = field(default_factory=lambda: _int("LLM_CONCURRENCY", 3))
+
+    # --- что она делает сама: стикеры, картинки, документы, презентации, таблицы, видео ---
+    media_enabled: bool = field(default_factory=lambda: _bool("MEDIA_ENABLED", True))
+    media_per_day: int = field(default_factory=lambda: _int("MEDIA_PER_DAY", 40))  # на чат в сутки
+
+    # --- панель управления (сайт) ---
+    # Оба пароля задаются ТОЛЬКО в .env на сервере. Пока хоть один пустой — панель выключена.
+    panel_password_1: str = field(default_factory=lambda: _str("PANEL_PASSWORD_1"))
+    panel_password_2: str = field(default_factory=lambda: _str("PANEL_PASSWORD_2"))
+    # С каких сайтов можно открывать панель (GitHub Pages). Свой адрес бота (/panel/) разрешён всегда.
+    panel_origins: list[str] = field(default_factory=lambda: _list("PANEL_ORIGINS") or ["https://a1x10.github.io"])
+    panel_public_url: str = field(default_factory=lambda: _str("PANEL_PUBLIC_URL", "https://a1x10.github.io/project3/"))
+    panel_session_hours: float = field(default_factory=lambda: _float("PANEL_SESSION_HOURS", 8))
+    panel_idle_minutes: float = field(default_factory=lambda: _float("PANEL_IDLE_MINUTES", 30))
+    # Cloudflare-туннель (docker compose --profile panel): бот сам узнаёт его адрес и присылает владельцу ссылку
+    tunnel_metrics_url: str = field(default_factory=lambda: _str("TUNNEL_METRICS_URL", "http://tunnel:2000"))
 
     # --- Evolution API ---
     evolution_url: str = field(default_factory=lambda: _str("EVOLUTION_URL", "http://evolution:8080").rstrip("/"))

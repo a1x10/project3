@@ -28,9 +28,12 @@ class AgentSdkLLM:
     name = "agent_sdk"
 
     def __init__(self, default_model: str, effort: str | None = "low", sandbox_dir: str = "data/agent_sandbox",
-                 max_budget_usd: float | None = 0.5, timeout: float = 90):
+                 max_budget_usd: float | None = 1.5, timeout: float = 180, web_search: bool = False):
         self.default_model = default_model
         self.effort = effort or None
+        # WebSearch выполняется на стороне Anthropic: доступа к серверу не даёт. WebFetch не включаем —
+        # он ходил бы по ссылкам с нашего сервера (а там внутренние адреса docker-сети).
+        self.web_search = web_search
         self.sandbox_dir = os.path.abspath(sandbox_dir)
         self.max_budget_usd = max_budget_usd
         self.timeout = timeout
@@ -55,12 +58,13 @@ class AgentSdkLLM:
             sdk_tools.append(make(spec))
 
         mcp_servers = {SERVER_NAME: create_sdk_mcp_server(SERVER_NAME, tools=sdk_tools)} if sdk_tools else {}
+        builtin = ["WebSearch"] if self.web_search and tools else []  # фоновой памяти поиск не нужен
         return ClaudeAgentOptions(
             system_prompt=system,
             model=model,
-            tools=[],  # никаких встроенных инструментов Claude Code
-            disallowed_tools=BUILTIN_TOOLS,
-            allowed_tools=[f"mcp__{SERVER_NAME}__{t.name}" for t in tools],
+            tools=builtin,  # из встроенных инструментов Claude Code — максимум поиск в интернете
+            disallowed_tools=[t for t in BUILTIN_TOOLS if t not in builtin],
+            allowed_tools=builtin + [f"mcp__{SERVER_NAME}__{t.name}" for t in tools],
             mcp_servers=mcp_servers,
             strict_mcp_config=True,
             permission_mode="dontAsk",  # всё, что не разрешено явно, — запрещено

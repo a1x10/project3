@@ -21,6 +21,14 @@ class ChatActions(Protocol):
 
     async def delete_mine(self, *, quoted_id: str | None = None, text: str | None = None) -> list[str]: ...
 
+    async def send_file(self, file: Any, caption: str = "") -> None: ...
+
+    async def fetch_media(self, key: dict[str, Any], message: dict[str, Any] | None) -> bytes | None: ...
+
+    async def learn_sticker(self, data: bytes, mood: str) -> None: ...
+
+    async def say(self, text: str) -> None: ...
+
 
 @dataclass
 class ToolContext:
@@ -37,6 +45,9 @@ class ToolContext:
     after: list[Callable[[], Awaitable[Any]]] = field(default_factory=list)
     # инструмент уже что-то необратимо сделал (удалил сообщение) — повторять вызов модели нельзя
     side_effects: bool = False
+    media_queued: int = 0
+    # фото/стикер, из которого можно сделать мем: (key, message) для скачивания
+    quoted_media: tuple[dict[str, Any], dict[str, Any] | None] | None = None
 
 
 class ToolError(Exception):
@@ -356,4 +367,8 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
     if settings.prompt_style == "minimal":
         # просто ассистент: не обижается и не игнорирует людей
         specs = [t for t in specs if t.name not in ("take_offense", "forgive")]
+    if settings.media_enabled:
+        from .media_tools import build_media_tools
+
+        specs += build_media_tools(db, settings, ctx)
     return specs

@@ -11,6 +11,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import random
 from collections import deque
 from pathlib import Path
@@ -157,7 +158,8 @@ class StickerLibrary:
 
     async def learn(self, data: bytes, mood: str, wa_message_id: str | None) -> str:
         """«стелла запомни стикер смех» ответом на стикер."""
-        mood = mood.strip().lower()[:40]
+        # имя папки — только буквы/цифры/пробел/дефис: никаких «../» в пути
+        mood = re.sub(r"[^\w\- ]+", "", mood.strip().lower(), flags=re.UNICODE).strip()[:40] or "разное"
         digest = sha256(data)
         existing = await self.db.sticker_by_sha(digest)
         folder = self.root / mood

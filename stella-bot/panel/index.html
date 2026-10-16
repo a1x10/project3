@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0d0f14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f9" media="(prefers-color-scheme: light)">
+<meta name="format-detection" content="telephone=no">
+<title>Стелла · панель</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23a493ff' d='M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 16.9 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="panel.css">
+<script src="panel.js" defer></script>
+</head>
+<body>
+<noscript><p class="noscript">Для панели нужен включённый JavaScript.</p></noscript>
+
+<!-- ===== Вход ===== -->
+<section id="login" class="login" aria-labelledby="login-title" hidden>
+  <div class="login-card">
+    <div class="brand">
+      <svg class="brand-star" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 16.9 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>
+      <h1 id="login-title">Стелла · панель</h1>
+    </div>
+
+    <div id="server-show" class="server-show">
+      <span class="muted">Сервер:</span>
+      <span id="server-host" class="server-host"></span>
+      <button type="button" id="server-change" class="btn-link">Сменить</button>
+    </div>
+
+    <p id="login-msg" class="login-msg" role="alert" hidden></p>
+    <p id="lock-timer" class="lock-timer" hidden></p>
+
+    <form id="step1" class="login-step" novalidate>
+      <div id="server-field" class="field-block" hidden>
+        <label for="server-input">Адрес сервера</label>
+        <input id="server-input" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://xxx.trycloudflare.com">
+        <p class="hint">Ссылку присылает бот. Нужен адрес с https:// (или http://localhost для проверки на том же компьютере).</p>
+      </div>
+      <div class="field-block">
+        <label for="p1">Пароль 1</label>
+        <input id="p1" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <button type="submit" id="step1-btn" class="btn primary wide">Дальше</button>
+    </form>
+
+    <form id="step2" class="login-step" novalidate hidden>
+      <div class="field-block">
+        <label for="p2">Пароль 2</label>
+        <input id="p2" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <button type="submit" id="step2-btn" class="btn primary wide">Войти</button>
+      <button type="button" id="step2-back" class="btn-link">Назад</button>
+    </form>
+  </div>
+</section>
+
+<!-- ===== Панель ===== -->
+<div id="app" class="app" hidden>
+  <header class="topbar">
+    <div class="topbar-title">
+      <svg class="brand-star small" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 16.9 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>
+      <div>
+        <div class="title">Стелла · панель</div>
+        <div id="hdr-host" class="host"></div>
+      </div>
+    </div>
+    <button type="button" id="logout-btn" class="btn small">Выйти</button>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Разделы">
+    <button type="button" class="tab" role="tab" id="tab-overview" data-tab="overview" aria-controls="panel-overview" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></svg>
+      <span>Обзор</span>
+    </button>
+    <button type="button" class="tab" role="tab" id="tab-chats" data-tab="chats" aria-controls="panel-chats" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H10l-5 4v-4H4z"/></svg>
+      <span>Чаты</span>
+    </button>
+    <button type="button" class="tab" role="tab" id="tab-people" data-tab="people" aria-controls="panel-people" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.8a3.3 3.3 0 0 1 0 6.4"/><path d="M18 14.8c1.8.7 3 2.4 3.5 5.2"/></svg>
+      <span>Люди</span>
+    </button>
+    <button type="button" class="tab" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+      <span>Настройки</span>
+    </button>
+    <button type="button" class="tab" role="tab" id="tab-log" data-tab="log" aria-controls="panel-log" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>
+      <span>Журнал</span>
+    </button>
+  </nav>
+
+  <main class="content">
+    <!-- Обзор -->
+    <section id="panel-overview" class="panel" role="tabpanel" aria-labelledby="tab-overview">
+      <div class="panel-head">
+        <h2>Обзор</h2>
+        <button type="button" id="ov-refresh" class="btn small">Обновить</button>
+      </div>
+      <div id="ov-body"></div>
+      <div class="card">
+        <h3 class="card-title">Быстрые действия</h3>
+        <div class="btn-row">
+          <button type="button" id="ov-unpause-all" class="btn">Снять все паузы</button>
+          <button type="button" id="ov-forgive-all" class="btn">Снять все обиды</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Чаты -->
+    <section id="panel-chats" class="panel" role="tabpanel" aria-labelledby="tab-chats" hidden>
+      <div id="chats-list-view">
+        <div class="panel-head">
+          <h2>Чаты</h2>
+          <button type="button" id="chats-refresh" class="btn small">Обновить</button>
+        </div>
+        <div id="chats-list"></div>
+      </div>
+
+      <div id="chat-view" hidden>
+        <div class="chat-head">
+          <button type="button" id="chat-back" class="btn small">← Чаты</button>
+          <div class="chat-title-wrap">
+            <h2 id="chat-title" class="chat-title"></h2>
+            <div id="chat-sub" class="muted small"></div>
+          </div>
+          <button type="button" id="chat-refresh" class="btn small" aria-label="Обновить сообщения">↻</button>
+        </div>
+        <div id="chat-badges" class="badges"></div>
+
+        <div id="chat-msgs" class="msgs" role="region" aria-label="Сообщения чата" tabindex="0"></div>
+
+        <form id="send-form" class="send-form" novalidate>
+          <label for="send-text" class="sr-only">Текст от имени Стеллы</label>
+          <textarea id="send-text" rows="2" maxlength="4000" placeholder="Текст, который Стелла отправит в чат"></textarea>
+          <button type="submit" id="send-btn" class="btn primary">Отправить от Стеллы</button>
+        </form>
+
+        <div class="card" id="chat-controls">
+          <h3 class="card-title">Управление</h3>
+          <p class="muted small">Пауза — Стелла молчит в этом чате.</p>
+          <div class="btn-row">
+            <button type="button" class="btn" data-pause="30">Пауза 30 мин</button>
+            <button type="button" class="btn" data-pause="120">Пауза 2 ч</button>
+            <button type="button" class="btn" data-pause="1440">Пауза 1 день</button>
+            <button type="button" class="btn" id="unpause-btn">Снять паузу</button>
+          </div>
+          <div class="field-block">
+            <label for="chime-select">Как часто вмешивается в разговор</label>
+            <select id="chime-select">
+              <option value="" disabled>по умолчанию</option>
+              <option value="off">выкл</option>
+              <option value="rare">редко</option>
+              <option value="normal">обычно</option>
+              <option value="chatty">болтушка</option>
+            </select>
+          </div>
+          <button type="button" id="poke-btn" class="btn wide">Пусть сама напишет</button>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Про чат</h3>
+          <div class="field-block">
+            <label for="about-text">Что Стелле знать про этот чат</label>
+            <textarea id="about-text" rows="5" maxlength="4000"></textarea>
+            <div class="row between">
+              <span id="about-count" class="muted small">0 / 4000</span>
+              <button type="button" id="about-save" class="btn primary">Сохранить</button>
+            </div>
+          </div>
+          <h4 class="sub-title">Что она заметила сама</h4>
+          <p id="about-notes" class="notes"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Люди -->
+    <section id="panel-people" class="panel" role="tabpanel" aria-labelledby="tab-people" hidden>
+      <div class="panel-head">
+        <h2>Люди</h2>
+        <button type="button" id="people-refresh" class="btn small">Обновить</button>
+      </div>
+      <div class="field-block">
+        <label for="people-chat">Чат</label>
+        <select id="people-chat"></select>
+      </div>
+      <div id="people-list"></div>
+    </section>
+
+    <!-- Настройки -->
+    <section id="panel-settings" class="panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="panel-head">
+        <h2>Настройки</h2>
+        <button type="button" id="settings-refresh" class="btn small">Обновить</button>
+      </div>
+      <div id="settings-body" class="card"></div>
+      <div class="savebar">
+        <span id="settings-dirty" class="muted small" hidden>Есть несохранённые изменения</span>
+        <button type="button" id="settings-save" class="btn primary">Сохранить</button>
+      </div>
+      <div class="card">
+        <h3 class="card-title">Безопасность</h3>
+        <p class="muted small">Закроет все открытые сессии панели — на всех телефонах и компьютерах, включая эту.</p>
+        <button type="button" id="logout-all" class="btn danger wide">Выйти везде</button>
+      </div>
+    </section>
+
+    <!-- Журнал -->
+    <section id="panel-log" class="panel" role="tabpanel" aria-labelledby="tab-log" hidden>
+      <div class="panel-head">
+        <h2>Журнал</h2>
+        <button type="button" id="log-refresh" class="btn small">Обновить</button>
+      </div>
+      <div class="log-tools">
+        <label for="log-filter" class="sr-only">Фильтр журнала</label>
+        <input id="log-filter" type="search" placeholder="Фильтр: слово или ERROR" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <label class="check">
+          <input id="log-auto" type="checkbox">
+          <span>Обновлять каждые 10 с</span>
+        </label>
+      </div>
+      <div id="log-list" class="log" role="region" aria-label="Строки журнала" tabindex="0"></div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

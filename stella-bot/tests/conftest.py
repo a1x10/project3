@@ -48,6 +48,12 @@ class FakeEvolution:
         self.sent.append({"type": "sticker", "to": number, "id": wa_id})
         return wa_id
 
+    async def send_media(self, number, mediatype, media_b64, mimetype, filename, caption="", *, delay_ms=0):
+        wa_id = self._id()
+        self.sent.append({"type": "media", "to": number, "mediatype": mediatype, "mimetype": mimetype,
+                          "filename": filename, "caption": caption, "size": len(media_b64), "id": wa_id})
+        return wa_id
+
     async def send_poll(self, number, question, options, *, multiple=False, delay_ms=0):
         wa_id = self._id()
         self.sent.append({"type": "poll", "to": number, "question": question, "options": options,

@@ -84,3 +84,42 @@ async def test_switching_llm_changes_backend_on_date(tmp_path):
     today[0] = date(2026, 10, 23)
     assert (await llm.ask(system="", prompt="")).text == "messages_api:claude-haiku-5-5"
     assert made == ["agent_sdk", "messages_api"]
+
+
+def test_agent_sdk_only_web_search_from_builtins(tmp_path):
+    from bot.llm.agent_sdk import AgentSdkLLM
+
+    async def h(args):
+        return "ok"
+
+    tool = ToolSpec("remember", "d", {"type": "object", "properties": {}}, h)
+    llm = AgentSdkLLM("claude-opus-5-5", sandbox_dir=str(tmp_path / "sb"), web_search=True)
+    opts = llm._options("sys", [tool], "claude-opus-5-5", 5)
+    assert opts.tools == ["WebSearch"] and "WebSearch" in opts.allowed_tools
+    assert "WebSearch" not in opts.disallowed_tools and "Bash" in opts.disallowed_tools
+    assert "WebFetch" in opts.disallowed_tools
+    assert llm._options("sys", [], "m", 1).tools == []  # фоновой памяти поиск не нужен
+    off = AgentSdkLLM("claude-opus-5-5", sandbox_dir=str(tmp_path / "sb"), web_search=False)
+    assert off._options("sys", [tool], "m", 5).tools == []
+
+
+async def test_switching_llm_rebuilds_when_settings_change(tmp_path):
+    s = make_settings(tmp_path, llm_backend="agent_sdk", llm_model="claude-opus-5-5")
+    made = []
+
+    class Dummy:
+        def __init__(self, kind, model):
+            self.model = model
+
+        async def ask(self, **kw):
+            return LLMReply(text=kw["model"])
+
+    def factory(kind, model, settings):
+        made.append((model, settings.llm_effort))
+        return Dummy(kind, model)
+
+    llm = SwitchingLLM(s, today=lambda: date(2026, 10, 16), factory=factory)
+    assert (await llm.ask(system="", prompt="")).text == "claude-opus-5-5"
+    s.llm_model, s.llm_effort = "claude-sonnet-5-5", "medium"  # поменяли в панели
+    assert (await llm.ask(system="", prompt="")).text == "claude-sonnet-5-5"
+    assert made == [("claude-opus-5-5", "low"), ("claude-sonnet-5-5", "medium")]
