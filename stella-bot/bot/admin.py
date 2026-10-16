@@ -239,6 +239,9 @@ EDITABLE: list[dict[str, Any]] = [
     {"key": "llm_web_search", "label": "Поиск в интернете", "type": "bool"},
     {"key": "media_enabled", "label": "Стикеры, картинки, документы, презентации, видео", "type": "bool"},
     {"key": "media_per_day", "label": "Файлов в один чат за день", "type": "number", "min": 0, "max": 500},
+    {"key": "vision_enabled", "label": "Видит фото и стикеры", "type": "bool"},
+    {"key": "sandbox_enabled", "label": "Запуск кода по твоей просьбе (песочница Anthropic)", "type": "bool",
+     "hint": "только для владельца (OWNER_PHONE); код выполняется не на сервере"},
     {"key": "chime_default", "label": "Как часто сама встревает в разговор", "type": "select",
      "options": ["off", "rare", "normal", "chatty"], "hint": "для чатов, где режим не задан отдельно"},
     {"key": "initiative_per_week", "label": "Сама пишет в группу, раз в неделю", "type": "number",
@@ -496,7 +499,9 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
 
         brain = get_brain(request)
         chat = await chat_or_404(request, chat_id)
-        lines = [ln.strip() for ln in body.text.split("\n") if ln.strip()][:10]
+        lines = [ln.strip() for ln in body.text.split("\n") if ln.strip()]
+        if len(lines) > 10:  # не больше 10 сообщений подряд — остальное одним сообщением
+            lines = lines[:9] + ["\n".join(lines[9:])]
         # «печатает…» занимает время — отправляем в фоне, панель не ждёт
         brain.spawn(brain.outbox.send_result(chat, CasinoResult(lines)))
         log.info("панель: отправляется от Стеллы в %s", mask_phone(chat["jid"]))

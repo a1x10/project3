@@ -67,7 +67,9 @@ class MessagesApiLLM:
         texts: list[str] = []
 
         for _ in range(max(1, max_turns)):
-            kwargs: dict[str, Any] = {"max_tokens": 4000, "system": system_blocks, "messages": messages}
+            # презентация или видео с рисунками — длинный вызов инструмента: даём запас
+            kwargs: dict[str, Any] = {"max_tokens": 16000 if tool_defs else 4000, "system": system_blocks,
+                                      "messages": messages}
             if tool_defs:
                 kwargs["tools"] = tool_defs
             try:
@@ -86,7 +88,8 @@ class MessagesApiLLM:
             turn = [b.text for b in response.content if b.type == "text"]
             if turn:  # последний ход после инструментов бывает пустым — тогда ответ в предыдущем
                 texts = turn
-            if response.stop_reason != "tool_use":
+            cut_tool = response.stop_reason == "max_tokens" and any(b.type == "tool_use" for b in response.content)
+            if response.stop_reason != "tool_use" and not cut_tool:
                 break
 
             messages.append({"role": "assistant", "content": response.content})
@@ -95,7 +98,14 @@ class MessagesApiLLM:
                 if block.type != "tool_use":
                     continue
                 spec = by_name.get(block.name)
-                args = block.input if isinstance(block.input, dict) else json.loads(block.input or "{}")
+                if cut_tool:  # вызов оборвался на полуслове — пусть сделает короче
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": True,
+                                    "content": "слишком длинно получилось — сделай короче и проще"})
+                    continue
+                try:
+                    args = block.input if isinstance(block.input, dict) else json.loads(block.input or "{}")
+                except ValueError:
+                    args = {}
                 if spec is None:
                     results.append({"type": "tool_result", "tool_use_id": block.id,
                                     "content": f"нет такого инструмента: {block.name}", "is_error": True})

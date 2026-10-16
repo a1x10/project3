@@ -79,7 +79,7 @@ _DROP_BLOCKS = re.compile(r"<(script|foreignObject|iframe|object|embed|audio|vid
 _DROP_TAGS = re.compile(r"<(script|foreignObject|iframe|object|embed|audio|video|image)\b[^>]*>", re.IGNORECASE)
 _EVENT_ATTR = re.compile(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
 _HREF = re.compile(r"\s(xlink:)?href\s*=\s*(\"([^\"]*)\"|'([^']*)')", re.IGNORECASE)
-_CSS_URL = re.compile(r"url\(\s*['\"]?(?!#)[^)]*\)", re.IGNORECASE)
+_CSS_URL = re.compile(r"url\(\s*(?!(?:['\"]|&quot;|&apos;|&#3[49];)?\s*#)[^)]*\)", re.IGNORECASE)
 _CSS_IMPORT = re.compile(r"@import[^;]*;?", re.IGNORECASE)
 
 

@@ -25,6 +25,7 @@ from .humanize import Segment, parse_reply
 from .llm.base import LLM, Image, LLMError, LLMRefusal
 from .media import image_for_model
 from .memory import Memory
+from .reminders import Reminders, reminder_loop  # импорт заодно регистрирует таблицу reminders
 from .outbox import Outbox
 from .parser import Incoming, event_name, parse_upsert
 from .persona import (
@@ -197,6 +198,10 @@ class Brain:
         self.llm_slots = asyncio.Semaphore(max(1, settings.llm_concurrency))
         # память — своим отдельным слотом, чтобы фоновая выжимка не задерживала живые ответы
         self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
+        self.reminders = Reminders(db, settings)
+        from .sandbox import CodeSandbox
+
+        self.sandbox = CodeSandbox(model=settings.sandbox_model, timeout=150)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
                                  panel_unlock=self.unlock_panel)
@@ -247,8 +252,9 @@ class Brain:
             self.bot.jids |= set(json.loads(saved[0]))
         if self.s.evolution_auto_setup:
             await self.ensure_instance()
-        if self.s.initiative_per_week > 0:
-            self._background.append(asyncio.create_task(self._initiative_loop()))
+        # всегда: «сама пишет» можно включить в панели без перезапуска (тик сам смотрит INITIATIVE_PER_WEEK)
+        self._background.append(asyncio.create_task(self._initiative_loop()))
+        self._background.append(asyncio.create_task(reminder_loop(self)))
         if self.admin.enabled() and self.s.tunnel_metrics_url:
             self._background.append(asyncio.create_task(self._tunnel_loop()))
 
@@ -675,8 +681,10 @@ class Brain:
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
                                is_admin=self.s.is_admin(phone_of(sender.jid) or sender.phone),
                                actions=_ChatActions(self, chat), quoted_wa_id=target.quoted_id,
-                               quoted_media=self._media_source(target))
+                               quoted_media=self._media_source(target) or self._recent_media_of(target, batch),
+                               on_cost=self.track_cost)
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
+        tools += self._extra_tools(chat, tool_ctx)
 
         images = await self._images_for(starred, target) if mode != AMBIENT else []
         if images:
@@ -741,6 +749,20 @@ class Brain:
         elif segments:
             log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
 
+    def _extra_tools(self, chat: dict[str, Any], ctx: ToolContext) -> list:
+        """Инструменты, которым нужен сам бот: управление группой и песочница с кодом (только владельцу)."""
+        from .group_admin import GroupApi, build_group_tools
+        from .sandbox import build_sandbox_tools
+
+        self.sandbox.model = self.s.sandbox_model
+        extra = build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)
+        if chat["is_group"] or self.s.is_admin(phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else ""):
+            extra += build_group_tools(
+                self.db, self.s, ctx, api=GroupApi(self.evo), chat=chat, is_group_admin=self.is_group_admin,
+                bot_jids=self.bot.jids, on_members_changed=lambda: self.sync_group(chat["id"], chat["jid"]),
+            )
+        return extra
+
     async def _images_for(self, starred: list[Incoming], target: Incoming) -> list[Image]:
         """Фото и стикеры, которые ей прислали (или на которые ответили), — чтобы модель их видела."""
         if not self.s.vision_enabled:
@@ -776,6 +798,14 @@ class Brain:
             if inc.quoted_sender and not from_me:
                 key["participant"] = inc.quoted_sender
             return key, inc.quoted_message
+        return None
+
+    @staticmethod
+    def _recent_media_of(target: Incoming, batch: list[tuple[Incoming, str]]):
+        """«фото, потом «стелла сделай мем»» — берём последнее фото/стикер того же человека из пачки."""
+        for inc, _ in reversed(batch):
+            if inc.sender_jid == target.sender_jid and inc.kind in ("image", "sticker"):
+                return inc.raw_key, inc.raw_message
         return None
 
     def _mark_talking(self, chat_jid: str, starred: list[Incoming]) -> None:
@@ -902,7 +932,7 @@ class Brain:
             chat_notes=chat.get("notes") or "",
             chat_about=chat.get("about") or "",
             members=await self.db.chat_members(chat["id"], limit=80) if chat["is_group"] else [],
-            sticker_moods=await self.stickers.moods(),
+            sticker_moods=(await self.stickers.moods())[:40],  # нарисованные сама — не раздуваем промпт
             people=people_facts,
             transcript=transcript,
             mode_hint=(MODE_HINTS["direct_dm" if mode == DIRECT and not chat["is_group"] else mode]

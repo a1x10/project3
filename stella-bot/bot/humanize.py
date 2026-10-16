@@ -27,7 +27,7 @@ _MD_RE = [
 _FILLER_LINE = re.compile(
     r"^(надеюсь,? (это|мой ответ) (поможет|помог|было полезно)|"
     r"если (у тебя|у вас) (будут|остались|появятся) (ещё )?вопросы|обращайся,? если что|"
-    r"(рада|рад|буду рада) (помочь|была помочь))\b.*$",
+    r"(рада|рад|буду рада) (помочь|была помочь))\s*[!.)…]*\s*[\U0001F300-\U0001FAFF\u2600-\u27BF]*\s*$",
     re.IGNORECASE,
 )
 _FILLER_OPENER = re.compile(
@@ -42,6 +42,11 @@ def _drop_filler(line: str) -> str:
         return ""
     stripped = _FILLER_OPENER.sub("", line)
     return stripped[:1].lower() + stripped[1:] if stripped != line and stripped[:1].isupper() else stripped
+
+
+# Поиск в интернете приучает модель дописывать «Sources: [заголовок](ссылка)» — в чате это не нужно
+_SOURCES_RE = re.compile(r"^\s*(sources|источники|ссылки)\s*:?\s*$", re.IGNORECASE)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 
 @dataclass
@@ -86,6 +91,9 @@ def parse_reply(text: str, max_bubbles: int = 6) -> list[Segment]:
         return []
     segments: list[Segment] = []
     for raw_line in text.replace("\r", "").split("\n"):
+        if _SOURCES_RE.match(raw_line):
+            break  # дальше — список источников
+        raw_line = _MD_LINK_RE.sub(r"\1 \2", raw_line)
         for piece in _TOKEN_RE.split(raw_line):
             if not piece.strip():
                 continue

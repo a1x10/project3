@@ -70,7 +70,7 @@ _REPEAT_ALIASES = {
     "каждую неделю": "weekly",
     "weekdays": "weekdays", "weekday": "weekdays", "workdays": "weekdays", "будни": "weekdays",
     "по будням": "weekdays",
-    "": None, "none": None, "no": None, "once": None, "нет": None, "один раз": None,
+    "": None, "none": None, "null": None, "no": None, "once": None, "нет": None, "один раз": None,
 }
 EVERY_WEEKDAY = ["каждый понедельник", "каждый вторник", "каждую среду", "каждый четверг", "каждую пятницу",
                  "каждую субботу", "каждое воскресенье"]
@@ -128,12 +128,15 @@ class Reminders:
                 continue
         raise ValueError("время нужно в формате ГГГГ-ММ-ДД ЧЧ:ММ (местное), например 2026-10-17 08:00")
 
-    def fmt_at(self, due_utc: datetime, now: datetime | None = None) -> str:
-        """«17.10 в 08:00» (год — только если не текущий)."""
-        local = self.to_local(due_utc)
+    def _day(self, local: datetime, now: datetime | None) -> str:
+        """«17.10» (год — только если не текущий)."""
         this_year = self.to_local(now or utcnow()).year
-        day = f"{local:%d.%m}" if local.year == this_year else f"{local:%d.%m.%Y}"
-        return f"{day} в {local:%H:%M}"
+        return f"{local:%d.%m}" if local.year == this_year else f"{local:%d.%m.%Y}"
+
+    def fmt_at(self, due_utc: datetime, now: datetime | None = None) -> str:
+        """«17.10 в 08:00»."""
+        local = self.to_local(due_utc)
+        return f"{self._day(local, now)} в {local:%H:%M}"
 
     def fmt_when(self, row: dict[str, Any], now: datetime | None = None) -> str:
         """Человеческое «когда»: «17.10 в 08:00», «каждый понедельник в 07:30 (ближайший — 19.10)»."""
@@ -142,7 +145,7 @@ class Reminders:
         if not repeat:
             return self.fmt_at(row["due_at"], now)
         every = {"daily": "каждый день", "weekdays": "по будням"}.get(repeat) or EVERY_WEEKDAY[local.weekday()]
-        return f"{every} в {local:%H:%M} (ближайший — {self.fmt_at(row['due_at'], now).split(' в ')[0]})"
+        return f"{every} в {local:%H:%M} (ближайший — {self._day(local, now)})"
 
     # ---------- база ----------
     async def add(self, chat_id: int, person_id: int | None, created_by: int | None, text: str,
@@ -175,6 +178,7 @@ class Reminders:
                     reminders.c.chat_id == chat_id, reminders.c.done.is_(False), reminders.c.due_at == due,
                     reminders.c.text == text,
                     reminders.c.person_id.is_(None) if person_id is None else reminders.c.person_id == person_id,
+                    reminders.c.repeat.is_(None) if repeat is None else reminders.c.repeat == repeat,
                 ).limit(1)
             )).scalar()
             if same is not None:
