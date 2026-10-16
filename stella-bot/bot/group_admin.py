@@ -232,6 +232,9 @@ def build_group_tools(
     async def check_rights() -> None:
         if not chat.get("is_group") or not group_jid.endswith("@g.us"):
             raise ToolError("это работает только в группах")
+        if getattr(ctx, "untrusted", False):
+            raise ToolError("в этом ответе был чужой текст (файл, ссылка или старая переписка) — такие действия "
+                            "только по отдельному сообщению админа")
         if ctx.sender is None:
             raise ToolError("управлять группой можно только по просьбе админа")
         if ctx.is_admin:
@@ -384,6 +387,8 @@ def build_group_tools(
     async def set_my_profile(args: dict[str, Any]) -> str:
         if not ctx.is_admin:
             raise ToolError("мой профиль меняю только по просьбе владельца (админов бота)")
+        if getattr(ctx, "untrusted", False):
+            raise ToolError("в этом ответе был чужой текст — профиль меняю только по отдельному сообщению")
         name = str(args.get("name") or "").strip()[:MAX_PROFILE_NAME]
         status = str(args.get("status") or "").strip()[:MAX_PROFILE_STATUS]
         svg = str(args.get("avatar_svg") or "").strip()

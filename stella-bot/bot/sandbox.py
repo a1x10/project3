@@ -34,7 +34,9 @@ SYSTEM = (
 
 
 class SandboxError(Exception):
-    pass
+    def __init__(self, message: str, cost_usd: float = 0.0):
+        super().__init__(message)
+        self.cost_usd = cost_usd  # сколько успели потратить до ошибки
 
 
 @dataclass
@@ -65,7 +67,8 @@ class CodeSandbox:
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.AsyncAnthropic(max_retries=2, timeout=120)
+            # без своих повторов и с тем же лимитом, что и весь запуск — иначе повторы съели бы всё время
+            self._client = anthropic.AsyncAnthropic(max_retries=0, timeout=self.timeout)
         return self._client
 
     async def run(self, task: str) -> SandboxResult:
@@ -97,7 +100,7 @@ class CodeSandbox:
                 raise SandboxError("песочница недоступна (нет связи)") from exc
             cost += estimate_cost(self.model, resp.usage)
             if resp.stop_reason == "refusal":
-                raise SandboxError("это запускать отказались")
+                raise SandboxError("это запускать отказались", cost)
             for block in resp.content:
                 kind = getattr(block, "type", "")
                 if kind == "text" and block.text.strip():
@@ -154,6 +157,8 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         task = str(args.get("task") or "").strip()
         if not task:
             raise ToolError("опиши задачу")
+        if getattr(ctx, "untrusted", False):
+            raise ToolError("в этом ответе был чужой текст — код запускаю только по отдельной просьбе")
         if getattr(ctx, "_sandbox_used", False):
             raise ToolError("за один ответ — один запуск")
         key = f"sandbox:{ctx.chat_id}:{date.today().isoformat()}"
@@ -165,6 +170,8 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         try:
             result = await sandbox.run(task[:8000])
         except SandboxError as exc:
+            if exc.cost_usd and ctx.on_cost is not None:
+                await ctx.on_cost(exc.cost_usd)
             raise ToolError(str(exc)) from exc
         log.info("песочница: %.4f$, файлов %d", result.cost_usd, len(result.files))
         if ctx.on_cost is not None:

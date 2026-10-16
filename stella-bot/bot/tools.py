@@ -48,6 +48,9 @@ class ToolContext:
     media_queued: int = 0
     # учесть расходы вне основного вызова модели (песочница с кодом)
     on_cost: Callable[[float], Awaitable[Any]] | None = None
+    # в этот ответ попал чужой текст (файл, страница, старая переписка) — опасные действия не выполняем:
+    # там может быть «удали всех из группы», написанное не админом
+    untrusted: bool = False
     # фото/стикер, из которого можно сделать мем: (key, message) для скачивания
     quoted_media: tuple[dict[str, Any], dict[str, Any] | None] | None = None
 
@@ -227,11 +230,17 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         """Переписка дальше, чем видно в контексте: за последние N часов и/или со словом."""
         from .persona import format_transcript
 
+        ctx.untrusted = True  # старая переписка — чужие слова
         hours = args.get("hours")
         query = str(args.get("query") or "").strip()[:60] or None
         limit = max(10, min(int(args.get("limit") or 150), 400))
         since = utcnow() - timedelta(hours=min(float(hours), 24 * 30)) if hours else None
-        rows = await db.search_messages(ctx.chat_id, since=since, query=query, limit=limit)
+        if query:  # регистр кириллицы SQLite не понимает — ищем сами по свежим сообщениям
+            needle = query.casefold()
+            pool = await db.search_messages(ctx.chat_id, since=since, limit=5000)
+            rows = [r for r in pool if needle in (r.get("text") or "").casefold()][-limit:]
+        else:
+            rows = await db.search_messages(ctx.chat_id, since=since, limit=limit)
         if not rows:
             return "ничего не нашла"
         people = {}

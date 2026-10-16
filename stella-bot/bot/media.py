@@ -148,6 +148,8 @@ def render_svg(svg: str, width: int, height: int) -> Image.Image:
 
 # ---------- картинка для модели (она «видит» фото и стикеры) ----------
 MODEL_IMAGE_SIDE = 1568  # больше модели не нужно — только дороже
+MAX_INPUT_PIXELS = 25_000_000  # фото из WhatsApp меньше; огромная «картинка-бомба» съела бы память
+Image.MAX_IMAGE_PIXELS = MAX_INPUT_PIXELS
 
 
 def image_for_model(data: bytes) -> tuple[str, bytes] | None:
@@ -155,11 +157,12 @@ def image_for_model(data: bytes) -> tuple[str, bytes] | None:
     None — если это не картинка."""
     try:
         img = Image.open(io.BytesIO(data))
+        if img.width * img.height > MAX_INPUT_PIXELS:  # размер из заголовка — до распаковки
+            return None
         img.seek(0)
+        img.draft("RGB", (MODEL_IMAGE_SIDE, MODEL_IMAGE_SIDE))  # JPEG сразу читается уменьшенным
         img.load()
     except Exception:
-        return None
-    if img.width * img.height > 50_000_000:
         return None
     has_alpha = img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or img.mode in ("RGBA", "LA")
     img = img.convert("RGBA" if has_alpha else "RGB")
@@ -242,8 +245,12 @@ def _caption(img: Image.Image, text: str, where: str) -> None:
 def meme(image: bytes, top: str = "", bottom: str = "", as_sticker: bool = False) -> MediaFile:
     try:
         img = Image.open(io.BytesIO(image))
+        if img.width * img.height > MAX_INPUT_PIXELS:
+            raise MediaError("картинка слишком большая")
         img.seek(0)
         img = img.convert("RGBA")
+    except MediaError:
+        raise
     except Exception as exc:
         raise MediaError("не получилось открыть картинку") from exc
     img.thumbnail((1024, 1024), Image.LANCZOS)
