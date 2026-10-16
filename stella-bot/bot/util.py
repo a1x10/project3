@@ -29,6 +29,9 @@ def is_phone_jid(jid: str | None) -> bool:
 
 
 def phone_of(jid: str | None) -> str:
+    """Номер WhatsApp; у человека из Telegram — «tg<id>» (по нему узнаём владельца: TELEGRAM_OWNER_ID)."""
+    if jid and jid.endswith("@tg.user"):
+        return "tg" + jid.split("@", 1)[0]
     return jid_digits(jid) if is_phone_jid(jid) else ""
 
 
