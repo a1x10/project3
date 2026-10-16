@@ -46,6 +46,8 @@ class ToolContext:
     # инструмент уже что-то необратимо сделал (удалил сообщение) — повторять вызов модели нельзя
     side_effects: bool = False
     media_queued: int = 0
+    # учесть расходы вне основного вызова модели (песочница с кодом)
+    on_cost: Callable[[float], Awaitable[Any]] | None = None
     # фото/стикер, из которого можно сделать мем: (key, message) для скачивания
     quoted_media: tuple[dict[str, Any], dict[str, Any] | None] | None = None
 
@@ -400,4 +402,7 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         from .media_tools import build_media_tools
 
         specs += build_media_tools(db, settings, ctx)
+    from .reminders import build_reminder_tools
+
+    specs += build_reminder_tools(db, settings, ctx)
     return specs

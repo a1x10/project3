@@ -528,6 +528,10 @@ class DB:
                                    .values(**values))
         await conn.execute(delete(wallets).where(wallets.c.person_id == d))
         await conn.execute(delete(grudges).where(grudges.c.person_id == d))
+        reminders = metadata.tables.get("reminders")  # таблица из bot/reminders.py
+        if reminders is not None:
+            await conn.execute(update(reminders).where(reminders.c.person_id == d).values(person_id=k))
+            await conn.execute(update(reminders).where(reminders.c.created_by == d).values(created_by=k))
         await conn.execute(delete(people).where(people.c.id == d))
         values: dict[str, Any] = {}
         other = next((j for j in (drop.jid, drop.alt_jid) if j and j != keep.jid), None)

@@ -70,6 +70,10 @@ class Settings:
     # она «видит» фото и стикеры, которые ей присылают (и на которые отвечают с вопросом к ней)
     vision_enabled: bool = field(default_factory=lambda: _bool("VISION_ENABLED", True))
     vision_max_images: int = field(default_factory=lambda: _int("VISION_MAX_IMAGES", 3))
+    # запуск кода в песочнице Anthropic — ТОЛЬКО по просьбе владельца (OWNER_PHONE)
+    sandbox_enabled: bool = field(default_factory=lambda: _bool("SANDBOX_ENABLED", True))
+    sandbox_model: str = field(default_factory=lambda: _str("SANDBOX_MODEL", "claude-sonnet-5-5"))
+    sandbox_per_day: int = field(default_factory=lambda: _int("SANDBOX_PER_DAY", 30))
 
     # --- панель управления (сайт) ---
     # Оба пароля задаются ТОЛЬКО в .env на сервере. Пока хоть один пустой — панель выключена.
