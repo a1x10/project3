@@ -22,6 +22,28 @@ _MD_RE = [
 ]
 
 
+# Типичные «ассистентские» фразы: в чате так не пишут. Целая строка-филлер выкидывается,
+# а «Конечно! …» в начале сообщения обрезается до сути.
+_FILLER_LINE = re.compile(
+    r"^(надеюсь,? (это|мой ответ) (поможет|помог|было полезно)|"
+    r"если (у тебя|у вас) (будут|остались|появятся) (ещё )?вопросы|обращайся,? если что|"
+    r"(рада|рад|буду рада) (помочь|была помочь))\b.*$",
+    re.IGNORECASE,
+)
+_FILLER_OPENER = re.compile(
+    r"^(конечно|разумеется|отличный вопрос|хороший вопрос|интересный вопрос|с радостью|"
+    r"с удовольствием)\s*[!:]+\s*(?=\S)",
+    re.IGNORECASE,
+)
+
+
+def _drop_filler(line: str) -> str:
+    if _FILLER_LINE.match(line):
+        return ""
+    stripped = _FILLER_OPENER.sub("", line)
+    return stripped[:1].lower() + stripped[1:] if stripped != line and stripped[:1].isupper() else stripped
+
+
 @dataclass
 class Segment:
     kind: str  # text | sticker | reaction
@@ -75,7 +97,7 @@ def parse_reply(text: str, max_bubbles: int = 6) -> list[Segment]:
                 if emoji and not any(s.kind == "reaction" for s in segments):
                     segments.append(Segment("reaction", emoji[:8]))
                 continue
-            line = _clean_line(piece)
+            line = _drop_filler(_clean_line(piece))
             if line:
                 segments.extend(Segment("text", p) for p in _split_long(line))
     # Не больше max_bubbles текстовых пузырей (хвост склеиваем) и не больше одного стикера

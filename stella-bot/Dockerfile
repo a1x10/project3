@@ -4,9 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# Шрифт для стартового набора стикеров
+# Шрифт (стикеры, мемы, PDF), cairo (рисунки из SVG), ffmpeg (видео)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-dejavu-core ca-certificates \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core ca-certificates libcairo2 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,6 +14,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY bot ./bot
+COPY panel ./panel
 
 # Без root: агенту пишут посторонние люди
 RUN useradd --create-home --uid 1000 stella && mkdir -p /app/data && chown -R stella:stella /app

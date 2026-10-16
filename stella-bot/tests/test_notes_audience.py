@@ -47,10 +47,12 @@ def test_minimal_prompt_is_short_and_functional(settings):
 
     assert Settings().prompt_style == "minimal"
     sp = system_prompt(settings)
-    assert "ИИ-ассистент" in sp and "Алексей" in sp and "Codex" in sp and "Stells" in sp
+    assert "ИИ" in sp and "Алексей" in sp and "Codex" in sp and "Stells" in sp
     assert "<молчу>" in sp and "@все" in sp and "remember" in sp
+    assert "как живой человек в мессенджере, а не как ассистент" in sp and "Отличный вопрос" in sp  # пример «плохо»
+    assert "make_sticker" in sp and "make_presentation" in sp and "make_video" in sp
     assert "подростки" not in sp and "без мата" not in sp and "Характер:" not in sp
-    assert len(sp) < 2000
+    assert len(sp) < 4500
 
 
 async def test_prompt_lists_everyone_and_mentions_work(brain):

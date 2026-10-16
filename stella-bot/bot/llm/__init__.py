@@ -28,6 +28,8 @@ def make_backend(kind: str, model: str, settings: Settings) -> LLM:
             effort=settings.llm_effort,
             sandbox_dir=os.path.join(settings.data_dir, "agent_sandbox"),
             timeout=settings.llm_timeout,
+            max_budget_usd=settings.llm_max_call_usd,
+            web_search=settings.llm_web_search,
         )
     if kind == "messages_api":
         from .messages_api import MessagesApiLLM
@@ -44,7 +46,7 @@ class SwitchingLLM:
         self.settings = settings
         self.today = today
         self.factory = factory
-        self._cache: dict[tuple[str, str], LLM] = {}
+        self._cache: dict[tuple, LLM] = {}
 
     @property
     def name(self) -> str:
@@ -53,7 +55,9 @@ class SwitchingLLM:
 
     def _backend(self) -> tuple[LLM, str, str]:
         kind, model = self.settings.backend_for(self.today())
-        key = (kind, model)
+        # настройки можно менять на лету из панели — тогда бэкенд пересоздаётся
+        key = (kind, model, self.settings.llm_effort, self.settings.llm_web_search, self.settings.llm_timeout,
+               self.settings.llm_max_call_usd)
         if key not in self._cache:
             log.info("модель: %s / %s", kind, model)
             self._cache[key] = self.factory(kind, model, self.settings)

@@ -126,6 +126,34 @@ class _ChatActions:
         except EvolutionError:
             log.warning("не удалось отправить опрос", exc_info=True)
 
+    async def send_file(self, file: Any, caption: str = "") -> None:
+        try:
+            await self.brain.outbox.send_media(self.chat, file, caption)
+        except EvolutionError:
+            log.warning("не удалось отправить файл", exc_info=True)
+            await self.say("не получилось отправить файл 😕")
+
+    async def fetch_media(self, key: dict[str, Any], message: dict[str, Any] | None) -> bytes | None:
+        try:
+            return await self.brain.evo.media_base64(key, message)
+        except EvolutionError:
+            log.warning("не удалось скачать картинку для мема", exc_info=True)
+            return None
+
+    async def learn_sticker(self, data: bytes, mood: str) -> None:
+        try:
+            await self.brain.stickers.learn(data, mood, None)
+        except Exception:
+            log.warning("не удалось сохранить свой стикер", exc_info=True)
+
+    async def say(self, text: str) -> None:
+        from .casino import CasinoResult
+
+        try:
+            await self.brain.outbox.send_result(self.chat, CasinoResult([text]))
+        except EvolutionError:
+            pass
+
     async def delete_mine(self, *, quoted_id: str | None = None, text: str | None = None) -> list[str]:
         """Удалить своё: процитированное сообщение, сообщение с этим текстом или весь последний ответ.
         Возвращает тексты удалённого."""
@@ -188,10 +216,18 @@ class Brain:
         self.lid_chats: set[str] = set()  # группы, где участники видны по LID
         self.last_reply: dict[str, float] = {}  # чат -> когда она последний раз ответила (через модель)
         self._group_sync: dict[str, asyncio.Task] = {}  # идущие запросы участников группы
+        from .admin import AdminAuth
+
+        self.admin = AdminAuth(settings)  # вход в панель управления
+        self.started_at = time.monotonic()
+        self.tunnel_url: str | None = None  # адрес Cloudflare-туннеля к панели, если он запущен
 
     # ---------- запуск ----------
     async def start(self) -> None:
+        from .admin import load_overrides
+
         await self.db.init()
+        await load_overrides(self)  # настройки, изменённые в панели, важнее .env
         await self.stickers.init()
         await self.refresh_spend()
         saved = await self.db.kv_get("bot_jids")
@@ -201,6 +237,36 @@ class Brain:
             await self.ensure_instance()
         if self.s.initiative_per_week > 0:
             self._background.append(asyncio.create_task(self._initiative_loop()))
+        if self.admin.enabled() and self.s.tunnel_metrics_url:
+            self._background.append(asyncio.create_task(self._tunnel_loop()))
+
+    def on_settings_changed(self) -> None:
+        """Настройки поменяли в панели: пересобрать то, что от них зависит."""
+        self.system = system_prompt(self.s)
+
+    async def _tunnel_loop(self) -> None:
+        """Узнаём адрес Cloudflare-туннеля и присылаем владельцу ссылку на панель, когда он меняется."""
+        while True:
+            try:
+                await self.check_tunnel()
+            except Exception:
+                log.debug("туннель недоступен", exc_info=True)
+            await asyncio.sleep(60)
+
+    async def check_tunnel(self) -> str | None:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(self.s.tunnel_metrics_url.rstrip("/") + "/quicktunnel")
+        host = str((resp.json() or {}).get("hostname") or "").strip() if resp.status_code == 200 else ""
+        if not host:
+            return None
+        url = host if host.startswith("https://") else f"https://{host}"
+        if url != self.tunnel_url:
+            self.tunnel_url = url
+            log.info("панель доступна через туннель: %s", url)
+            link = f"{self.s.panel_public_url}#server={url}" if self.s.panel_public_url else f"{url}/panel/"
+            if self.connection_state == "open":
+                await self.notify_owner("panel_url", f"🔗 Панель Стеллы: {link}")
+        return url
 
     async def ensure_instance(self) -> None:
         """Создать инстанс (если нет) и прописать вебхук. Ошибки не валят бота — Evolution может ещё стартовать."""
@@ -595,7 +661,8 @@ class Brain:
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
                                is_admin=self.s.is_admin(phone_of(sender.jid) or sender.phone),
-                               actions=_ChatActions(self, chat), quoted_wa_id=target.quoted_id)
+                               actions=_ChatActions(self, chat), quoted_wa_id=target.quoted_id,
+                               quoted_media=self._media_source(target))
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
 
         started = time.monotonic()
@@ -657,6 +724,18 @@ class Brain:
             await self.db.update_chat(chat["id"], last_bot_at=utcnow(), last_eval_at=utcnow())
         elif segments:
             log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
+
+    def _media_source(self, inc: Incoming) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
+        """Из какого фото/стикера можно сделать мем: присланного с подписью или того, на которое ответили."""
+        if inc.kind in ("image", "sticker"):
+            return inc.raw_key, inc.raw_message
+        if inc.quoted_kind in ("image", "sticker") and inc.quoted_id:
+            from_me = self.outbox.is_ours(inc.quoted_id) or bool(inc.quoted_sender and inc.quoted_sender in self.bot.jids)
+            key: dict[str, Any] = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": from_me}
+            if inc.quoted_sender and not from_me:
+                key["participant"] = inc.quoted_sender
+            return key, inc.quoted_message
+        return None
 
     def _mark_talking(self, chat_jid: str, starred: list[Incoming]) -> None:
         now = time.monotonic()

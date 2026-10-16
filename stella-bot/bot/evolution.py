@@ -195,6 +195,18 @@ class Evolution:
         )
         return ((data or {}).get("key") or {}).get("id")
 
+    async def send_media(self, number: str, mediatype: str, media_b64: str, mimetype: str, filename: str,
+                         caption: str = "", *, delay_ms: int = 0) -> str | None:
+        """Картинка / видео / документ (base64). mediatype: image | video | document."""
+        body: dict[str, Any] = {"number": number, "mediatype": mediatype, "mimetype": mimetype,
+                                "media": media_b64, "fileName": filename}
+        if caption:
+            body["caption"] = caption[:1000]
+        if delay_ms:
+            body["delay"] = int(delay_ms)
+        data = await self._call("POST", f"/message/sendMedia/{self.instance}", json=body, timeout=delay_ms / 1000 + 180)
+        return ((data or {}).get("key") or {}).get("id")
+
     async def send_poll(self, number: str, question: str, options: list[str], *, multiple: bool = False,
                         delay_ms: int = 0) -> str | None:
         options = list(dict.fromkeys(o.strip() for o in options if o and o.strip()))[:POLL_MAX_OPTIONS]
