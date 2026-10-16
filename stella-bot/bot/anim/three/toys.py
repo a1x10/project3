@@ -246,8 +246,8 @@ def _build_penguin(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
     flip_m = k.sph(k.lv(0.55, 10))
     for s, arm in ((1, pose.arm_l), (-1, pose.arm_r)):
         a, _e = _side(arm)
-        ang = 0.1 + a * 0.8 + 0.5 * flap
-        pv = Obj(None, pos=(s * 0.53, -0.02, 0.0), rot=(0.0, 0.0, s * ang), parent=holder)
+        ang = 0.1 + a * 0.95 + 0.5 * flap
+        pv = Obj(None, pos=(s * 0.5, 0.04, 0.0), rot=(0.0, 0.0, s * ang), parent=holder)
         k.add(flip_m, Material(color, "plastic", rim=(0.5, 0.56, 0.7)), pos=(0, -0.25, 0), rot=(0.0, 0.0, s * -0.1),
               scale=(0.08, 0.28, 0.17), parent=pv, bias=0.02)
     foot_m = k.sph(k.lv(0.5, 10))
