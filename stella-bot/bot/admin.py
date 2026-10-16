@@ -240,6 +240,8 @@ EDITABLE: list[dict[str, Any]] = [
     {"key": "media_enabled", "label": "Стикеры, картинки, документы, презентации, видео", "type": "bool"},
     {"key": "media_per_day", "label": "Файлов в один чат за день", "type": "number", "min": 0, "max": 500},
     {"key": "vision_enabled", "label": "Видит фото и стикеры", "type": "bool"},
+    {"key": "video_dl_enabled", "label": "Скачивает видео по ссылкам TikTok и YouTube", "type": "bool"},
+    {"key": "video_dl_per_day", "label": "Скачанных видео в один чат за день", "type": "number", "min": 0, "max": 500},
     {"key": "documents_enabled", "label": "Читает присланные файлы (PDF, Word, Excel…)", "type": "bool"},
     {"key": "voice_enabled", "label": "Голосовые: понимает и может ответить голосом", "type": "bool"},
     {"key": "voice_stt_model", "label": "Распознавание голоса", "type": "select", "options": ["base", "small"],

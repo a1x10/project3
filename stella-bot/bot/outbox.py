@@ -137,8 +137,9 @@ class Outbox:
                                   sender_name=self.s.bot_name, kind="sticker")
         return True
 
-    async def send_media(self, chat: dict[str, Any], file: Any, caption: str = "") -> str | None:
-        """Файл, который Стелла сделала сама (MediaFile): стикер, картинка, видео, документ."""
+    async def send_media(self, chat: dict[str, Any], file: Any, caption: str = "",
+                         quoted: Incoming | None = None) -> str | None:
+        """Файл (MediaFile): стикер, картинка, видео, документ. quoted — ответом на это сообщение."""
         if not await self.limiter.acquire(chat["jid"], max_wait=120.0):
             log.warning("rate limit: пропускаю файл в %s", mask_phone(chat["jid"]))
             return None
@@ -152,8 +153,12 @@ class Outbox:
             caption = ""
         else:
             delay = self._delay(self.rng.randint(1500, 3000))
+            extra: dict[str, Any] = {}
+            if quoted is not None:
+                msg = {"conversation": quoted.text} if quoted.kind == "text" else quoted.raw_message
+                extra["quoted"] = {"key": quoted.raw_key or {"id": quoted.msg_id}, "message": msg}
             wa_id = await self.evo.send_media(chat["jid"], file.kind, b64, file.mimetype, file.filename, caption,
-                                              delay_ms=delay)
+                                              delay_ms=delay, **extra)
             label = f"[{ {'image': 'картинка', 'video': 'видео'}.get(file.kind, 'файл') }: {file.filename}]"
         self.remember_sent(wa_id)
         await self.db.add_message(chat["id"], "assistant", f"{label} {caption}".strip(), wa_message_id=wa_id,
