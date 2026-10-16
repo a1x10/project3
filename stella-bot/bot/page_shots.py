@@ -31,6 +31,8 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))  # лимит памяти бр
 from playwright.async_api import async_playwright
 
 LOCAL = ("file:", "data:", "blob:", "about:")
+# предупреждения программного WebGL — не ошибки страницы (иначе модель «чинит» то, чего нет в её коде)
+NOISE = __import__("re").compile(r"GL Driver Message|GPU stall|performance warning|fallback to software WebGL", 2)
 ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
         "--proxy-server=127.0.0.1:9", "--proxy-bypass-list=<-loopback>", "--disable-dev-shm-usage"]
 
@@ -49,7 +51,7 @@ async def open_page(p, errors, **ctx_args):
     page = await ctx.new_page()
     page.on("pageerror", lambda e: errors.append("ошибка JS: " + str(e)[:300]))
     page.on("console", lambda m: errors.append("console." + m.type + ": " + m.text[:300])
-            if m.type in ("error", "warning") else None)
+            if m.type in ("error", "warning") and not NOISE.search(m.text) else None)
     return browser, page
 """
 
@@ -140,7 +142,7 @@ A = json.load(open(assets, encoding="utf-8"))
 def say(i, info):
     out = []
     def snip(items):
-        return "; ".join("«" + s + "»" for s in items[:3])
+        return "; ".join("«" + s for s in items[:3])
     if info["outside"]:
         out.append(f"слайд {i}: текст вылезает за край слайда ({snip(info['outside'])})")
     if info["clipped"]:
@@ -156,6 +158,9 @@ def say(i, info):
     if info["words"] > 50:
         out.append(f"слайд {i}: {info['words']} слов содержания при норме ≤ 40 — вычеркни второстепенное "
                    "(подробности — в заметки), кегль не уменьшай")
+    if info["edge"]:
+        out.append(f"слайд {i}: рисунок почти у края слайда ({'; '.join(info['edge'][:2])}) — убери в поля 120 px "
+                   "или уведи за край")
     if info["svg_words"] > 30:
         out.append(f"слайд {i}: много подписей на схеме ({info['svg_words']} слов)")
     geometry = sum(len(info[k]) for k in ("outside", "clipped", "overlaps", "covered"))
@@ -202,13 +207,17 @@ DECK_FIX_CSS = (
 # Русская типографика в тексте слайдов (до съёмки — PowerPoint и PDF собираются из снимков).
 DECK_TYPO_JS = r"""() => {
   const NB = ' ';
-  const SHORT = /(^|[\s («„"])(в|к|с|у|о|а|и|я|на|не|по|за|до|из|от|об|во|со|но|ко|для|при|без|над|под|про|и|или)\s+(?=\S)/gi;
+  const SHORT = /(^|[\s («„"])(в|к|с|у|о|а|и|я|на|не|по|за|до|из|от|об|во|со|но|ко|для|при|без|над|под|про|или)\s+(?=\S)/gi;
   const fix = (t) => {
-    t = t.replace(/\s+([—–])/g, NB + '$1');
+    // тысячи — пока пробелы исходные: четырёхзначные слитно (1200), от 10 000 — неразрывный пробел (узкого U+202F
+    // в шрифтах нет)
+    t = t.replace(/(^|[^\d.,])(\d)[   ](\d{3})(?!\d|[   ]\d{3})/g, '$1$2$3');
+    t = t.replace(/(\d)[   ](?=\d{3}(?!\d))/g, '$1' + NB);
+    t = t.replace(/\s+([—–])/g, NB + '$1');  // строка не начинается с тире
     for (let k = 0; k < 2; k++) t = t.replace(SHORT, (m, a, w) => a + w + NB);
     t = t.replace(/\s+(же|ли|бы)(?=[\s.,!?…»]|$)/g, NB + '$1');
-    t = t.replace(/(\d)[  ](?=\d{3}(?!\d))/g, '$1 ');
-    t = t.replace(/(\d)\s+(?=[^\s\d])/g, '$1' + NB);
+    t = t.replace(/\s([×÷=≈+−])\s/g, NB + '$1' + NB);  // «a × b» не рвётся
+    t = t.replace(/(\d)\s+(?=[^\s\d])/g, '$1' + NB);  // число со словом или единицей
     return t;
   };
   for (const slide of document.querySelectorAll('.slide')) {
@@ -233,14 +242,17 @@ DECK_CHECK_JS = r"""(slide) => {
   const area = box.width * box.height;
   const CHROME = '.notes,[data-chrome],footer,.foot,.footer,.kicker,[aria-hidden="true"]';
   const GEOM = new Set(['line', 'path', 'polyline', 'polygon', 'circle', 'ellipse', 'rect']);
-  const res = {notes: '', small: 0, words: 0, svg_words: 0, outside: [], clipped: [], overlaps: [], covered: [], lines: []};
+  const res = {notes: '', small: 0, words: 0, svg_words: 0, outside: [], clipped: [], overlaps: [], covered: [],
+               lines: [], edge: []};
   const notes = slide.querySelector('.notes');
   res.notes = notes ? notes.textContent.trim() : '';
   const items = [];
   const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode, el = node.parentElement, text = node.textContent.replace(/\s+/g, ' ').trim();
-    if (!text || !el || el.closest('.notes,script,style')) continue;
+    if (!text || !el || el.closest('.notes,script,style,symbol,defs,clipPath,mask,pattern,marker')) continue;
+    const root = el.closest('svg');  // текст в спрайтах <symbol>/<defs> и в svg нулевого размера не виден
+    if (root) { const rr = root.getBoundingClientRect(); if (!rr.width || !rr.height) continue; }
     const st = getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || +st.opacity < 0.2) continue;
     const range = document.createRange();
@@ -254,7 +266,8 @@ DECK_CHECK_JS = r"""(slide) => {
       if (inSvg) res.svg_words += words; else res.words += words;
       if (parseFloat(st.fontSize) < 20) res.small++;
     }
-    items.push({el, text: text.slice(0, 40), rects, shown: []});
+    const src = el.tagName.toLowerCase() + (el.id ? '#' + el.id : el.classList.length ? '.' + el.classList[0] : '');
+    items.push({el, text: text.slice(0, 40) + '» в <' + src + '>', rects, shown: []});
   }
   const add = (list, s) => { if (list.length < 5 && !list.includes(s)) list.push(s); };
   const PAINT = new Set(['IMG', 'CANVAS', 'VIDEO', 'image', 'text', 'use', ...GEOM]);
@@ -293,7 +306,7 @@ DECK_CHECK_JS = r"""(slide) => {
         }
         if (hit) break;
       }
-      if (hit) add(res.overlaps, items[a].text + '» и «' + items[b].text);
+      if (hit) add(res.overlaps, items[a].text + ' и «' + items[b].text);
     }
   }
   const style = document.createElement('style');
@@ -329,7 +342,37 @@ DECK_CHECK_JS = r"""(slide) => {
     if (covered) add(res.covered, it.text);
     if (under) add(res.lines, it.text);
   }
+  // толстые обводки (кольца, дуги, линии) поверх текста: точки вдоль фигуры, внутри строки текста — кто сверху
+  for (const g of slide.querySelectorAll('circle,ellipse,path,line,polyline,polygon,rect')) {
+    if (g.closest('symbol,defs,clipPath,mask,pattern,marker')) continue;
+    const gs = getComputedStyle(g), sw = parseFloat(gs.strokeWidth) || 0;
+    if (gs.stroke === 'none' || sw < 4 || +gs.strokeOpacity < 0.35 || +gs.opacity < 0.35) continue;
+    let len = 0;
+    try { len = g.getTotalLength(); } catch (e) { continue; }
+    const m = g.getScreenCTM();
+    if (!len || !m) continue;
+    for (let k = 0; k < 160; k++) {
+      const pt = g.getPointAtLength(len * k / 160), x = m.a * pt.x + m.c * pt.y + m.e, y = m.b * pt.x + m.d * pt.y + m.f;
+      for (const it of items) {
+        if (res.covered.includes(it.text) || related(g, it.el)) continue;
+        const pad = sw / 2;
+        if (!it.shown.some(r => x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad)) continue;
+        const stack = document.elementsFromPoint(x, y);
+        const gi = stack.indexOf(g), ti = stack.findIndex(e => e === it.el || it.el.contains(e));
+        if (gi >= 0 && (ti < 0 || gi < ti)) add(res.covered, it.text);
+      }
+    }
+  }
   style.remove();
+  // рисунок почти у края слайда (8–100 px) — ни в полях, ни за краем
+  for (const e of slide.querySelectorAll('svg,img,canvas')) {
+    if (e.closest(CHROME) || e.closest('symbol,defs') || (e.tagName === 'svg' && e.parentElement.closest('svg'))) continue;
+    const r = e.getBoundingClientRect(), a = r.width * r.height;
+    if (a < area * 0.02 || a > area * 0.6) continue;
+    const gaps = [r.left - box.left, box.right - r.right, r.top - box.top, box.bottom - r.bottom];
+    if (gaps.some(gp => gp < 0)) continue;  // уходит за край — так задумано
+    if (gaps.some(gp => gp >= 8 && gp < 100)) add(res.edge, '<' + e.tagName.toLowerCase() + '> ' + Math.round(Math.min(...gaps)) + ' px');
+  }
   return res;
 }"""
 

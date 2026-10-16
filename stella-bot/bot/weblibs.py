@@ -111,43 +111,59 @@ _ALIASES: dict[tuple[str, str], tuple[Asset, ...]] = {
 _LATIN = ("U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, "
           "U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD")
 _CYRILLIC = "U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116"
+# расширенная латиница — в ней знак рубля ₽; встраивается, только если такие символы есть на странице
+_LATIN_EXT = ("U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, "
+              "U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF")
+_NEEDS_EXT = re.compile("[\u0100-\u02ff\u1d00-\u1dbf\u1e00-\u1eff\u20a0-\u20c0\u2113\u2c60-\u2c7f\ua720-\ua7ff]")
 
 
-def _var(slug: str, cyr: str, lat: str) -> tuple[Asset, Asset]:
+def _var(slug: str, cyr: str, lat: str, ext: str) -> tuple[Asset, Asset, Asset]:
     base = f"@fontsource-variable/{slug}@5.3.0/files/{slug}"
     return (_a(f"{slug}-cyrillic.woff2", f"{base}-cyrillic-wght-normal.woff2", cyr),
-            _a(f"{slug}-latin.woff2", f"{base}-latin-wght-normal.woff2", lat))
+            _a(f"{slug}-latin.woff2", f"{base}-latin-wght-normal.woff2", lat),
+            _a(f"{slug}-latin-ext.woff2", f"{base}-latin-ext-wght-normal.woff2", ext))
 
 
-def _static(slug: str, cyr: str, lat: str) -> tuple[Asset, Asset]:
+def _static(slug: str, cyr: str, lat: str, ext: str) -> tuple[Asset, Asset, Asset]:
     base = f"@fontsource/{slug}@5.3.0/files/{slug}"
     return (_a(f"{slug}-cyrillic.woff2", f"{base}-cyrillic-400-normal.woff2", cyr),
-            _a(f"{slug}-latin.woff2", f"{base}-latin-400-normal.woff2", lat))
+            _a(f"{slug}-latin.woff2", f"{base}-latin-400-normal.woff2", lat),
+            _a(f"{slug}-latin-ext.woff2", f"{base}-latin-ext-400-normal.woff2", ext))
 
 
-FONTS: dict[str, tuple[str, tuple[Asset, Asset]]] = {
+FONTS: dict[str, tuple[str, tuple[Asset, ...]]] = {
     "Unbounded": ("200 900", _var("unbounded", "e30bf6a6063b6a47232bbd657e24c7cf4fdaf76fc2c50d92d9ee63e2ad2087cf",
-                                  "22f9b928aa3928a896340422b54d690fbb5875c30eae4c106f029c61f2289fd6")),
+                                  "22f9b928aa3928a896340422b54d690fbb5875c30eae4c106f029c61f2289fd6",
+                                  "845e1c9fe2e9a7bfbedfeb447fbeba4bc1b5ecd6246277910ccdaad35a7a532c")),
     "Inter": ("100 900", _var("inter", "71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075",
-                              "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62")),
+                              "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+                              "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956")),
     "Montserrat": ("100 900", _var("montserrat", "a187b077090fe8ae3fd2d7496aabbeae604819c718a282e0afc92df72b450766",
-                                   "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879")),
+                                   "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879",
+                                   "54d9a78b7ff60b689ad9f3017ffac8547b5d871afec733f6c1c3ae36577ee504")),
     "Rubik": ("300 900", _var("rubik", "bdb2b33ab916e9e7b42edb61f8aea5f5dd83ad773d6ee4e9b55665daf8954ce8",
-                              "691cd1d9b4c0cdf31a1dcf04259c86f92c85e69f6622abab7964d81e36890691")),
+                              "691cd1d9b4c0cdf31a1dcf04259c86f92c85e69f6622abab7964d81e36890691",
+                              "09472f217ad1ebb61a7669cf532f9f2f80685e07652ee862fde9a79665aef479")),
     "Playfair Display": ("400 900", _var(
         "playfair-display", "c108681cba6a9820bff52f4a1a4a1d9edf356b347bd79b7c61e916028e8a8b54",
-        "e0c764a8e9e1cce92163c55bac4b2ad6cd4cf8c696ce2289ab5c41565e65b7e2")),
+        "e0c764a8e9e1cce92163c55bac4b2ad6cd4cf8c696ce2289ab5c41565e65b7e2",
+        "42898ad49a6b23f32b109243e1df596edf831015ed685f429e4dafbb181d599d")),
     "Comfortaa": ("300 700", _var("comfortaa", "a0fee7d935b77461c002a314cfa398f1d32bf5aedb98063884239400e4663eaf",
-                                  "408f20ae9895ceefa460a383d76497a91abc469e3d00b49f080efc7f4b12c60e")),
+                                  "408f20ae9895ceefa460a383d76497a91abc469e3d00b49f080efc7f4b12c60e",
+                                  "1afa0e5e08c2e1acac2e9bac891e2f4f439e92d296528fc6e87b843a2e3c652a")),
     "Caveat": ("400 700", _var("caveat", "6276a2f5a5554c16b422f00f114773a8d4013a81df18a338f7c216d80103c9af",
-                               "891951df5e8b5b0f0bc760d31375405e795c666b5add70437de12d4a6482b33f")),
+                               "891951df5e8b5b0f0bc760d31375405e795c666b5add70437de12d4a6482b33f",
+                               "f626b95c1efa95cf6b7c9b043d3bbe8862b6abbe5f55a082102f33f7de2fd4f9")),
     "Russo One": ("400", _static("russo-one", "ae0eadf1b084ac50848e104486c8e929b4b702d8103a1ee064aa3d223dca7ed5",
-                                 "8a6b754cd3bc5ad2bf0d0308bbd9c1b7f6b4ecdd915982ffedf50ed18fed4a46")),
+                                 "8a6b754cd3bc5ad2bf0d0308bbd9c1b7f6b4ecdd915982ffedf50ed18fed4a46",
+                                 "de16bb1d4eded3c541fd42f5ca251e71799d388745ecb0c388c227a504d6e64f")),
     "Press Start 2P": ("400", _static(
         "press-start-2p", "c2a20dcb95ec8f4d1e8db6bd01dfedb669913f5e691e7baa3981b2d88a3b9ae3",
-        "afec86997fdaf54af1f59358fa2c1e2a0f1d04146edad18e5cd141d0384a7548")),
+        "afec86997fdaf54af1f59358fa2c1e2a0f1d04146edad18e5cd141d0384a7548",
+        "3c7df3a15e173b8fa04ec9191171e72c314ddbac1b395e2b2e2092bb4f47cc8c")),
     "Lobster": ("400", _static("lobster", "738fd39c3bd07649e0bceb56a847ce07c736799e7212c6570c3644d68188012b",
-                               "aed68c73817364906ff95d97be87246d106bd38d5e4397e4866ec831ee22f7ba")),
+                               "aed68c73817364906ff95d97be87246d106bd38d5e4397e4866ec831ee22f7ba",
+                               "51a1f5b28cbdc742ecaeeabf5fed74d0446b0b1cebdd6bbf6cd93ecc36b16629")),
 }
 _FONT_RE = {fam: re.compile(r"(?<![\w-])" + re.escape(fam).replace(r"\ ", r"\s+") + r"(?![\w-])", re.IGNORECASE)
             for fam in FONTS}
@@ -290,9 +306,10 @@ def embed(html: str, folder: str | None = None) -> Embedded:
     html = _FONT_IMPORT.sub("", html)
     faces: list[str] = []
     font_src: list[str] = []
+    ranges = (_CYRILLIC, _LATIN, _LATIN_EXT) if _NEEDS_EXT.search(html) else (_CYRILLIC, _LATIN)
     for family in families:
-        weights, (cyr, lat) = FONTS[family]
-        for asset, rng in ((cyr, _CYRILLIC), (lat, _LATIN)):
+        weights, assets = FONTS[family]
+        for asset, rng in zip(assets, ranges):
             data = _read(asset, folder)
             if data is not None:
                 url = "data:font/woff2;base64," + base64.b64encode(data).decode()
