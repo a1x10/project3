@@ -278,6 +278,33 @@ def _blit(ctx: cairo.Context, sp: cairo.ImageSurface, x: float, y: float, alpha:
     ctx.restore()
 
 
+def _glow_sprite(s: _S, key: object, color: RGB, r: float, alpha: float, sy: float = 1.0) -> cairo.ImageSurface:
+    """Свечение _glow готовым спрайтом (2r × 2r·sy): для живых деталей, которые двигаются каждый кадр."""
+    hgt = max(2.0, 2 * r * sy)
+
+    def draw(c: cairo.Context) -> None:
+        _glow(c, r, hgt / 2, r, color, alpha, sy=sy)
+
+    return _sprite(s, ("glow", key, round(r, 2)), 2 * r, hgt, draw)
+
+
+def _beam(ctx: cairo.Context, x: float, y: float, a: float, ln: float, w0: float, w1: float, col: RGB,
+          alpha: float) -> None:
+    """Луч прожектора: два вложенных конуса сплошной заливкой (градиент на всю высоту кадра слишком дорог)."""
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate(a)
+    for k, (wk, lk) in enumerate(((1.0, 1.0), (0.55, 0.8))):
+        ctx.move_to(-w0 * wk, 0)
+        ctx.line_to(w0 * wk, 0)
+        ctx.line_to(w1 * wk, ln * lk)
+        ctx.line_to(-w1 * wk, ln * lk)
+        ctx.close_path()
+        ctx.set_source_rgba(*col, alpha * (1.0 if k == 0 else 0.8))
+        ctx.fill()
+    ctx.restore()
+
+
 def _fill_edge(ctx: cairo.Context, fill, edge: RGB | None, lw: float) -> None:
     if isinstance(fill, cairo.Pattern):
         ctx.set_source(fill)
@@ -1218,17 +1245,14 @@ def _forest(s: _S) -> list[_Layer]:
                             _lobes(r, r.randint(5, 7)), depth=0.15)
         for x in _xs(s, rg, "mb", (90, 160)):
             _bush(ctx, s, x, s.gy + 14 * u, r.uniform(24, 36) * u, hx("#3c9c4c"), 0.1, berries=r.random() < 0.4)
-
-    def mid_anim(ctx, s, t, rg):
         if s.time in ("day", "sunset") and not s.overcast:
-            # косые лучи света между деревьями (аддитивно, медленно дышат)
-            u = s.u
+            # косые лучи света между деревьями
             col = (1.0, 0.95, 0.7) if s.time == "day" else (1.0, 0.7, 0.45)
             ctx.save()
             ctx.set_operator(cairo.OPERATOR_ADD)
             for i in range(4):
-                x = s.w * (0.12 + 0.25 * i) + 30 * u * math.sin(t * 0.2 + i)
-                a = 0.07 + 0.04 * math.sin(t * 0.7 + i * 1.9)
+                x = s.w * (0.12 + 0.25 * i)
+                a = 0.08 + 0.03 * (i % 2)
                 ctx.move_to(x - 30 * u, -40 * u)
                 ctx.line_to(x + 40 * u, -40 * u)
                 ctx.line_to(x + 160 * u, s.gy + 20 * u)
@@ -1237,6 +1261,20 @@ def _forest(s: _S) -> list[_Layer]:
                 ctx.set_source(_grad(-40 * u, s.gy, (0, (*col, a)), (1, (*col, 0.0))))
                 ctx.fill()
             ctx.restore()
+
+    def mid_anim(ctx, s, t, rg):
+        if s.time in ("day", "sunset") and not s.overcast:
+            # пылинки в лучах света медленно плывут
+            u = s.u
+            for i in range(14):
+                f = hash01(s.seed, "mote", i)
+                x = s.w * (0.12 + 0.25 * (i % 4)) + 60 * u * f + 40 * u * noise1(t * 0.2 + i, s.seed)
+                y = s.gy * (0.25 + 0.7 * hash01(s.seed, "motey", i)) + 30 * u * noise1(t * 0.15 + i * 3, s.seed + 1)
+                k = 0.5 + 0.5 * math.sin(t * 1.3 + i * 2.0)
+                ctx.new_sub_path()
+                ctx.arc(x, y, (1.2 + 1.2 * k) * u, 0, 2 * math.pi)
+            ctx.set_source_rgba(1.0, 0.97, 0.8, 0.7)
+            ctx.fill()
 
     def ground(ctx, s, rg):
         x0, y0, x1, y1 = rg
@@ -1481,23 +1519,39 @@ def _beach(s: _S) -> list[_Layer]:
 
     def palm_anim(ctx, s, t, rg):
         for i, (fx, sz, lean) in enumerate(((0.1, 1.0, 1), (0.92, 0.85, -1))):
-            _palm(ctx, s, s.w * fx, s.gy + 30 * s.u, 300 * s.u * sz, lean, t + i * 1.3)
+            _palm(ctx, s, s.w * fx, s.gy + 30 * s.u, 300 * s.u * sz, lean, t + i * 1.3, key=i)
 
     return [_Layer(0.1, sky, sky_anim), _Layer(0.3, sea, sea_anim, sea_y / s.h - 0.02, 9),
             _Layer(1.0, ground, ground_anim, HORIZON["beach"] - 0.02, 9), _Layer(1.0, None, palm_anim)]
 
 
-def _palm(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int, t: float) -> None:
-    u = s.u
-    lw = 2.2 * u
-    trunk = s.lit("#c8925a", 0, False)
+def _palm(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int, t: float, key: object = 0) -> None:
+    """Пальма: ствол — неподвижный спрайт, крона — спрайт, который покачивается вокруг макушки."""
     tx, ty = x + lean * size * 0.28, gy - size
-    # ствол из сегментов
+    pad = size * 0.1
+    trunk_w, trunk_h = size * 0.5, size * 1.1
+    tox, toy = trunk_w / 2 - lean * size * 0.14, trunk_h - pad * 0.5
+
+    def draw_trunk(c: cairo.Context) -> None:
+        _palm_trunk(c, s, tox, toy, size, lean)
+
+    crown_w, crown_h = size * 1.5, size * 0.95
+    cox, coy = crown_w / 2, crown_h * 0.45
+
+    def draw_crown(c: cairo.Context) -> None:
+        _palm_crown(c, s, cox, coy, size)
+
+    trunk = _sprite(s, ("palm_trunk", key, round(size, 2), lean), trunk_w, trunk_h, draw_trunk)
+    crown = _sprite(s, ("palm_crown", key, round(size, 2)), crown_w, crown_h, draw_crown)
+    _blit(ctx, trunk, x, gy, px=tox, py=toy)
+    _blit(ctx, crown, tx, ty, rot=0.045 * math.sin(t * 1.3) + 0.02 * math.sin(t * 3.1), px=cox, py=coy)
+
+
+def _palm_trunk(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int) -> None:
+    lw = 2.2 * s.u
+    trunk = s.lit("#c8925a", 0, False)
     segs = 7
-    pts = []
-    for i in range(segs + 1):
-        f = i / segs
-        pts.append((x + lean * size * 0.28 * f * f, gy - size * f))
+    pts = [(x + lean * size * 0.28 * (i / segs) ** 2, gy - size * i / segs) for i in range(segs + 1)]
     for i in range(segs):
         (ax, ay), (bx, by) = pts[i], pts[i + 1]
         wd = size * (0.065 - 0.02 * i / segs)
@@ -1507,9 +1561,13 @@ def _palm(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int
         ctx.line_to(ax + wd, ay)
         ctx.close_path()
         _fill_edge(ctx, trunk if i % 2 else mul(trunk, 0.9), s.edge(trunk), lw * 0.8)
+
+
+def _palm_crown(ctx: cairo.Context, s: _S, tx: float, ty: float, size: float) -> None:
+    lw = 2.2 * s.u
     leaf = s.lit("#3fae55", 0, False)
-    for j, base_a in enumerate((-2.9, -2.35, -1.75, -1.2, -0.6, -0.15)):
-        a = base_a + 0.06 * math.sin(t * 1.4 + j * 0.9)
+    trunk = s.lit("#c8925a", 0, False)
+    for j, a in enumerate((-2.9, -2.35, -1.75, -1.2, -0.6, -0.15)):
         ln = size * (0.55 + 0.1 * math.sin(j * 2.3))
         droop = size * 0.22
         ex, ey = tx + math.cos(a) * ln, ty + math.sin(a) * ln * 0.55 + droop
@@ -2150,24 +2208,15 @@ def _stage(s: _S) -> list[_Layer]:
         ctx.save()
         ctx.set_operator(cairo.OPERATOR_ADD)
         cols = ((1.0, 0.3, 0.7), (0.4, 0.6, 1.0), (1.0, 0.8, 0.3))
-        k_amp = 0.42 if s.dark else 0.32
+        k_amp = 0.2 if s.dark else 0.15
+        ln = s.gy * 1.25
         for k, (fx, col) in enumerate(zip((0.18, 0.5, 0.82), cols, strict=True)):
             x0 = s.w * fx
             a = 0.33 * math.sin(t * 1.1 + k * 2.1)
-            ln = s.gy * 1.25
-            ctx.save()
-            ctx.translate(x0, -30 * u)
-            ctx.rotate(a)
-            ctx.move_to(-10 * u, 0)
-            ctx.line_to(10 * u, 0)
-            ctx.line_to(150 * u, ln)
-            ctx.line_to(-150 * u, ln)
-            ctx.close_path()
-            ctx.set_source(_grad(0, ln, (0, (*col, k_amp)), (1, (*col, 0.02))))
-            ctx.fill()
-            ctx.restore()
+            _beam(ctx, x0, -30 * u, a, ln, 10 * u, 150 * u, col, k_amp)
             fx_ = x0 - math.sin(a) * (ln - 30 * u) * 0.95
-            _glow(ctx, fx_, s.gy + (s.h - s.gy) * 0.45, 170 * u, col, 0.32, sy=0.22)
+            pool = _glow_sprite(s, ("pool", k), col, 170 * u, 0.32, 0.22)
+            _blit(ctx, pool, fx_, s.gy + (s.h - s.gy) * 0.45, px=pool.get_width() / 2, py=pool.get_height() / 2)
         ctx.restore()
         # зрители — силуэты голов покачиваются у нижнего края
         x0r, _, x1r, _ = rg
@@ -2662,18 +2711,13 @@ def _underwater(s: _S) -> list[_Layer]:
         ctx.close_path()
         ctx.set_source_rgba(0.7, 1.0, 1.0, 0.25)
         ctx.fill()
-        # лучи света качаются
-        ld = 0.11 if not s.dark else 0.05
-        for i in range(6):
-            bx = x0 + (x1 - x0) * (i + 0.5) / 6 + 40 * u * math.sin(t * 0.3 + i)
+        # лучи света качаются (сплошные полупрозрачные конусы — градиент на всю высоту слишком дорог)
+        ld = 0.06 if not s.dark else 0.03
+        for i in range(5):
+            bx = x0 + (x1 - x0) * (i + 0.5) / 5 + 40 * u * math.sin(t * 0.3 + i)
             a = ld * (0.6 + 0.4 * math.sin(t * 0.8 + i * 1.7))
-            ctx.move_to(bx - 20 * u, -10 * u)
-            ctx.line_to(bx + 26 * u, -10 * u)
-            ctx.line_to(bx + 120 * u + 30 * u * math.sin(t * 0.4 + i), s.gy)
-            ctx.line_to(bx + 40 * u + 30 * u * math.sin(t * 0.4 + i), s.gy)
-            ctx.close_path()
-            ctx.set_source(_grad(0, s.gy, (0, (0.8, 1.0, 1.0, a)), (1, (0.8, 1.0, 1.0, 0.0))))
-            ctx.fill()
+            _beam(ctx, bx, -10 * u, -0.22 + 0.05 * math.sin(t * 0.4 + i), s.gy * 1.1, 22 * u, 70 * u,
+                  (0.8, 1.0, 1.0), a)
         ctx.restore()
         # стайка рыбок-силуэтов
         span = x1 - x0 + 300 * u
@@ -2838,7 +2882,7 @@ def _seaweed(ctx: cairo.Context, s: _S, x: float, gy: float, hgt: float, t: floa
     for p in reversed(right):
         ctx.line_to(*p)
     ctx.close_path()
-    _fill_edge(ctx, _grad(gy - hgt, gy, (0, lighten(col, 0.2)), (1, mul(col, 0.8))), s.edge(col), 1.6 * u)
+    _fill_edge(ctx, col, s.edge(col), 1.6 * u)
 
 
 def _fish(ctx: cairo.Context, s: _S, x: float, y: float, size: float, col: RGB, d: int, t: float) -> None:
@@ -2897,13 +2941,19 @@ def _sky(s: _S) -> list[_Layer]:
     def mid_anim(ctx, s, t, rg):
         x0, _, x1, _ = rg
         u = s.u
-        r = s.r("midclouds")
         span = x1 - x0 + 400 * u
-        for i in range(int(3 * (x1 - x0) / s.w) + 1):
-            sz = r.uniform(60, 90) * u
-            y = s.h * r.uniform(0.35, 0.55) + 6 * u * math.sin(t * 0.6 + i)
-            x = x0 - 200 * u + (r.random() * span + t * r.uniform(8, 16) * u) % span
-            _cloud(ctx, s, x, y, sz, _cloud_puffs(r, 5))
+        clouds = s.memo.get("midclouds")
+        if clouds is None:
+            r = s.r("midclouds")
+            clouds = []
+            for i in range(int(3 * (x1 - x0) / s.w) + 1):
+                sz = r.uniform(60, 90) * u
+                clouds.append((s.h * r.uniform(0.35, 0.55), r.random() * span, r.uniform(8, 16) * u,
+                               _cloud_sprite(s, ("mid", i), sz, _cloud_puffs(r, 5))))
+            s.memo["midclouds"] = clouds
+        for i, (y, base, sp, (sprite, ox, oy)) in enumerate(clouds):
+            x = x0 - 200 * u + (base + t * sp) % span
+            _blit(ctx, sprite, x, y + 6 * u * math.sin(t * 0.6 + i), px=ox, py=oy)
 
     def ground(ctx, s, rg):
         x0, y0, x1, y1 = rg
