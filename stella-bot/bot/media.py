@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import Any
@@ -104,19 +107,43 @@ def sanitize_svg(svg: str) -> str:
     return svg
 
 
-def render_svg(svg: str, width: int, height: int) -> Image.Image:
-    import cairosvg
+# Рисуем в отдельном процессе с лимитом времени и памяти: хитрый SVG (вложенные <use>, узоры, маски)
+# может раздуться в миллионы элементов — тогда процесс просто убивается, а бот работает дальше.
+_SVG_WORKER = r"""
+import json, resource, sys
+resource.setrlimit(resource.RLIMIT_AS, (1536 * 1024 * 1024, 1536 * 1024 * 1024))
+resource.setrlimit(resource.RLIMIT_CPU, (15, 15))
+import cairosvg
+req = json.loads(sys.stdin.buffer.read())
+# unsafe=False: без внешних файлов и XML-сущностей (cairosvg сам берёт безопасный загрузчик)
+png = cairosvg.svg2png(bytestring=req["svg"].encode("utf-8"), output_width=req["w"], output_height=req["h"],
+                       unsafe=False)
+sys.stdout.buffer.write(png)
+"""
+SVG_RENDER_TIMEOUT = 20
+MAX_RENDER_PIXELS = 2200 * 2200
 
+
+def render_svg(svg: str, width: int, height: int) -> Image.Image:
     clean = sanitize_svg(svg)
+    if width * height > MAX_RENDER_PIXELS:
+        raise MediaError("слишком большой размер картинки")
     try:
-        # unsafe=False: без внешних файлов и XML-сущностей (cairosvg сам берёт безопасный загрузчик)
-        png = cairosvg.svg2png(bytestring=clean.encode("utf-8"), output_width=width, output_height=height,
-                               unsafe=False)
-    except MediaError:
-        raise
-    except Exception as exc:  # битый SVG — пусть модель поправит
-        raise MediaError(f"не получилось нарисовать SVG: {str(exc)[:200]}") from exc
-    return Image.open(io.BytesIO(png)).convert("RGBA")
+        proc = subprocess.run([sys.executable, "-I", "-c", _SVG_WORKER],
+                              input=json.dumps({"svg": clean, "w": width, "h": height}).encode(),
+                              capture_output=True, timeout=SVG_RENDER_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError("рисунок слишком сложный, нарисуй проще") from exc
+    if proc.returncode != 0 or not proc.stdout:
+        err = (proc.stderr or b"").decode(errors="replace").strip().splitlines()
+        reason = err[-1][:200] if err else f"код {proc.returncode}"
+        if proc.returncode < 0 or "MemoryError" in reason:
+            reason = "слишком сложный рисунок"
+        raise MediaError(f"не получилось нарисовать SVG: {reason}")
+    try:
+        return Image.open(io.BytesIO(proc.stdout)).convert("RGBA")
+    except Exception as exc:
+        raise MediaError("не получилось нарисовать SVG") from exc
 
 
 # ---------- стикеры и картинки ----------
@@ -460,7 +487,10 @@ async def video(scenes: Any, shape: str = "square", timeout: float = 180) -> Med
     if sum(secs) > VIDEO_MAX_SECONDS:
         k = VIDEO_MAX_SECONDS / sum(secs)
         secs = [s * k for s in secs]
-    cards = await asyncio.to_thread(lambda: [_scene_card(s, size) for s in scenes])
+    try:
+        cards = await asyncio.wait_for(asyncio.to_thread(lambda: [_scene_card(s, size) for s in scenes]), timeout)
+    except asyncio.TimeoutError as exc:
+        raise MediaError("рисунки для видео слишком сложные, сделай проще") from exc
 
     with tempfile.TemporaryDirectory(prefix="stella-video-") as tmp:
         out = os.path.join(tmp, "video.mp4")

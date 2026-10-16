@@ -196,7 +196,8 @@ class Brain:
         # память — своим отдельным слотом, чтобы фоновая выжимка не задерживала живые ответы
         self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
-        self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin)
+        self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
+                                 panel_unlock=self.unlock_panel)
         self.system = system_prompt(settings)
         self.stems = name_stems(settings.bot_name)
         self.bot = BotIdentity(set())
@@ -221,6 +222,7 @@ class Brain:
         self.admin = AdminAuth(settings)  # вход в панель управления
         self.started_at = time.monotonic()
         self.tunnel_url: str | None = None  # адрес Cloudflare-туннеля к панели, если он запущен
+        self._owner_queue: list[str] = []  # важные сообщения владельцу, пока WhatsApp не на связи
 
     # ---------- запуск ----------
     async def start(self) -> None:
@@ -228,6 +230,14 @@ class Brain:
 
         await self.db.init()
         await load_overrides(self)  # настройки, изменённые в панели, важнее .env
+        from .admin import LOCKS_KV
+
+        saved_locks = await self.db.kv_get(LOCKS_KV)
+        if saved_locks and saved_locks[0]:
+            try:
+                self.admin.import_locks(json.loads(saved_locks[0]))  # блокировки подбора переживают перезапуск
+            except ValueError:
+                pass
         await self.stickers.init()
         await self.refresh_spend()
         saved = await self.db.kv_get("bot_jids")
@@ -990,6 +1000,8 @@ class Brain:
         if state == "open":
             if prev != "open":
                 self.spawn(self.learn_own_jids())
+                if self._owner_queue:
+                    self.spawn(self._flush_owner_queue())
             if self.disconnected_at and time.monotonic() - self.disconnected_at > 120:
                 minutes = int((time.monotonic() - self.disconnected_at) / 60)
                 await self.notify_owner("conn", f"✅ Стелла снова в сети (не было ~{minutes} мин)")
@@ -1035,6 +1047,34 @@ class Brain:
                 self.outbox.remember_sent(await self.evo.send_text(self.s.owner_phone, text))
             except EvolutionError:
                 log.warning("не смогла написать владельцу", exc_info=True)
+
+    async def unlock_panel(self) -> None:
+        """«стелла разблокируй панель» от владельца: снять блокировки подбора паролей."""
+        from .admin import LOCKS_KV
+
+        self.admin.reset_locks()
+        await self.db.kv_set(LOCKS_KV, "")
+        log.warning("владелец снял блокировки входа в панель")
+
+    async def tell_owner(self, text: str) -> None:
+        """Важное владельцу (вход в панель, подбор паролей): без ограничения частоты; если WhatsApp сейчас
+        не на связи — сообщение подождёт и уйдёт после переподключения."""
+        await self.alert(text)
+        if not self.s.owner_phone:
+            return
+        if self.connection_state != "open":
+            self._owner_queue = (self._owner_queue + [text])[-20:]
+            return
+        try:
+            self.outbox.remember_sent(await self.evo.send_text(self.s.owner_phone, text))
+        except EvolutionError:
+            log.warning("не смогла написать владельцу", exc_info=True)
+            self._owner_queue = (self._owner_queue + [text])[-20:]
+
+    async def _flush_owner_queue(self) -> None:
+        queue, self._owner_queue = self._owner_queue, []
+        for text in queue:
+            await self.tell_owner(text)
 
 
 __all__ = ["Brain", "ChatRunner", "Segment"]

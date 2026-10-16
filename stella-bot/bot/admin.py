@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
@@ -66,9 +67,12 @@ class LoginLocked(Exception):
 
 
 class AdminAuth:
-    def __init__(self, settings: Settings, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, settings: Settings, clock: Callable[[], float] = time.time):
         self.s = settings
-        self.clock = clock
+        self.clock = clock  # обычное время (не monotonic): блокировки сохраняются и переживают перезапуск
+        # попытки входа идут строго по одной: иначе пачка параллельных запросов успела бы проскочить
+        # проверку блокировки, пока каждая «ждёт свою секунду»
+        self.login_lock = asyncio.Lock()
         self.sessions: dict[str, Session] = {}  # sha256(token) -> сессия
         self._fails: dict[str, deque[float]] = {}
         self._locks: dict[str, float] = {}  # ip -> до какого момента заблокирован
@@ -83,9 +87,11 @@ class AdminAuth:
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
-    def locked(self, ip: str) -> LoginLocked | None:
+    def locked(self, ip: str, local: bool = False) -> LoginLocked | None:
+        """local — вход с самого сервера (SSH-туннель): общий замок на него не действует, иначе
+        любой знающий адрес туннеля мог бы навсегда запереть владельца."""
         now = self.clock()
-        if now < self._global_lock_until:
+        if now < self._global_lock_until and not local:
             return LoginLocked(self._global_lock_until - now, "global")
         until = self._locks.get(ip, 0.0)
         if now < until:
@@ -101,6 +107,7 @@ class AdminAuth:
     def register_failure(self, ip: str) -> str | None:
         """Возвращает 'ip' / 'global', если из-за этой ошибки включилась блокировка."""
         now = self.clock()
+        self._prune(now)
         q = self._fails.setdefault(ip, deque())
         q.append(now)
         while q and now - q[0] > IP_WINDOW:
@@ -119,6 +126,41 @@ class AdminAuth:
             q.clear()
             return "ip"
         return None
+
+    def _prune(self, now: float) -> None:
+        """Не копим память на каждый адрес, с которого когда-то ошиблись."""
+        if len(self._fails) + len(self._locks) < 2000:
+            return
+        for ip in list(self._fails):
+            q = self._fails[ip]
+            if not q or now - q[-1] > IP_WINDOW:
+                del self._fails[ip]
+        for ip in list(self._locks):
+            if self._locks[ip] < now - IP_LOCK_MAX:
+                self._locks.pop(ip, None)
+                self._lock_count.pop(ip, None)
+
+    def reset_locks(self) -> None:
+        """Снять все блокировки входа (команда владельца «стелла разблокируй панель»)."""
+        self._fails.clear()
+        self._locks.clear()
+        self._lock_count.clear()
+        self._global_fails.clear()
+        self._global_lock_until = 0.0
+
+    def export_locks(self) -> dict[str, Any]:
+        now = self.clock()
+        return {"global_until": self._global_lock_until if self._global_lock_until > now else 0,
+                "ip": {ip: [until, self._lock_count.get(ip, 1)] for ip, until in self._locks.items() if until > now}}
+
+    def import_locks(self, data: dict[str, Any]) -> None:
+        try:
+            self._global_lock_until = float(data.get("global_until") or 0)
+            for ip, (until, count) in (data.get("ip") or {}).items():
+                self._locks[str(ip)] = float(until)
+                self._lock_count[str(ip)] = int(count)
+        except (TypeError, ValueError, AttributeError):
+            pass
 
     def new_session(self, ip: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -285,6 +327,22 @@ class ProfileBody(BaseModel):
     fields: dict[str, str]
 
 
+LOCKS_KV = "panel_locks"
+
+
+def is_local_request(request: Request) -> bool:
+    """Запрос с самого сервера (docker-сеть / localhost / SSH-туннель), а не через Cloudflare или nginx."""
+    if request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") \
+            or request.headers.get("x-forwarded-for"):
+        return False
+    host = request.client.host if request.client else ""
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_private or addr.is_loopback
+    except ValueError:
+        return host in ("testclient", "localhost")
+
+
 def client_ip(request: Request) -> str:
     """Через Cloudflare — CF-Connecting-IP (его ставит Cloudflare), через nginx — X-Real-IP."""
     for header in ("cf-connecting-ip", "x-real-ip"):
@@ -329,23 +387,28 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         if not auth.enabled():
             return JSONResponse({"error": "disabled"}, status_code=503)
         ip = client_ip(request)
-        lock = auth.locked(ip)
-        if lock:
-            return JSONResponse({"error": "locked", "retry_after": lock.retry_after}, status_code=429,
-                                headers={"Retry-After": str(lock.retry_after)})
-        await asyncio.sleep(LOGIN_DELAY)
-        if auth.check_passwords(body.p1, body.p2):
+        local = is_local_request(request)
+        async with auth.login_lock:  # по одной попытке за раз — параллельными запросами замок не обойти
+            lock = auth.locked(ip, local)
+            if lock:
+                return JSONResponse({"error": "locked", "retry_after": lock.retry_after}, status_code=429,
+                                    headers={"Retry-After": str(lock.retry_after)})
+            await asyncio.sleep(LOGIN_DELAY)
+            ok = auth.check_passwords(body.p1, body.p2)
+            locked = None if ok else auth.register_failure(ip)
+        if ok:
             token = auth.new_session(ip)
             log.warning("вход в панель (%s)", ip)
-            brain.spawn(brain.notify_owner("panel_login", f"🔐 Вход в панель Стеллы (адрес {ip}). "
-                                                          "Если это не ты — смени PANEL_PASSWORD_1/2 в .env."))
+            # о каждом входе — отдельно (без «не чаще раза в 10 минут»), при обрыве WhatsApp — позже
+            brain.spawn(brain.tell_owner(f"🔐 Вход в панель Стеллы (адрес {ip}). Если это не ты — смени "
+                                         "PANEL_PASSWORD_1/2 в .env и перезапусти бота: все входы сбросятся."))
             return JSONResponse({"token": token, "expires_in": int(brain.s.panel_session_hours * 3600)})
-        locked = auth.register_failure(ip)
         log.warning("неверный вход в панель (%s)%s", ip, f", блокировка: {locked}" if locked else "")
         if locked:
+            await brain.db.kv_set(LOCKS_KV, json.dumps(auth.export_locks()))
             what = "для всех на час" if locked == "global" else f"для адреса {ip}"
-            brain.spawn(brain.notify_owner(f"panel_lock_{locked}",
-                                           f"⚠️ Кто-то подбирает пароли к панели Стеллы — вход заблокирован {what}."))
+            brain.spawn(brain.tell_owner(f"⚠️ Кто-то подбирает пароли к панели Стеллы — вход заблокирован {what}. "
+                                         "Снять блокировку: напиши Стелле «стелла разблокируй панель»."))
         return JSONResponse({"error": "wrong"}, status_code=401)
 
     @router.post("/logout")
