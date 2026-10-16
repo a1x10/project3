@@ -80,6 +80,42 @@ async def test_documents_presentation_spreadsheet(brain):
     assert files[0]["filename"] == "Доклад.pdf"
 
 
+
+def test_html_page_is_a_closed_box():
+    page = media.html_page("Игра <3", '<meta http-equiv="refresh" content="0;url=http://evil"><base href="http://evil/">'
+                                      '<h1>Привет</h1><script>document.body.style.background="pink"</script>')
+    text = page.data.decode("utf-8")
+    assert page.kind == "document" and page.mimetype == "text/html" and page.filename == "Игра 3.html"
+    assert text.startswith("<!doctype html>")
+    assert text.index("Content-Security-Policy") < text.index("<script>")  # наш CSP раньше любого скрипта
+    assert "connect-src 'none'" in text and "form-action 'none'" in text
+    assert "refresh" not in text and "<base" not in text and "http://evil" not in text
+    assert "<title>Игра &lt;3</title>" in text and "<body><h1>Привет</h1>" in text  # кусок обёрнут в страницу
+
+
+def test_html_full_document_keeps_its_own_head():
+    doc = '<!DOCTYPE html><html lang="ru"><head><title>Своя</title><script>x=1</script></head><body>hi</body></html>'
+    text = media.html_page("т", doc).data.decode()
+    assert text.count("<!doctype html>") + text.count("<!DOCTYPE") == 1
+    assert "<title>Своя</title>" in text and "<title>т</title>" not in text
+    assert text.index("Content-Security-Policy") < text.index("<script>")
+    with pytest.raises(media.MediaError):
+        media.html_page("т", "   ")
+    with pytest.raises(media.MediaError):
+        media.html_page("т", "x" * (media.MAX_HTML_CHARS + 1))
+
+
+async def test_she_sends_html_page(brain):
+    async def make(tools, prompt):
+        await tools["make_html"].handler({"title": "Викторина", "html": "<h1>Вопрос 1</h1>", "caption": "играй"})
+        return "держи викторину"
+
+    brain.llm.queue = [make]
+    await feed(brain, upsert("стелла сделай викторину html"))
+    files = [m for m in brain.evo.sent if m["type"] == "media"]
+    assert [m["type"] for m in brain.evo.sent] == ["text", "media"]
+    assert files[0]["mimetype"] == "text/html" and files[0]["filename"] == "Викторина.html"
+
 async def test_meme_from_quoted_sticker(brain):
     brain.evo.media = media.sticker_from_svg(SMILE).data
 

@@ -127,6 +127,11 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                          args.get("slides"))
         return await budget.queue(file, str(args.get("caption") or "")[:500])
 
+    async def make_html(args: dict[str, Any]) -> str:
+        await budget.take()
+        file = await run(media.html_page, str(args.get("title") or "страница"), str(args.get("html") or ""))
+        return await budget.queue(file, str(args.get("caption") or "")[:500])
+
     async def make_spreadsheet(args: dict[str, Any]) -> str:
         await budget.take()
         file = await run(media.spreadsheet, str(args.get("title") or ""), args.get("sheets"))
@@ -345,6 +350,19 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 "caption": {"type": "string"},
             }, "required": ["title", "slides"]},
             make_presentation,
+        ),
+        ToolSpec(
+            "make_html",
+            "Сделать HTML-страницу и прислать файлом .html (открывается в браузере телефона): мини-игру, "
+            "викторину, открытку с анимацией, шпаргалку, таймер, калькулятор, сайт-визитку. Всё в одном файле: "
+            "CSS в <style>, JS в <script>. Интернета у страницы нет — внешние картинки, шрифты, скрипты, запросы и "
+            "отправка форм не работают; рисуй CSS/SVG, картинки — data:. Делай красиво и под телефон.",
+            {"type": "object", "properties": {
+                "title": {"type": "string", "description": "название (и имя файла)"},
+                "html": {"type": "string", "description": "полный код страницы"},
+                "caption": {"type": "string"},
+            }, "required": ["title", "html"]},
+            make_html,
         ),
         ToolSpec(
             "make_spreadsheet",

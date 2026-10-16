@@ -42,6 +42,7 @@ MIME = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "html": "text/html",
 }
 
 
@@ -434,6 +435,43 @@ def presentation(title: str, subtitle: str, slides: Any) -> MediaFile:
     buf = io.BytesIO()
     prs.save(buf)
     return MediaFile("document", buf.getvalue(), MIME["pptx"], _safe_name(title, "pptx"))
+
+
+# ---------- HTML-страница ----------
+MAX_HTML_CHARS = 400_000
+# Страница работает сама по себе (CSS, JS, анимации, кнопки), но ничего не грузит из интернета и не шлёт туда сама:
+# ни запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов. Переход по ссылке CSP в <meta> не запретит —
+# это как обычная ссылка в сообщении
+HTML_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; "
+            "font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; frame-src 'none'; "
+            "base-uri 'none'")
+_META_REFRESH = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?\s*refresh[^>]*>", re.IGNORECASE)
+_BASE_TAG = re.compile(r"<base\b[^>]*>", re.IGNORECASE)
+
+
+def html_page(title: str, html: str) -> MediaFile:
+    """HTML-страница от модели -> файл .html: целый документ, кодировка UTF-8 и жёсткий CSP первым в <head>."""
+    if not isinstance(html, str) or not html.strip():
+        raise MediaError("html: нужен код страницы")
+    if len(html) > MAX_HTML_CHARS:
+        raise MediaError("страница слишком большая, сделай проще")
+    body = _META_REFRESH.sub("", html)
+    body = _BASE_TAG.sub("", body)
+    body = re.sub(r"^\s*<!doctype[^>]*>", "", body, flags=re.IGNORECASE)
+    csp = f'<meta http-equiv="Content-Security-Policy" content="{HTML_CSP}">'
+    # наш CSP — самым первым в документе: до любого скрипта страницы (браузер сам поместит его в <head>)
+    head = ('<meta charset="utf-8">' + csp + '<meta name="viewport" content="width=device-width, initial-scale=1">')
+    low = body.lower()
+    if "<html" not in low and "<body" not in low:  # просто кусок разметки — оборачиваем в страницу
+        body = f"<title>{_esc(title)}</title><body>{body}</body>"
+    elif "<title" not in low:
+        head += f"<title>{_esc(title)}</title>"
+    body = "<!doctype html>\n" + head + "\n" + body
+    return MediaFile("document", body.encode("utf-8"), MIME["html"], _safe_name(title, "html"))
+
+
+def _esc(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")[:120]
 
 
 def spreadsheet(title: str, sheets: Any) -> MediaFile:
