@@ -73,3 +73,33 @@ async def test_read_chat_history_finds_old_talk(brain):
     brain.llm.queue = [look]
     await feed(brain, upsert("стелла что там было про экскурсию"))
     assert brain.evo.texts()[-1] == "в пятницу экскурсия"
+
+
+def docx_bytes(text: str) -> bytes:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph(text)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+async def test_she_reads_a_document_sent_to_her(brain):
+    brain.evo.media = docx_bytes("Контрольная по физике в пятницу, тема — сила тяжести")
+    brain.llm.queue = ["в пятницу контрольная по физике"]
+    await feed(brain, upsert(message={"documentMessage": {"caption": "стелла что тут", "fileName": "план.docx",
+                                                           "mimetype": "application/vnd.openxmlformats-officedocument."
+                                                                       "wordprocessingml.document"}},
+                             message_type="documentMessage"))
+    prompt = brain.llm.calls[0]["prompt"]
+    assert "содержимое файла «план.docx»" in prompt and "сила тяжести" in prompt
+    assert "read_link" in brain.llm.calls[0]["tools"]
+
+
+async def test_reply_to_a_document_and_bad_file(brain):
+    brain.evo.media = b"\x00\x01garbage"
+    brain.llm.queue = ["не открылся"]
+    await feed(brain, upsert("стелла прочитай", quoted={"stanzaId": "DOC1", "participant": PETYA, "quotedMessage": {
+        "documentMessage": {"fileName": "x.pdf", "mimetype": "application/pdf"}}}))
+    assert "[файл «x.pdf»:" in brain.llm.calls[0]["prompt"]

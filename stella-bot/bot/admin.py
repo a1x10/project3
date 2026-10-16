@@ -240,6 +240,7 @@ EDITABLE: list[dict[str, Any]] = [
     {"key": "media_enabled", "label": "Стикеры, картинки, документы, презентации, видео", "type": "bool"},
     {"key": "media_per_day", "label": "Файлов в один чат за день", "type": "number", "min": 0, "max": 500},
     {"key": "vision_enabled", "label": "Видит фото и стикеры", "type": "bool"},
+    {"key": "documents_enabled", "label": "Читает присланные файлы (PDF, Word, Excel…)", "type": "bool"},
     {"key": "sandbox_enabled", "label": "Запуск кода по твоей просьбе (песочница Anthropic)", "type": "bool",
      "hint": "только для владельца (OWNER_PHONE); код выполняется не на сервере"},
     {"key": "chime_default", "label": "Как часто сама встревает в разговор", "type": "select",

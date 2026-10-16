@@ -551,7 +551,7 @@ _OLD_OFFICE_MSG = "это старый формат — пересохрани �
 
 def _kind(data: bytes, filename: str, mime: str) -> str:
     """Что за файл: сначала по содержимому, потом по расширению и типу из WhatsApp."""
-    if b"%PDF-" in data[:1024]:
+    if data[:1024].lstrip()[:5] == b"%PDF-":
         return "pdf"
     if data[:4] == b"PK\x03\x04":
         kind = _zip_kind(data)
@@ -850,6 +850,10 @@ async def fetch_url(url: str, *, timeout: float = 12, max_bytes: int = 3_000_000
         reason = "сайт слишком долго не отвечает"
     except httpx.ConnectError as exc:
         reason = "у сайта неправильный сертификат" if "CERTIFICATE" in str(exc).upper() else "сайт недоступен"
+    except (httpx.InvalidURL, httpx.RemoteProtocolError) as exc:
+        # httpx сам разбирает Location даже без перехода по нему — на кривом адресе падает здесь
+        bad_location = isinstance(exc, httpx.InvalidURL) or "location" in str(exc).lower()
+        reason = "сайт переадресует на кривую ссылку" if bad_location else "сайт ответил что-то непонятное"
     except httpx.HTTPError as exc:
         log.info("ссылка %r не открылась: %s: %s", url, type(exc).__name__, exc)
         reason = "сайт оборвал соединение"
