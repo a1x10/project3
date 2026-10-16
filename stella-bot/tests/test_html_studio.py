@@ -742,3 +742,95 @@ async def test_budget_rejected_by_api_falls_back(settings, monkeypatch):
     assert "task_budget" in first["output_config"] and "task_budget" not in second["output_config"]
     assert calls[0].headers.get("anthropic-beta") == "task-budgets-2026-03-13"
     assert "task-budgets" not in (calls[1].headers.get("anthropic-beta") or "")
+
+
+# ---------- после ревью кода ----------
+def test_google_fonts_import_with_semicolons_is_removed_cleanly(tmp_path):
+    css = ("<style>@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Inter:"
+           "wght@400;600&display=swap');\n:root{--bg:#0b0b1a;--accent:#ff3d7f}\nh1{font-family:'Unbounded'}</style>")
+    text = media.html_page("t", css, libs_dir=str(tmp_path)).data.decode()
+    assert "googleapis" not in text and "700;900" not in text and ":root{--bg:#0b0b1a;--accent:#ff3d7f}" in text
+    plain = media.html_page("t", '<style>@import "https://fonts.googleapis.com/css?family=Lobster";\nb{x:1}</style>',
+                            libs_dir=str(tmp_path)).data.decode()
+    assert "googleapis" not in plain and "b{x:1}" in plain
+
+
+def test_extract_html_keeps_pages_with_their_own_code_fences():
+    cheat = ('<!doctype html><html><body><h1>Markdown</h1><pre>```\n# Заголовок\n```</pre>'
+             '<pre>```js\n<div>const</div> x = 1;\n```</pre></body></html>')
+    assert html_studio.extract_html(cheat) == cheat
+    assert html_studio.extract_html(f"Вот:\n```html\n{cheat}\n```\nготово") == cheat
+    fragment = "<style>b{}</style><div>```\nкод\n```</div>"
+    assert html_studio.extract_html(f"```html\n{fragment}\n```") == fragment
+
+
+def test_regexes_stay_fast_on_hostile_html(tmp_path):
+    import time
+
+    for junk in ("<link " * 60000, "<meta " * 60000, "@import url(" * 30000, "<script " * 60000, "<base " * 60000):
+        started = time.monotonic()
+        media.html_page("t", junk[: media.MAX_HTML_CHARS], libs_dir=str(tmp_path))
+        assert time.monotonic() - started < 2, junk[:10]
+
+
+def test_resource_hints_are_stripped_and_dns_prefetch_off(tmp_path):
+    text = media.html_page("t", '<link rel="dns-prefetch" href="//evil.example"><link rel=preconnect href="https://x">'
+                                '<link rel="icon" href="data:,"><h1>x</h1>', libs_dir=str(tmp_path)).data.decode()
+    assert "evil.example" not in text and "preconnect" not in text and 'rel="icon"' in text
+    assert 'http-equiv="x-dns-prefetch-control" content="off"' in text and "webrtc 'block'" in text
+
+
+def test_adaptive_thinking_only_for_models_that_take_it():
+    yes = ("claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-4-8",
+           "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5-1", "claude-mythos-5")
+    no = ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-sonnet-4-20250514",
+          "claude-opus-4-1", "some-other-model")
+    assert all(html_studio._thinking(m) for m in yes), [m for m in yes if not html_studio._thinking(m)]
+    assert not any(html_studio._thinking(m) for m in no), [m for m in no if html_studio._thinking(m)]
+
+
+def test_browser_folder_is_passed_to_the_worker(monkeypatch, tmp_path):
+    from bot import page_shots
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".cache" / "ms-playwright" / "chromium_headless_shell-1").mkdir(parents=True)
+    env = page_shots._env("/tmp/worker-home")
+    assert env["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / ".cache" / "ms-playwright") and env["HOME"] != str(tmp_path)
+    assert "ANTHROPIC_API_KEY" not in env
+
+
+def test_partial_cost_of_a_cut_stream_is_estimated():
+    import time
+
+    stream = SimpleNamespace(current_message_snapshot=SimpleNamespace(usage=SimpleNamespace(input_tokens=4000)))
+    base = {"model": "claude-opus-5-5", "max_tokens": 128000}
+    cost = html_studio._partial_cost(base, {"stream": stream, "started": time.monotonic() - 100})
+    assert 0.15 < cost < 0.2  # ~8000 токенов за 100 с + вход
+    capped = html_studio._partial_cost(base, {"stream": stream, "started": time.monotonic() - 1e5})
+    assert capped == pytest.approx((4000 * 4 + 128000 * 20) / 1e6)
+    assert html_studio._partial_cost(base, {}) == 0.0
+
+
+def test_polish_that_adds_sideways_scroll_is_rejected():
+    from bot.page_shots import Shots
+
+    assert html_studio._worse(Shots(overflow=True), Shots(overflow=False), deck=False)
+    assert not html_studio._worse(Shots(overflow=True), Shots(overflow=True), deck=False)
+
+
+async def test_budget_counts_pages_still_in_progress(brain, studio, monkeypatch):
+    errors = []
+
+    async def grab(tools, prompt):
+        try:
+            await tools["make_html"].handler({"title": "x", "brief": BRIEF})
+        except ToolError as exc:
+            errors.append(str(exc))
+        return "ок"
+
+    await brain.db.kv_add(f"spend:{date.today().isoformat()}", brain.s.daily_budget_usd - 1.0)
+    monkeypatch.setattr(html_studio.STATE, "reserved_usd", 1.5)  # ещё делается страница на ~1.5 $
+    brain.llm.queue = [grab]
+    await feed(brain, upsert("стелла сайт"))
+    assert errors and "бюджет" in errors[0] and studio["n"] == 0

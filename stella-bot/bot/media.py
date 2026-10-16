@@ -468,20 +468,23 @@ def deck_files(title: str, slides: list[Any]) -> tuple[MediaFile, MediaFile]:
 MAX_HTML_CHARS = 400_000
 PHOTO_MARK = "__PHOTO__"  # сюда подставляется фото из чата (data:)
 PAGE_PHOTO_SIDE = 1280
-_META_REFRESH = re.compile(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?\s*refresh[^>]*>", re.IGNORECASE)
-_BASE_TAG = re.compile(r"<base\b[^>]*>", re.IGNORECASE)
+_META_TAG = re.compile(r"<meta\b[^>]{0,2000}>", re.IGNORECASE)  # ограничено: HTML большой, без квадратичных повторов
+_META_DROP = re.compile(r"http-equiv\s*=\s*[\"']?\s*(?:refresh|x-dns-prefetch-control)", re.IGNORECASE)
+_BASE_TAG = re.compile(r"<base\b[^>]{0,2000}>", re.IGNORECASE)
 
 
 def html_csp(script_src: list[str] = (), font_src: list[str] = ()) -> str:
-    """Страница работает сама по себе (CSS, JS, анимации, 3D, кнопки), но ничего не грузит из интернета и не шлёт
-    туда сама: ни запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов — кроме библиотек, которые не
-    удалось встроить (точные адреса на CDN с проверкой хеша). Переход по ссылке CSP в <meta> не запретит —
-    это как обычная ссылка в сообщении. eval разрешён: он не даёт выхода в сеть (калькуляторы им пользуются)."""
+    """Страница работает сама по себе (CSS, JS, анимации, 3D, кнопки), но ничего не грузит из интернета: ни
+    запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов — кроме библиотек, которые не удалось
+    встроить (точные адреса на CDN с проверкой хеша). Что CSP в <meta> закрыть не может (принято сознательно):
+    переход по ссылке или location= из скрипта — как обычная ссылка в сообщении; WebRTC (webrtc 'block'
+    понимают не все браузеры). dns-prefetch/preconnect вырезаются отдельно. eval разрешён: выхода в сеть он не
+    даёт, а калькуляторы им пользуются."""
     scripts = " ".join(["'unsafe-inline'", "'unsafe-eval'", *script_src])
     fonts = " ".join(["data:", *font_src])
     return (f"default-src 'none'; script-src {scripts}; style-src 'unsafe-inline'; img-src data: blob:; "
             f"font-src {fonts}; media-src data: blob:; worker-src blob:; connect-src 'none'; form-action 'none'; "
-            "frame-src 'none'; base-uri 'none'")
+            "frame-src 'none'; base-uri 'none'; webrtc 'block'")
 
 
 HTML_CSP = html_csp()
@@ -518,7 +521,7 @@ def html_page(title: str, html: str, photo: tuple[str, bytes] | None = None, lib
         raise MediaError("html: нужен код страницы")
     if len(html) > MAX_HTML_CHARS:
         raise MediaError("страница слишком большая, сделай проще")
-    body = _META_REFRESH.sub("", html)
+    body = _META_TAG.sub(lambda m: "" if _META_DROP.search(m.group(0)) else m.group(0), html)
     body = _BASE_TAG.sub("", body)
     body = re.sub(r"^\s*<!doctype[^>]*>", "", body, flags=re.IGNORECASE)
     if photo is not None and PHOTO_MARK in body:
@@ -531,7 +534,8 @@ def html_page(title: str, html: str, photo: tuple[str, bytes] | None = None, lib
     body = emb.html
     csp = f'<meta http-equiv="Content-Security-Policy" content="{html_csp(emb.script_src, emb.font_src)}">'
     # наш CSP — самым первым в документе: до любого скрипта страницы (браузер сам поместит его в <head>)
-    head = ('<meta charset="utf-8">' + csp + '<meta name="viewport" content="width=device-width, initial-scale=1">')
+    head = ('<meta charset="utf-8">' + csp + '<meta http-equiv="x-dns-prefetch-control" content="off">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">')
     if wrap:
         body = f"<title>{_esc(title)}</title><body>{body}</body>"
     elif not has_title:

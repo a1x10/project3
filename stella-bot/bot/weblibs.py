@@ -152,10 +152,16 @@ _FONT_RE = {fam: re.compile(r"(?<![\w-])" + re.escape(fam).replace(r"\ ", r"\s+"
 ALL: tuple[Asset, ...] = tuple(dict.fromkeys(
     [a for group in LIBS.values() for a in group] + [a for _, pair in FONTS.values() for a in pair]))
 
-_SCRIPT_TAG = re.compile(r"<script\b([^>]*)>\s*</script\s*>", re.IGNORECASE)
+# Все повторы ограничены по длине: HTML от модели — до 400 тыс. знаков, а регулярка с неограниченным [^>]* на
+# неудачном вводе работает квадратично и держит GIL — замер всего бота, а не только этой страницы
+_SCRIPT_TAG = re.compile(r"<script\b([^>]{0,2000})>\s{0,200}</script\s{0,20}>", re.IGNORECASE)
 _SRC = re.compile(r"""\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
-_FONT_LINK = re.compile(r"<link\b[^>]*fonts\.(?:googleapis|gstatic)\.com[^>]*>", re.IGNORECASE)
-_FONT_IMPORT = re.compile(r"@import\s+(?:url\()?\s*['\"]?[^;'\")]*fonts\.googleapis\.com[^;]*;", re.IGNORECASE)
+_LINK_TAG = re.compile(r"<link\b[^>]{0,2000}>", re.IGNORECASE)
+_DROP_LINK = re.compile(r"fonts\.(?:googleapis|gstatic)\.com|\brel\s*=\s*[\"']?\s*(?:dns-prefetch|preconnect|prefetch|preload|"
+                        r"prerender|modulepreload)", re.IGNORECASE)
+# @import url('https://fonts.googleapis.com/css2?family=X:wght@400;700&display=swap'); — в адресе бывают «;»
+_FONT_IMPORT = re.compile(r"""@import\s{1,20}(?:url\(\s{0,20})?(["']?)[^"'()\s]{0,2000}fonts\.googleapis\.com[^"'()\s]{0,2000}\1"""
+                          r"""\s{0,20}\)?[^;{}\n]{0,200};?""", re.IGNORECASE)
 
 
 def cache_dir() -> str:
@@ -276,7 +282,8 @@ def embed(html: str, folder: str | None = None) -> Embedded:
         return "\n".join(out)
 
     html = _SCRIPT_TAG.sub(script, html)
-    html = _FONT_LINK.sub("", html)
+    # шрифты Google не нужны (встроим свои), а dns-prefetch/preconnect — запросы в обход CSP
+    html = _LINK_TAG.sub(lambda m: "" if _DROP_LINK.search(m.group(0)) else m.group(0), html)
     html = _FONT_IMPORT.sub("", html)
     faces: list[str] = []
     font_src: list[str] = []

@@ -76,7 +76,7 @@ async def main():
         await page.wait_for_timeout(2500)
         await shot("2", "через 4 секунды")
         target = None
-        for sel in ("button", "[role=button]", "a[href^='#']", ".btn", "[onclick]"):
+        for sel in ("[data-primary]", "button", "[role=button]", "a[href^='#']", ".btn", "[onclick]"):
             for el in await page.query_selector_all(sel):
                 if await el.is_visible():
                     target = el
@@ -94,6 +94,7 @@ async def main():
             label = "после тапа по экрану"
         await page.wait_for_timeout(2500)
         await shot("3", label)
+        await page.keyboard.press("Escape")  # открылось окно — закрыть, чтобы увидеть прокрутку страницы
         await page.mouse.wheel(0, 844)
         await page.wait_for_timeout(1500)
         await shot("4", "после прокрутки вниз на экран")
@@ -200,25 +201,29 @@ class ShotsError(Exception):
     pass
 
 
+def _browsers_root() -> str:
+    return os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.expanduser("~/.cache/ms-playwright")
+
+
 def available() -> bool:
     """Есть Playwright и скачанный им Chromium."""
     try:
         import playwright  # noqa: F401
     except ImportError:
         return False
-    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.expanduser("~/.cache/ms-playwright")
     try:
-        return any(name.startswith("chromium") for name in os.listdir(root))
+        return any(name.startswith("chromium") for name in os.listdir(_browsers_root()))
     except OSError:
         return False
 
 
 def _env(home: str) -> dict[str, str]:
-    """Только нужное браузеру — ключей и паролей из .env у него нет."""
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home, "LANG": "C.UTF-8"}
-    for key in ("PLAYWRIGHT_BROWSERS_PATH", "FONTCONFIG_PATH"):
-        if os.environ.get(key):
-            env[key] = os.environ[key]
+    """Только нужное браузеру — ключей и паролей из .env у него нет. HOME у фотографа свой (временный), поэтому
+    папку с браузерами передаём явно — ту же, где её нашёл available()."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home, "LANG": "C.UTF-8",
+           "PLAYWRIGHT_BROWSERS_PATH": _browsers_root()}
+    if os.environ.get("FONTCONFIG_PATH"):
+        env["FONTCONFIG_PATH"] = os.environ["FONTCONFIG_PATH"]
     return env
 
 
