@@ -140,6 +140,8 @@ class Settings:
     telegram_owner_id: str = field(default_factory=lambda: _str("TELEGRAM_OWNER_ID"))  # твой id (@userinfobot)
     # какие группы Telegram (id вида -100…); пусто — любые, куда добавили бота
     telegram_allowed_chats: list[str] = field(default_factory=lambda: _list("TELEGRAM_ALLOWED_CHATS"))
+    # бота в Telegram может найти кто угодно по @username: в личке у каждого (кроме владельца) — лимит в сутки
+    telegram_dm_per_day: int = field(default_factory=lambda: _int("TELEGRAM_DM_PER_DAY", 40))
 
     # --- «как человек» ---
     reply_delay_min: float = field(default_factory=lambda: _float("REPLY_DELAY_MIN", 2))

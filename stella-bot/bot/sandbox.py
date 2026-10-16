@@ -50,7 +50,7 @@ class SandboxResult:
 def is_owner(settings: Any, ctx: "ToolContext") -> bool:
     from .util import phone_of
 
-    if ctx.sender is None or not getattr(settings, "owner_phone", ""):
+    if ctx.sender is None:
         return False
     phone = phone_of(ctx.sender.jid) or ctx.sender.phone or ""
     is_owner_fn = getattr(settings, "is_owner", None)

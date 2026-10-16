@@ -77,6 +77,7 @@ class Incoming:
     raw_message: dict[str, Any] = field(default_factory=dict)
     bot_jid: str | None = None  # поле sender в вебхуке = номер самого бота
     lid_addressing: bool = False  # группа в режиме LID (участники видны по LID, а не по номерам)
+    quoted_name: str | None = None  # имя автора процитированного (известно в Telegram)
 
     @property
     def is_dm(self) -> bool:
