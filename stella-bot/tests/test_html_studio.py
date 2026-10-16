@@ -911,3 +911,60 @@ def test_ruble_sign_brings_the_latin_ext_font_subset(tmp_path, monkeypatch):
     assert marker in with_rub.data.decode() and "U+20AD-20C0" in with_rub.data.decode()
     assert marker not in plain.data.decode()
     assert all(len(assets) == 3 for _, assets in weblibs.FONTS.values())
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_typography_keeps_code_and_does_not_glue_numbers():
+    from playwright.async_api import async_playwright
+
+    from bot import page_shots
+
+    html = ('<section class="slide"><pre id="code">x = 5\nfor i in range(3):\n    print(i)</pre>'
+            '<p id="t">iPhone 6 128 ГБ и Model 3 500 км, 12 742 км — это много</p>'
+            '<p id="poem" style="white-space:pre-line">ул. Тверская, 13\nТелефон</p></section>')
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.set_content(html)
+        await page.evaluate(page_shots.DECK_TYPO_JS)
+        code = await page.evaluate("document.getElementById('code').textContent")
+        text = await page.evaluate("document.getElementById('t').textContent")
+        poem = await page.evaluate("document.getElementById('poem').textContent")
+        await browser.close()
+    assert code == "x = 5\nfor i in range(3):\n    print(i)" and poem == "ул. Тверская, 13\nТелефон"
+    assert "6 128" in text and "3 500" in text and "6128" not in text and "12 742" in text
+    assert " — это" in text
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_dense_headings_and_big_numbers_are_not_overlaps():
+    from bot import page_shots
+
+    deck = """<style>body{margin:0}.slide{width:1920px;height:1080px;position:relative;overflow:hidden;background:#111;
+color:#fff;font-family:'Unbounded'}</style><section class="slide">
+<h1 style="position:absolute;left:120px;top:150px;font-size:96px;line-height:1.05;margin:0">
+<span style="display:block">Марс потерял</span><span style="display:block;color:#f84">свой океан</span></h1>
+<div style="position:absolute;left:120px;top:520px"><div style="font-size:180px;line-height:1">24 ч</div>
+<div style="font-size:32px;font-family:'Inter'">сутки на Марсе длиннее земных</div></div></section>"""
+    shots = await page_shots.shoot_deck(media.html_page("t", deck).data)
+    assert shots.geometry == 0 and not shots.problems, shots.problems
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_hanging_final_hook_and_inner_scroll_do_not_break_shots():
+    import time
+
+    from bot import page_shots
+
+    game = media.html_page("g", """<style>body{margin:0;height:100vh;overflow:hidden}</style>
+<button data-primary>Играть</button><button data-pause>II</button>
+<script>window.__studioEnd = () => new Promise(() => {});</script>""").data
+    started = time.monotonic()
+    labels = [label for label, _ in (await page_shots.shoot(game)).images]
+    assert time.monotonic() - started < 60 and "пауза (нажата кнопка data-pause)" in labels
+    assert labels[-1].startswith("маленький телефон")
+    site = media.html_page("s", """<style>html,body{margin:0;height:100%;overflow:hidden}
+main{height:100dvh;overflow-y:auto}section{height:900px}</style><main><section>один</section>
+<section>два</section></main>""").data
+    labels = [label for label, _ in (await page_shots.shoot(site)).images]
+    assert "после прокрутки вниз на экран" in labels

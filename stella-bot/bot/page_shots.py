@@ -26,7 +26,7 @@ DECK_PREVIEW = (1600, 900)  # столько видит модель при до
 
 # Общее начало процессов-фотографов: браузер без сети (прокси в никуда + только локальные адреса).
 _BOOT = r"""
-import asyncio, json, resource, sys
+import asyncio, json, os, resource, sys
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))  # лимит памяти браузеру не ставим: он резервирует гигабайты адресов
 from playwright.async_api import async_playwright
 
@@ -34,7 +34,8 @@ LOCAL = ("file:", "data:", "blob:", "about:")
 # предупреждения программного WebGL — не ошибки страницы (иначе модель «чинит» то, чего нет в её коде)
 NOISE = __import__("re").compile(r"GL Driver Message|GPU stall|performance warning|fallback to software WebGL", 2)
 ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
-        "--proxy-server=127.0.0.1:9", "--proxy-bypass-list=<-loopback>", "--disable-dev-shm-usage"]
+        "--proxy-server=127.0.0.1:9", "--proxy-bypass-list=<-loopback>", "--disable-dev-shm-usage",
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
 
 
 async def open_page(p, errors, **ctx_args):
@@ -59,72 +60,105 @@ async def open_page(p, errors, **ctx_args):
 # прокрутки (у игры в один экран — пауза и финал) и на маленьком телефоне 360×640. В stdout — одна строка JSON.
 _WORKER = _BOOT + r"""
 page_path, out_dir = sys.argv[1], sys.argv[2]
+SCROLLED = "window.scrollY > 0 || [...document.querySelectorAll('*')].some(e => e.scrollTop > 0)"
+TO_TOP = "window.scrollTo(0, 0); document.querySelectorAll('*').forEach(e => { if (e.scrollTop) e.scrollTop = 0; })"
+END = "() => { try { const r = window.__studioEnd(); if (r && typeof r.then === 'function') r.then(null, () => {}); } catch (e) {} }"
 
 
 async def main():
-    errors, shots = [], []
+    errors, shots, info = [], [], {"w": 0, "h": 0}
     async with async_playwright() as p:
         browser, page = await open_page(p, errors, viewport={"width": 390, "height": 844}, device_scale_factor=2,
                                         is_mobile=True, has_touch=True)
 
         async def shot(name, label):
             path = f"{out_dir}/{name}.jpg"
-            await page.screenshot(path=path, type="jpeg", quality=80)
+            await page.screenshot(path=path, type="jpeg", quality=80, timeout=15000)
             shots.append([label, path])
 
-        await page.goto("file://" + page_path, wait_until="load", timeout=30000)
-        await page.wait_for_timeout(1500)
-        await shot("1", "сразу после открытия (1.5 с)")
-        await page.wait_for_timeout(2500)
-        await shot("2", "через 4 секунды")
-        target = None
-        for sel in ("[data-primary]", "button", "[role=button]", "a[href^='#']", ".btn", "[onclick]"):
-            for el in await page.query_selector_all(sel):
-                if await el.is_visible():
-                    target = el
-                    break
-            if target:
-                break
-        try:
-            if target is not None:
-                await target.tap(timeout=3000)
-            else:
-                await page.touchscreen.tap(195, 560)
-            label = "через 2.5 с после нажатия на главную кнопку" if target is not None else "через 2.5 с после тапа"
-        except Exception:
+        async def step(coro, seconds):  # необязательный шаг: завис или упал — пропускаем, снятое не теряем
+            try:
+                await asyncio.wait_for(coro, seconds)
+            except Exception as exc:
+                errors.append(f"снимок: шаг пропущен ({type(exc).__name__})")
+
+        async def tap_primary():
+            for sel in ("[data-primary]", "button", "[role=button]", "a[href^='#']", ".btn", "[onclick]"):
+                for el in await page.query_selector_all(sel):
+                    if await el.is_visible():
+                        try:
+                            await el.tap(timeout=3000)
+                            return True
+                        except Exception:
+                            break
             await page.touchscreen.tap(195, 560)
-            label = "через 2.5 с после тапа по экрану"
-        await page.wait_for_timeout(2500)
-        await shot("3", label)
-        info = await page.evaluate("({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})")
-        await page.keyboard.press("Escape")  # открылось окно — закрыть, чтобы увидеть прокрутку страницы
-        await page.mouse.wheel(0, 844)
-        await page.wait_for_timeout(1500)
-        if await page.evaluate("window.scrollY") > 0:
-            await shot("4", "после прокрутки вниз на экран")
-        else:  # приложение в один экран (игра): вместо повтора — пауза и финал, если страница их даёт
-            pause = await page.query_selector("[data-pause]")
-            if pause is not None and await pause.is_visible():
-                try:
-                    await pause.tap(timeout=2000)
-                    await page.wait_for_timeout(800)
-                    await shot("4", "пауза (нажата кнопка data-pause)")
-                    await pause.tap(timeout=2000)
-                except Exception:
-                    pass
-            if await page.evaluate("typeof window.__studioEnd === 'function'"):
-                try:
-                    await page.evaluate("window.__studioEnd()")
-                    await page.wait_for_timeout(1200)
-                    await shot("5", "экран финала (window.__studioEnd)")
-                except Exception:
-                    pass
-        await page.set_viewport_size({"width": 360, "height": 640})
-        await page.evaluate("window.scrollTo(0, 0)")
-        await page.wait_for_timeout(800)
-        await shot("6", "маленький телефон 360×640, то же состояние, верх страницы")
-        await browser.close()
-    print(json.dumps({"shots": shots, "errors": errors[:30], "scroll_width": info["w"], "height": info["h"]}))
+            return False
+
+        async def fresh_play():  # заново открыть и нажать главную кнопку: пауза и финал — из чистого состояния
+            await page.goto("file://" + page_path, wait_until="load", timeout=30000)
+            await page.wait_for_timeout(1200)
+            await tap_primary()
+            await page.wait_for_timeout(1500)
+
+        try:
+            await page.goto("file://" + page_path, wait_until="load", timeout=30000)
+            await page.wait_for_timeout(1500)
+            await shot("1", "сразу после открытия (1.5 с)")
+            await page.wait_for_timeout(2500)
+            await shot("2", "через 4 секунды")
+            pressed = await tap_primary()
+            await page.wait_for_timeout(2500)
+            state = "после нажатия на главную кнопку" if pressed else "после тапа по экрану"
+            await shot("3", "через 2.5 с " + state)
+            info = await page.evaluate("({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})")
+            await page.mouse.wheel(0, 844)
+            await page.wait_for_timeout(1200)
+            scrolled = await page.evaluate(SCROLLED)
+            if not scrolled:  # может, открылось окно и держит прокрутку — закрыть и попробовать ещё раз
+                await page.keyboard.press("Escape")
+                await page.mouse.wheel(0, 844)
+                await page.wait_for_timeout(1200)
+                scrolled = await page.evaluate(SCROLLED)
+            if scrolled:
+                await shot("4", "после прокрутки вниз на экран")
+                state = "после прокрутки"
+            else:  # приложение в один экран (игра): вместо повтора — пауза и финал, каждый с чистого запуска
+
+                async def pause_shot():
+                    await fresh_play()
+                    pause = await page.query_selector("[data-pause]")
+                    if pause is not None and await pause.is_visible():
+                        await pause.tap(timeout=2000)
+                        await page.wait_for_timeout(800)
+                        await shot("4", "пауза (нажата кнопка data-pause)")
+
+                async def final_shot():
+                    if await page.evaluate("typeof window.__studioEnd === 'function'"):
+                        await fresh_play()
+                        await asyncio.wait_for(page.evaluate(END), 3)
+                        await page.wait_for_timeout(1200)
+                        await shot("5", "экран финала (window.__studioEnd)")
+
+                await step(pause_shot(), 20)
+                await step(final_shot(), 20)
+                state = "последнее состояние"
+
+            async def small():
+                await page.set_viewport_size({"width": 360, "height": 640})
+                await page.evaluate(TO_TOP)
+                await page.wait_for_timeout(800)
+                await shot("6", f"маленький телефон 360×640, верх страницы ({state})")
+
+            await step(small(), 15)
+        except Exception as exc:
+            errors.append(f"снимок: {type(exc).__name__}: {str(exc)[:200]}")
+        finally:
+            # ответ — сразу; браузер не закрываем вежливо (зависшая страница не даст), группу процессов добьёт бот
+            # страница открывается несколько раз (пауза, финал) — одна и та же ошибка считается один раз
+            errors = list(dict.fromkeys(errors))
+            print(json.dumps({"shots": shots, "errors": errors[:30], "scroll_width": info["w"], "height": info["h"]}))
+            sys.stdout.flush()
+            os._exit(0)
 
 asyncio.run(main())
 """
@@ -172,27 +206,45 @@ async def main():
     async with async_playwright() as p:
         browser, page = await open_page(p, errors, viewport={"width": 1920, "height": 1080}, device_scale_factor=1,
                                         reduced_motion="reduce")
-        await page.goto("file://" + page_path, wait_until="load", timeout=30000)
-        await page.add_style_tag(content=A["fix_css"])
-        await page.evaluate(A["typo_js"])
-        await page.evaluate("document.fonts.ready.then(() => true)")
-        await page.wait_for_timeout(1500)
-        found = await page.query_selector_all(".slide")
-        if len(found) > max_slides:
-            problems.append(f"слайдов {len(found)} — в презентацию попадут первые {max_slides}")
-        for i, el in enumerate(found[:max_slides], 1):
-            await el.scroll_into_view_if_needed()
-            await page.evaluate(A["settle_js"])  # два кадра отрисовки: без случайных недорисованных полос
-            await page.wait_for_timeout(300)
-            path = f"{out_dir}/{i}.jpg"
-            await el.screenshot(path=path, type="jpeg", quality=92, animations="disabled")
-            info = await el.evaluate(A["check_js"])
-            said, geo = say(i, info)
-            problems += said
-            geometry += geo
-            slides.append([path, info["notes"][:3000]])
-        await browser.close()
-    print(json.dumps({"slides": slides, "errors": errors[:30], "problems": problems[:60], "geometry": geometry}))
+        # свой requestAnimationFrame — на потом: циклы отрисовки страницы после загрузки останавливаем, иначе
+        # bloom-сцена 1920×1080 крутится всё время съёмки и душит её
+        await page.add_init_script("window.__raf = window.requestAnimationFrame.bind(window)")
+        try:
+            await page.goto("file://" + page_path, wait_until="load", timeout=30000)
+            await page.add_style_tag(content=A["fix_css"])
+            await page.evaluate(A["typo_js"])
+            await page.evaluate("document.fonts.ready.then(() => true)")
+            await page.wait_for_timeout(1500)
+            await page.evaluate("window.requestAnimationFrame = () => 0")
+            found = await page.query_selector_all(".slide")
+            if len(found) > max_slides:
+                problems.append(f"слайдов {len(found)} — в презентацию попадут первые {max_slides}")
+            for i, el in enumerate(found[:max_slides], 1):
+                await el.scroll_into_view_if_needed()
+                await page.evaluate(A["settle_js"])  # два кадра отрисовки: без случайных недорисованных полос
+                await page.wait_for_timeout(300)
+                path = f"{out_dir}/{i}.jpg"
+                await el.screenshot(path=path, type="jpeg", quality=92, animations="disabled", timeout=20000)
+                try:  # проверка — подсказка: упала на одном слайде — слайд всё равно в презентации
+                    info = await asyncio.wait_for(el.evaluate(A["check_js"]), 15)
+                except Exception as exc:
+                    problems.append(f"слайд {i}: автоматическая проверка не прошла ({type(exc).__name__})")
+                    info = {"notes": "", "small": 0, "words": 0, "svg_words": 0, "outside": [], "clipped": [],
+                            "overlaps": [], "covered": [], "lines": [], "edge": []}
+                    try:
+                        info["notes"] = await el.evaluate("s => (s.querySelector('.notes') || {}).textContent || ''")
+                    except Exception:
+                        pass
+                said, geo = say(i, info)
+                problems += said
+                geometry += geo
+                slides.append([path, info["notes"].strip()[:3000]])
+        except Exception as exc:
+            errors.append(f"съёмка: {type(exc).__name__}: {str(exc)[:200]}")
+        finally:
+            print(json.dumps({"slides": slides, "errors": errors[:30], "problems": problems[:60], "geometry": geometry}))
+            sys.stdout.flush()
+            os._exit(0)
 
 asyncio.run(main())
 """
@@ -207,17 +259,16 @@ DECK_FIX_CSS = (
 # Русская типографика в тексте слайдов (до съёмки — PowerPoint и PDF собираются из снимков).
 DECK_TYPO_JS = r"""() => {
   const NB = ' ';
-  const SHORT = /(^|[\s («„"])(в|к|с|у|о|а|и|я|на|не|по|за|до|из|от|об|во|со|но|ко|для|при|без|над|под|про|или)\s+(?=\S)/gi;
+  // пробелы — только внутри строки: перевод строки в <pre> и white-space: pre-line не трогаем
+  const SHORT = /(^|[ \t («„"])(в|к|с|у|о|а|и|я|на|не|по|за|до|из|от|об|во|со|но|ко|для|при|без|над|под|про|или)[ \t]+(?=\S)/gi;
   const fix = (t) => {
-    // тысячи — пока пробелы исходные: четырёхзначные слитно (1200), от 10 000 — неразрывный пробел (узкого U+202F
-    // в шрифтах нет)
-    t = t.replace(/(^|[^\d.,])(\d)[   ](\d{3})(?!\d|[   ]\d{3})/g, '$1$2$3');
-    t = t.replace(/(\d)[   ](?=\d{3}(?!\d))/g, '$1' + NB);
-    t = t.replace(/\s+([—–])/g, NB + '$1');  // строка не начинается с тире
+    // разряды больших чисел — неразрывным пробелом (узкого U+202F в шрифтах нет); цифры не склеиваем: «iPhone 6 128 ГБ»
+    t = t.replace(/(\d)[  ](?=\d{3}(?!\d))/g, '$1' + NB);
+    t = t.replace(/[ \t]+([—–])/g, NB + '$1');  // строка не начинается с тире
     for (let k = 0; k < 2; k++) t = t.replace(SHORT, (m, a, w) => a + w + NB);
-    t = t.replace(/\s+(же|ли|бы)(?=[\s.,!?…»]|$)/g, NB + '$1');
-    t = t.replace(/\s([×÷=≈+−])\s/g, NB + '$1' + NB);  // «a × b» не рвётся
-    t = t.replace(/(\d)\s+(?=[^\s\d])/g, '$1' + NB);  // число со словом или единицей
+    t = t.replace(/[ \t]+(же|ли|бы)(?=[\s.,!?…»]|$)/g, NB + '$1');
+    t = t.replace(/[ \t]([×÷=≈+−])[ \t]/g, NB + '$1' + NB);  // «a × b» не рвётся
+    t = t.replace(/(\d)[ \t]+(?=[^\s\d])/g, '$1' + NB);  // число со словом или единицей
     return t;
   };
   for (const slide of document.querySelectorAll('.slide')) {
@@ -226,7 +277,9 @@ DECK_TYPO_JS = r"""() => {
     while (walker.nextNode()) nodes.push(walker.currentNode);
     for (const node of nodes) {
       const el = node.parentElement;
-      if (!el || el.closest('script,style,.notes')) continue;
+      if (!el || el.closest('script,style,.notes,pre,code,kbd,samp,textarea')) continue;
+      const ws = getComputedStyle(el).whiteSpace;
+      if (ws.startsWith('pre') || ws === 'break-spaces') continue;  // код и стихи — как есть
       const before = node.textContent, after = fix(before);
       if (after !== before) node.textContent = after;
     }
@@ -234,7 +287,7 @@ DECK_TYPO_JS = r"""() => {
   return true;
 }"""
 
-DECK_SETTLE_JS = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))"
+DECK_SETTLE_JS = "() => new Promise(r => window.__raf(() => window.__raf(() => r(true))))"
 
 # Проверка одного слайда: что видно глазом, но не видно по коду.
 DECK_CHECK_JS = r"""(slide) => {
@@ -257,7 +310,11 @@ DECK_CHECK_JS = r"""(slide) => {
     if (st.visibility === 'hidden' || st.display === 'none' || +st.opacity < 0.2) continue;
     const range = document.createRange();
     range.selectNodeContents(node);
-    const rects = [...range.getClientRects()].filter(r => r.width > 1 && r.height > 1);
+    const lh = parseFloat(st.lineHeight) || parseFloat(st.fontSize) * 1.2;
+    const rects = [...range.getClientRects()].filter(r => r.width > 1 && r.height > 1).map(r => {
+      const d = Math.max(0, (r.height - lh) / 2);
+      return {left: r.left, right: r.right, top: r.top + d, bottom: r.bottom - d, width: r.width, height: r.height - 2 * d};
+    });
     if (!rects.length) continue;
     const chrome = !!el.closest(CHROME);
     const words = (text.match(/[\p{L}\p{N}]+/gu) || []).length;
@@ -271,6 +328,13 @@ DECK_CHECK_JS = r"""(slide) => {
   }
   const add = (list, s) => { if (list.length < 5 && !list.includes(s)) list.push(s); };
   const PAINT = new Set(['IMG', 'CANVAS', 'VIDEO', 'image', 'text', 'use', ...GEOM]);
+  const opaque = (e) => {
+    const es = getComputedStyle(e);
+    if (+es.opacity < 0.9 || e.tagName === 'line') return false;  // у линии заливки нет, хоть fill и чёрный
+    if (GEOM.has(e.tagName)) return es.fill !== 'none' && +es.fillOpacity >= 0.9 && !/rgba\(.*,\s*0(\.\d+)?\)$/.test(es.fill);
+    const bg = es.backgroundColor.match(/[\d.]+/g);
+    return !!bg && (bg.length < 4 || +bg[3] >= 0.9);
+  };
   const paints = (e) => {  // рисует ли элемент сам (а не пустая обёртка или корневой <svg>)
     if (PAINT.has(e.tagName)) return true;
     const es = getComputedStyle(e);
@@ -329,7 +393,9 @@ DECK_CHECK_JS = r"""(slide) => {
           covered = true;
         }
         for (const e of stack.slice(own + 1)) {
-          if (!GEOM.has(e.tagName) || related(e, it.el)) continue;
+          if (related(e, it.el)) continue;
+          if (opaque(e)) break;  // под текстом плашка — то, что ниже, не видно
+          if (!GEOM.has(e.tagName)) continue;
           const es = getComputedStyle(e);
           if (es.stroke === 'none' || +es.strokeOpacity < 0.25 || parseFloat(es.strokeWidth) < 1) continue;
           const filled = e.tagName !== 'line' && es.fill !== 'none' && !/rgba\(.*,\s*0\)$/.test(es.fill) &&
@@ -343,10 +409,14 @@ DECK_CHECK_JS = r"""(slide) => {
     if (under) add(res.lines, it.text);
   }
   // толстые обводки (кольца, дуги, линии) поверх текста: точки вдоль фигуры, внутри строки текста — кто сверху
+  const until = performance.now() + 2000;
+  let shapes = 0;
   for (const g of slide.querySelectorAll('circle,ellipse,path,line,polyline,polygon,rect')) {
+    if (performance.now() > until || shapes > 150) break;
     if (g.closest('symbol,defs,clipPath,mask,pattern,marker')) continue;
     const gs = getComputedStyle(g), sw = parseFloat(gs.strokeWidth) || 0;
     if (gs.stroke === 'none' || sw < 4 || +gs.strokeOpacity < 0.35 || +gs.opacity < 0.35) continue;
+    shapes++;
     let len = 0;
     try { len = g.getTotalLength(); } catch (e) { continue; }
     const m = g.getScreenCTM();
@@ -359,7 +429,7 @@ DECK_CHECK_JS = r"""(slide) => {
         if (!it.shown.some(r => x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad)) continue;
         const stack = document.elementsFromPoint(x, y);
         const gi = stack.indexOf(g), ti = stack.findIndex(e => e === it.el || it.el.contains(e));
-        if (gi >= 0 && (ti < 0 || gi < ti)) add(res.covered, it.text);
+        if (gi >= 0 && ti >= 0 && gi < ti) add(res.covered, it.text);
       }
     }
   }
@@ -429,8 +499,8 @@ def available() -> bool:
 def _env(home: str) -> dict[str, str]:
     """Только нужное браузеру — ключей и паролей из .env у него нет. HOME у фотографа свой (временный), поэтому
     папку с браузерами передаём явно — ту же, где её нашёл available()."""
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home, "LANG": "C.UTF-8",
-           "PLAYWRIGHT_BROWSERS_PATH": _browsers_root()}
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home, "TMPDIR": home, "LANG": "C.UTF-8",
+           "PLAYWRIGHT_BROWSERS_PATH": _browsers_root()}  # TMPDIR: профили браузера — в папке задания, не в /tmp
     if os.environ.get("FONTCONFIG_PATH"):
         env["FONTCONFIG_PATH"] = os.environ["FONTCONFIG_PATH"]
     return env
@@ -495,6 +565,8 @@ async def shoot(page: bytes, timeout: float = SHOTS_TIMEOUT) -> Shots:
         images = [(label, await asyncio.to_thread(_read, img)) for label, img in data["shots"]]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    if not images:
+        raise ShotsError("браузер не снял ни одного кадра: " + "; ".join(data.get("errors") or [])[:200])
     return Shots(images, list(data.get("errors") or []), int(data.get("scroll_width") or 0) > 392)
 
 
