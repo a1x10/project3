@@ -138,6 +138,13 @@ async def _run(plan: dict, timeout: float) -> bytes:
     if not ffmpeg:
         raise RenderError("на сервере нет ffmpeg")
     tmp = tempfile.mkdtemp(prefix="stella-anim-")
+    try:
+        return await _run_in(plan, timeout, ffmpeg, tmp)
+    finally:  # и при отмене (перезапуск бота), и при таймауте — без хвостов на диске
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _run_in(plan: dict, timeout: float, ffmpeg: str, tmp: str) -> bytes:
     out = os.path.join(tmp, "video.mp4")
     job = {"plan": plan, "out": out, "workers": workers_count(), "deadline": int(timeout), "nice": 10,
            "ffmpeg": ffmpeg, "crf": 22, "max_mb": 16}
@@ -176,21 +183,20 @@ async def _run(plan: dict, timeout: float) -> bytes:
             pass
         if proc.returncode is None:
             await proc.wait()
-    try:
-        done = next((e for e in events if e.get("ev") == "done"), None)
-        if proc.returncode != 0 or done is None:
-            err = next((e for e in events if e.get("ev") == "error"), None)
-            log.warning("мультик не нарисовался: код %s, %s, %s", proc.returncode, err,
-                        bytes(tail).decode(errors="replace")[-300:])
-            if err and err.get("kind") == "memory":
-                raise RenderError("мультик получился слишком тяжёлым — давай попроще")
-            raise RenderError("не получилось собрать мультик")
-        size = os.path.getsize(out)
-        if not 0 < size <= MAX_BYTES:
-            raise RenderError("ролик получился слишком большим")
-        data = await asyncio.to_thread(_read, out)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    done = next((e for e in events if e.get("ev") == "done"), None)
+    if proc.returncode != 0 or done is None:
+        err = next((e for e in events if e.get("ev") == "error"), None)
+        log.warning("мультик не нарисовался: код %s, %s, %s", proc.returncode, err,
+                    bytes(tail).decode(errors="replace")[-300:])
+        if err and err.get("kind") == "memory":
+            raise RenderError("мультик получился слишком тяжёлым — давай попроще")
+        if err and err.get("kind") == "timeout":
+            raise RenderError("мультик рисовался слишком долго — давай покороче или попроще")
+        raise RenderError("не получилось собрать мультик")
+    size = os.path.getsize(out)
+    if not 0 < size <= MAX_BYTES:
+        raise RenderError("ролик получился слишком большим")
+    data = await asyncio.to_thread(_read, out)
     # подстраиваем скорость под эту машину: следующий прогноз будет точнее
     frames = frames_of(plan)
     w, h = plan["size"]

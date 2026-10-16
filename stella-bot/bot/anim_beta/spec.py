@@ -118,6 +118,32 @@ def _id(value: Any) -> str:
     return re.sub(r"\s+", "_", str(value or "").strip().lower())[:24]
 
 
+def _char_w(c: dict, w: int, h: int) -> float:
+    """Ширина персонажа в долях ширины кадра (с ушами и хвостом)."""
+    return c["size"] * h / w * (0.62 if c["kind"] == "toy" else 0.8)
+
+
+def _spread(xs: list[float], gap: float, lo: float, hi: float) -> list[float]:
+    """Раздвинуть точки: соседи не ближе gap, все внутри [lo, hi]; порядок слева направо сохраняется."""
+    if not xs:
+        return []
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    v = [min(hi, max(lo, xs[i])) for i in order]
+    if (len(v) - 1) * gap > hi - lo:  # не влезают с таким зазором — поровну по всей ширине
+        v = [lo + (hi - lo) * k / max(1, len(v) - 1) for k in range(len(v))] if len(v) > 1 else [(lo + hi) / 2]
+    else:
+        for k in range(1, len(v)):
+            v[k] = max(v[k], v[k - 1] + gap)
+        if v[-1] > hi:
+            v[-1] = hi
+            for k in range(len(v) - 2, -1, -1):
+                v[k] = min(v[k], v[k + 1] - gap)
+    out = [0.0] * len(xs)
+    for k, i in enumerate(order):
+        out[i] = round(v[k], 4)
+    return out
+
+
 def parse(raw: Any) -> tuple[dict, list[str], str]:
     """JSON модели -> (план для рендера, предупреждения, подпись к видео). SpecError — если рисовать нечего."""
     if not isinstance(raw, dict):
@@ -179,7 +205,8 @@ def parse(raw: Any) -> tuple[dict, list[str], str]:
     raw_scenes = [s for s in raw_scenes if isinstance(s, dict)][:MAX_SCENES]
     if not raw_scenes:
         raise SpecError("нужна хотя бы одна сцена: scenes: [{seconds, place, events: [...]}]")
-    scenes = []
+    scenes: list[dict] = []
+    pending: list[tuple] = []
     for si, rs in enumerate(raw_scenes):
         events = []
         confetti = 0
@@ -228,13 +255,20 @@ def parse(raw: Any) -> tuple[dict, list[str], str]:
             out["dur"] = max(dur, 0.4)
             events.append(out)
             prev_end = t + (dur if act or say else 0.0)
-        end = max((e["t"] + e.get("dur", 0) for e in events), default=2.0) + 0.8
-        seconds = _num(rs.get("seconds", rs.get("dur")), end, 1.5, MAX_TOTAL)
+        last = max((e["t"] + e.get("dur", 0) for e in events), default=1.2)
+        seconds = _num(rs.get("seconds", rs.get("dur")), last + 0.8, 1.5, MAX_TOTAL)
+        if seconds < min(last, MAX_TOTAL) - 0.05:  # события не влезают — продлеваем, а не обрезаем молча
+            seconds = min(last + 0.5, MAX_TOTAL)
+            warnings.append(f"сцена {si + 1}: события идут до {last:.1f} с — продлила сцену до {seconds:.1f} с")
         bg = _pick(rs.get("background") or rs.get("bg"), BACKGROUNDS, BG_ALIASES, warnings, "background", "meadow")
-        # кто в кадре: из place и событий; если никто — весь cast
+        # кто в кадре: place + участники событий; place не указан — весь cast
         raw_place = rs.get("place") if isinstance(rs.get("place"), dict) else {}
+        raw_place = {_id(k): v for k, v in raw_place.items()}
         present = []
-        for pid in [_id(k) for k in raw_place] + [e["who"] for e in events if "who" in e]:
+        names = list(raw_place) + [e["who"] for e in events if "who" in e]
+        if not raw_place:
+            names += list(cast)
+        for pid in names:
             pid = ensure_actor(pid) if pid not in cast and pid not in things else pid
             if pid and pid not in present:
                 present.append(pid)
@@ -242,28 +276,50 @@ def parse(raw: Any) -> tuple[dict, list[str], str]:
             present += list(cast)
         if si == 0 and not any(p in things for p in present):
             present += list(things)
+        pending.append((si, rs, events, present, raw_place, seconds, bg))
+
+    # персонажи не должны налезать друг на друга и вылезать за кадр: если в сцене их много — все чуть меньше
+    zoom_default = 1.06
+    crowd = max((sum(1 for p in pend[3] if p in cast) for pend in pending), default=1)
+    room = 1 - 2 * (0.5 - 0.5 / zoom_default) - 0.04
+    widest = max((_char_w(c, w, h) for c in cast.values()), default=0.0)
+    if crowd and widest and crowd * widest > room:
+        k = max(0.6, room / (crowd * widest))
+        for c in cast.values():
+            c["size"] *= k
+    for si, rs, events, present, raw_place, seconds, bg in pending:
         actors = [p for p in present if p in cast]
+        zoom = _num(rs.get("zoom"), zoom_default, 1.0, 1.3 if len(actors) < 3 else 1.08)  # толпу не обрезаем
         place: dict[str, dict] = {}
         n = max(1, len(actors))
+        cw = max((_char_w(cast[a], w, h) for a in actors), default=0.2)
+        lo = 0.5 - 0.5 / zoom + cw / 2 + 0.01
+        hi = 1 - lo
+        wanted = []
         for k, pid in enumerate(actors):
             rp = raw_place.get(pid) if isinstance(raw_place.get(pid), dict) else {}
-            default_x = 0.5 if n == 1 else 0.18 + 0.64 * k / (n - 1)
-            x = _num(rp.get("x"), default_x, 0.08, 0.92)
+            default_x = 0.5 if n == 1 else lo + (hi - lo) * k / (n - 1)
+            wanted.append(_num(rp.get("x"), default_x, 0.0, 1.0))
+        xs = _spread(wanted, cw * 0.92, lo, hi)
+        for pid, x, want in zip(actors, xs, wanted, strict=True):
+            rp = raw_place.get(pid) if isinstance(raw_place.get(pid), dict) else {}
             facing = str(rp.get("facing") or "").lower()
             face = -1 if facing in ("left", "влево") else 1 if facing in ("right", "вправо") else (1 if x < 0.5 else -1)
             place[pid] = {"x": x, "y": GROUND_Y[fmt] + (0.02 if cast[pid]["kind"] == "toy" else 0.0), "face": face}
+            if abs(x - want) > 0.08 and "x" in rp:
+                warnings.append(f"сцена {si + 1}: {pid} сдвинула на x={x:.2f}, чтобы не налезал на соседей и край")
         for k, pid in enumerate(p for p in present if p in things):
             rp = raw_place.get(pid) if isinstance(raw_place.get(pid), dict) else {}
             place[pid] = {"x": _num(rp.get("x"), (0.5, 0.22, 0.78)[k % 3], 0.1, 0.9),
                           "y": _num(rp.get("y"), 0.3, 0.15, 0.7)}
         for e in events:
             if e.get("act") == "walk":
-                e["to"] = [e["to"], place[e["who"]]["y"]] if e["who"] in place else None
+                e["to"] = [min(hi, max(lo, e["to"])), place[e["who"]]["y"]] if e["who"] in place else None
         events = [e for e in events if "who" not in e or (e["who"] in place and e.get("to", 0) is not None)]
-        zoom = _num(rs.get("zoom"), 1.12, 1.0, 1.3)
+        # камера наезжает и чуть опускается — но так, чтобы низ кадра не вышел за край фона
         scenes.append({"dur": seconds, "bg": bg, "place": place, "events": events,
                        "camera": [{"t": 0, "zoom": 1.0, "x": 0.5, "y": 0.5},
-                                  {"t": seconds, "zoom": zoom, "x": 0.5, "y": 0.53}]})
+                                  {"t": seconds, "zoom": zoom, "x": 0.5, "y": 0.5 + min(0.03, 0.5 - 0.5 / zoom)}]})
 
     total = sum(s["dur"] for s in scenes)
     if total > MAX_TOTAL * 1.5:

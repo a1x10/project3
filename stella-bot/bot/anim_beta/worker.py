@@ -68,16 +68,22 @@ def main() -> None:
         finally:
             os._exit(3)
 
+    def too_long(*_):
+        emit(ev="error", kind="timeout", msg="вышло время")
+        die()
+
     def watch():  # бот умер (stdin закрылся) — убить всю группу
         while os.read(0, 4096):
             pass
         die()
 
     threading.Thread(target=watch, daemon=True).start()
-    signal.signal(signal.SIGALRM, die)
-    signal.alarm(deadline + 5)
+    signal.signal(signal.SIGALRM, too_long)
+    signal.alarm(deadline)
     os.nice(job.get("nice", 10))
-    _limit(job.get("main_as_mb", 1024), deadline, job.get("max_mb", 16) + 1)
+    # память и размер файла — до запуска ffmpeg (он их наследует); лимит процессорного времени — после,
+    # иначе ffmpeg, наследуя его, умирал бы раньше общего таймаута с непонятной ошибкой
+    _limit(job.get("main_as_mb", 1024), 10 * deadline, job.get("max_mb", 16) + 1)
 
     plan = job["plan"]
     w, h = plan["size"]
@@ -91,6 +97,7 @@ def main() -> None:
          "-threads", "2", "-maxrate", "4M", "-bufsize", "8M", "-g", str(2 * fps),
          "-pix_fmt", "yuv420p", "-movflags", "+faststart", job["out"]],
         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    resource.setrlimit(resource.RLIMIT_CPU, (deadline, deadline + 5))
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     from concurrent.futures.process import BrokenProcessPool
@@ -114,7 +121,10 @@ def main() -> None:
                 s = starts[nxt]
                 window.append(pool.submit(_chunk, s, min(s + chunk, n)))
                 nxt += 1
-            _s, frames, sec = window.popleft().result(timeout=deadline)
+            try:
+                _s, frames, sec = window.popleft().result(timeout=deadline)
+            except TimeoutError:
+                too_long()
             per_frame.append(sec)
             for fr in frames:
                 ff.stdin.write(fr)
