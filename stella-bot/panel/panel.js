@@ -11,7 +11,8 @@
   const OVERVIEW_EVERY = 30000;
   const LOG_EVERY = 10000;
   const ABOUT_MAX = 4000;
-  const K = { server: "stella.server", token: "stella.token", exp: "stella.token_exp", active: "stella.last_active", tab: "stella.tab" };
+  // trusted — сервер, на котором уже был успешный вход: чужой адрес из ссылки без предупреждения не принимаем
+  const K = { server: "stella.server", trusted: "stella.trusted", token: "stella.token", exp: "stella.token_exp", active: "stella.last_active", tab: "stella.tab" };
   const TABS = ["overview", "chats", "people", "settings", "log"];
   const CHIME = new Map([["off", "выкл"], ["rare", "редко"], ["normal", "обычно"], ["chatty", "болтушка"]]);
   const KINDS = new Map([
@@ -154,13 +155,17 @@
       return { server: location.origin, notice: null };
     }
     if (!fromHash) return { server: saved || "", notice };
-    if (saved && saved !== fromHash) notice = [`Адрес сервера взят из ссылки: ${hostOf(fromHash)}. Вводите пароли, только если это ваш бот.`, "warn"];
-    return { server: fromHash, notice };
+    const trusted = normServer(local.get(K.trusted));
+    if (fromHash !== trusted) {
+      // Ссылку мог прислать кто угодно: адрес не запоминаем до успешного входа и всегда показываем полностью
+      notice = [`Внимание: адрес сервера взят из ссылки — ${fromHash}. Вводите пароли, только если это адрес из сообщения Стеллы вам в WhatsApp.`, "warn"];
+    }
+    return { server: fromHash, notice, untrusted: fromHash !== trusted };
   }
-  function setServer(url) {
+  function setServer(url, remember = true) {
     if (url !== S.server) clearToken(); // токен другого сервера не годится
     S.server = url;
-    local.set(K.server, url);
+    if (remember) local.set(K.server, url);
   }
 
   // ---------- сеть ----------
@@ -317,6 +322,8 @@
     const data = (r && r.data) || {};
     if (r && r.status === 200 && typeof data.token === "string" && data.token) {
       setToken(data.token, data.expires_in);
+      local.set(K.server, S.server); // вход удался — этому адресу можно доверять
+      local.set(K.trusted, S.server);
       setLoginMsg("", "");
       enterApp();
       return;
@@ -1016,9 +1023,9 @@
       return;
     }
     const prevSaved = normServer(local.get(K.server));
-    const { server, notice } = resolveServer();
+    const { server, notice, untrusted } = resolveServer();
     S.server = server;
-    if (server) local.set(K.server, server);
+    if (server && !untrusted) local.set(K.server, server);
     if (server !== prevSaved) clearToken();
     bindEvents();
     const token = getToken();

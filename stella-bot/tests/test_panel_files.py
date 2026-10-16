@@ -32,4 +32,3 @@ def test_panel_has_no_unsafe_dom_or_inline_code():
     assert "Content-Security-Policy" in html and "script-src 'self'" in html
     assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "встроенный <script> запрещён CSP"
     assert not re.search(r"\son[a-z]+\s*=", html), "обработчики on...= в разметке запрещены CSP"
-    assert "1010" not in js + html and "2013" not in js + html  # паролей в публичных файлах нет

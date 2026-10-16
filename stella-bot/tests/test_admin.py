@@ -1,5 +1,8 @@
 """Панель управления: вход по двум паролям, защита от подбора, сессии, действия."""
 
+import asyncio
+import secrets
+
 import httpx
 import pytest
 
@@ -10,6 +13,8 @@ from bot.main import create_app
 from .conftest import GROUP, PETYA, settle, upsert
 
 ORIGIN = "https://a1x10.github.io"
+# Пароли в тестах — случайные на каждый запуск: настоящих паролей в репозитории быть не должно
+P1, P2 = secrets.token_hex(6), secrets.token_hex(6)
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +24,7 @@ def fast_login(monkeypatch):
 
 @pytest.fixture
 async def panel(brain):
-    brain.s.panel_password_1, brain.s.panel_password_2 = "1010", "2013"
+    brain.s.panel_password_1, brain.s.panel_password_2 = P1, P2
     brain.s.panel_origins = [ORIGIN]
     brain.admin = AdminAuth(brain.s)
     app = create_app(brain.s, brain=brain)
@@ -29,7 +34,9 @@ async def panel(brain):
             yield client
 
 
-async def login(client, p1="1010", p2="2013", ip="1.2.3.4"):
+async def login(client, p1=None, p2=None, ip="1.2.3.4"):
+    p1 = P1 if p1 is None else p1
+    p2 = P2 if p2 is None else p2
     return await client.post("/admin/api/login", json={"p1": p1, "p2": p2}, headers={"cf-connecting-ip": ip})
 
 
@@ -38,7 +45,7 @@ def auth(token):
 
 
 async def test_panel_disabled_without_passwords(brain):
-    brain.s.panel_password_1, brain.s.panel_password_2 = "1010", ""
+    brain.s.panel_password_1, brain.s.panel_password_2 = P1, ""
     brain.admin = AdminAuth(brain.s)
     app = create_app(brain.s, brain=brain)
     async with app.router.lifespan_context(app):
@@ -50,9 +57,9 @@ async def test_panel_disabled_without_passwords(brain):
 
 async def test_two_passwords_and_session(panel, brain):
     assert (await panel.get("/admin/api/status")).status_code == 401
-    r = await login(panel, "1010", "0000")
+    r = await login(panel, P1, "0000")
     assert r.status_code == 401 and r.json() == {"error": "wrong"}  # не говорим, какой пароль неверный
-    r = await login(panel, "2013", "1010")
+    r = await login(panel, P2, P1)
     assert r.status_code == 401
     r = await login(panel)
     assert r.status_code == 200
@@ -156,10 +163,62 @@ async def test_chat_actions_and_settings(panel, brain):
     await settle(brain)
 
 
-async def test_health_hides_details_through_tunnel(panel):
-    r = await panel.get("/health", headers={"cf-connecting-ip": "5.5.5.5"})
-    assert r.json() == {"ok": True}
-    assert "spend_today_usd" in (await panel.get("/health")).json()
+async def test_tunnel_exposes_only_the_panel(panel):
+    tunnel = {"cf-connecting-ip": "5.5.5.5"}
+    assert (await panel.get("/health", headers=tunnel)).status_code == 404
+    assert (await panel.post("/webhook", json={}, headers=tunnel)).status_code == 404
+    assert (await panel.post("/webhook/messages-upsert", json={}, headers=tunnel)).status_code == 404
+    assert (await login(panel, ip="5.5.5.5")).status_code == 200  # панель — доступна
+    assert "spend_today_usd" in (await panel.get("/health")).json()  # с самого сервера — подробно
+
+
+async def test_huge_body_is_rejected_before_parsing(panel):
+    big = "x" * (200 * 1024)
+    r = await panel.post("/admin/api/login", json={"p1": big, "p2": big}, headers={"cf-connecting-ip": "6.6.6.6"})
+    assert r.status_code == 413
+
+    async def chunks():
+        for _ in range(100):
+            yield b"[" * 1024
+
+    r = await panel.post("/admin/api/login", content=chunks(), headers={"content-type": "application/json"})
+    assert r.status_code in (400, 413, 422)
+
+
+async def test_parallel_guesses_cannot_skip_the_lock(panel, monkeypatch):
+    monkeypatch.setattr(admin, "LOGIN_DELAY", 0.01)
+    results = await asyncio.gather(*[login(panel, "0", str(i), ip="4.4.4.4") for i in range(30)])
+    codes = [r.status_code for r in results]
+    assert codes.count(401) == admin.IP_MAX_FAILS and codes.count(429) == 30 - admin.IP_MAX_FAILS
+
+
+async def test_owner_is_not_locked_out_and_can_unlock(panel, brain):
+    from .conftest import OWNER
+
+    for i in range(admin.GLOBAL_MAX_FAILS):
+        await login(panel, "1", "2", ip=f"10.1.{i // 250}.{i % 250}")
+    assert (await login(panel, ip="7.7.7.7")).status_code == 429
+    # с самого сервера (SSH-туннель) общий замок не мешает
+    r = await panel.post("/admin/api/login", json={"p1": P1, "p2": P2})
+    assert r.status_code == 200
+    # блокировка сохранилась в базе — переживёт перезапуск
+    saved = await brain.db.kv_get(admin.LOCKS_KV)
+    fresh = AdminAuth(brain.s)
+    fresh.import_locks(__import__("json").loads(saved[0]))
+    assert fresh.locked("7.7.7.7") is not None
+    # владелец пишет Стелле в личку — замок снят
+    await brain.handle_payload(upsert("стелла разблокируй панель", chat=f"{OWNER}@s.whatsapp.net",
+                                      sender=f"{OWNER}@s.whatsapp.net"))
+    await settle(brain)
+    assert "снова открыт" in brain.evo.texts()[-1]
+    assert (await login(panel, ip="7.7.7.7")).status_code == 200
+
+
+async def test_stranger_cannot_unlock_panel(brain):
+    brain.llm.queue = ["что?"]
+    await brain.handle_payload(upsert("стелла разблокируй панель", chat=PETYA, sender=PETYA))
+    await settle(brain)
+    assert brain.evo.texts() == ["что?"]  # не команда для чужих — просто разговор
 
 
 def test_group_jid_is_masked():

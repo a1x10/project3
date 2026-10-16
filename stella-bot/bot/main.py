@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import ipaddress
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -16,7 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .admin import build_router, install_ring_log
+from .admin import build_router, install_ring_log, is_local_request
 from .brain import Brain
 from .config import Settings, settings
 from .db import DB
@@ -38,16 +37,64 @@ def setup_logging(level: str) -> None:
     install_ring_log()
 
 
-def _is_local(request: Request) -> bool:
-    """Запрос изнутри сервера (docker-сеть / localhost), а не через туннель или nginx."""
-    if request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip") \
-            or request.headers.get("x-forwarded-for"):
-        return False
-    host = request.client.host if request.client else ""
-    try:
-        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host in ("testclient", "localhost")
+ADMIN_BODY_LIMIT = 64 * 1024
+WEBHOOK_BODY_LIMIT = 20 * 1024 * 1024
+PUBLIC_PREFIXES = ("/panel", "/admin/api")  # что видно из интернета через туннель Cloudflare
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+class GuardMiddleware:
+    """1) Через туннель (есть CF-Connecting-IP) наружу видны только панель и её API — вебхук и health нет.
+    2) Ограничение размера тела запроса: огромный JSON не должен уронить бота ещё до проверки пароля."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        if "cf-connecting-ip" in headers and not path.startswith(PUBLIC_PREFIXES):
+            return await self._reply(send, 404, b'{"error":"not found"}')
+        limit = ADMIN_BODY_LIMIT if path.startswith("/admin") else WEBHOOK_BODY_LIMIT
+        try:
+            if int(headers.get("content-length") or 0) > limit:
+                return await self._reply(send, 413, b'{"error":"too large"}')
+        except ValueError:
+            return await self._reply(send, 400, b'{"error":"bad length"}')
+        seen = 0
+        started = False
+
+        async def limited_receive():
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit:  # тело без Content-Length (чанками) — считаем сами
+                    raise BodyTooLarge()
+            return message
+
+        async def tracked_send(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except BodyTooLarge:
+            if not started:
+                await self._reply(send, 413, b'{"error":"too large"}')
+
+    @staticmethod
+    async def _reply(send, status: int, body: bytes) -> None:
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
 
 
 def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
@@ -71,6 +118,7 @@ def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
 
     app = FastAPI(title="Stella bot", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     install_ring_log()  # последние строки лога — для вкладки «Журнал» в панели
+    app.add_middleware(GuardMiddleware)
 
     # Панель с GitHub Pages ходит сюда с другого сайта — разрешаем только перечисленные (PANEL_ORIGINS)
     app.add_middleware(
@@ -129,8 +177,8 @@ def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:
         b: Brain = request.app.state.brain
-        if not _is_local(request):
-            return {"ok": True}  # через туннель — без подробностей
+        if not is_local_request(request):
+            return {"ok": True}  # не с самого сервера — без подробностей
         return {
             "ok": True,
             "whatsapp": b.connection_state,

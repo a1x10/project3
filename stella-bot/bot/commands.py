@@ -35,8 +35,10 @@ def _parse_amount(s: str) -> int:
 
 class Commands:
     def __init__(self, db: DB, casino: Casino, stickers: StickerLibrary, evo: Evolution, settings: Settings,
-                 group_admin: Callable[[dict[str, Any], Person], Awaitable[bool]] | None = None):
+                 group_admin: Callable[[dict[str, Any], Person], Awaitable[bool]] | None = None,
+                 panel_unlock: Callable[[], Awaitable[None]] | None = None):
         self.group_admin = group_admin  # админ группы в WhatsApp (проверяет Brain по списку участников)
+        self.panel_unlock = panel_unlock
         self.db = db
         self.casino = casino
         self.stickers = stickers
@@ -88,6 +90,13 @@ class Commands:
             if was_paused or (strict and t != "ты тут"):
                 await self.db.update_chat(chat_id, paused_until=None)
                 return CasinoResult(["я снова здесь" if was_paused else "я здесь"])
+
+        # --- панель: снять блокировку подбора паролей (только владелец/админы из .env, только в личке) ---
+        if re.fullmatch(r"разблокируй панель", t) and self.panel_unlock is not None:
+            if not admin or chat["is_group"]:
+                return None
+            await self.panel_unlock()
+            return CasinoResult(["готово, вход в панель снова открыт"])
 
         # --- режим «встревания» в разговор ---
         m = re.fullmatch(r"режим\s+(\S+)", t)
