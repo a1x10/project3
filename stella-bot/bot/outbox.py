@@ -87,6 +87,11 @@ class Outbox:
         everyone = bool(EVERYONE_RE.search(text))
         mentioned: list[str] = []
         for p in sorted(people, key=lambda x: len(x.name), reverse=True):
+            if p.jid and p.jid.endswith("@tg.user"):  # Telegram: «@Вася» остаётся, клиент подсветит по id
+                for name in {p.name, p.push_name, p.nickname or ""}:
+                    if name and re.search(r"@" + re.escape(name) + r"(?![\wА-Яа-яЁё])", text, re.IGNORECASE):
+                        mentioned.append(f"{p.jid}|{name}")
+                continue
             lid = next((j for j in (p.jid, p.alt_jid) if j and j.endswith("@lid")), None)
             if lid and (prefer_lid or not p.phone):
                 visible, mention_id = jid_digits(lid), lid

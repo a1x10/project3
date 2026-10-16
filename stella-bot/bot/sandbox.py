@@ -52,7 +52,9 @@ def is_owner(settings: Any, ctx: "ToolContext") -> bool:
 
     if ctx.sender is None or not getattr(settings, "owner_phone", ""):
         return False
-    return (phone_of(ctx.sender.jid) or ctx.sender.phone or "") == settings.owner_phone
+    phone = phone_of(ctx.sender.jid) or ctx.sender.phone or ""
+    is_owner_fn = getattr(settings, "is_owner", None)
+    return is_owner_fn(phone) if is_owner_fn else phone == settings.owner_phone
 
 
 class CodeSandbox:

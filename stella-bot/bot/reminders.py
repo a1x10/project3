@@ -307,12 +307,17 @@ async def _deliver(brain: Any, rem: Reminders, row: dict[str, Any], now: datetim
 
 async def run_due(brain: Any, now: datetime | None = None) -> int:
     """Один проход: отправить всё, чему пора. Возвращает, сколько ушло."""
-    if getattr(brain, "connection_state", "open") in ("close", "connecting"):
-        return 0  # WhatsApp не на связи — подождём, напоминания никуда не денутся
+    wa_down = getattr(brain, "connection_state", "open") in ("close", "connecting")
+    if wa_down and getattr(getattr(brain, "evo", None), "tg", None) is None:
+        return 0  # WhatsApp не на связи (а Telegram не подключён) — подождём, напоминания никуда не денутся
     now = now or utcnow()
     rem = getattr(brain, "reminders", None) or Reminders(brain.db, brain.s)
     sent = 0
     for row in await rem.due(now):
+        if wa_down:  # WhatsApp лежит — шлём только в Telegram
+            chat = await brain.db.get_chat(row["chat_id"])
+            if not chat or not str(chat.get("jid", "")).endswith("@tg.chat"):
+                continue
         fails, next_try = rem.fails.get(row["id"], (0, None))
         if next_try and now < next_try:
             continue

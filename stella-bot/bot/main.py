@@ -108,6 +108,10 @@ def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
                 logging.getLogger("stella").warning("WEBHOOK_SECRET не задан — вебхук без проверки!")
             db = DB(s.database_url)
             evo = Evolution(s.evolution_url, s.evolution_api_key, s.evolution_instance)
+            if s.telegram_bot_token:  # та же Стелла и в Telegram: отправка — туда, откуда чат
+                from .telegram import Messenger, Telegram
+
+                evo = Messenger(evo, Telegram(s.telegram_bot_token))
             brain = Brain(s, db, evo, SwitchingLLM(s))
             await brain.start()
         app.state.brain = brain

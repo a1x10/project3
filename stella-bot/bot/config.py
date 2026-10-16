@@ -135,6 +135,11 @@ class Settings:
     admin_phones: list[str] = field(default_factory=lambda: [_digits(x) for x in _list("ADMIN_PHONES")])
     allow_dms: bool = field(default_factory=lambda: _bool("ALLOW_DMS", True))
     allowed_groups: list[str] = field(default_factory=lambda: _list("ALLOWED_GROUPS"))
+    # Telegram — та же Стелла, рядом с WhatsApp: токен от @BotFather; пусто — Telegram выключен
+    telegram_bot_token: str = field(default_factory=lambda: _str("TELEGRAM_BOT_TOKEN"))
+    telegram_owner_id: str = field(default_factory=lambda: _str("TELEGRAM_OWNER_ID"))  # твой id (@userinfobot)
+    # какие группы Telegram (id вида -100…); пусто — любые, куда добавили бота
+    telegram_allowed_chats: list[str] = field(default_factory=lambda: _list("TELEGRAM_ALLOWED_CHATS"))
 
     # --- «как человек» ---
     reply_delay_min: float = field(default_factory=lambda: _float("REPLY_DELAY_MIN", 2))
@@ -202,10 +207,17 @@ class Settings:
             return 0, 24
         return start, end
 
+    def is_owner(self, phone: str | None) -> bool:
+        """Владелец: номер OWNER_PHONE в WhatsApp или TELEGRAM_OWNER_ID в Telegram («tg<id>», см. util.phone_of)."""
+        if not phone:
+            return False
+        tg = self.telegram_owner_id.strip()
+        return phone == self.owner_phone or bool(tg) and phone == f"tg{tg}"
+
     def is_admin(self, phone: str | None) -> bool:
         if not phone:
             return False
-        return phone == self.owner_phone or phone in self.admin_phones
+        return self.is_owner(phone) or phone in self.admin_phones
 
 
 settings = Settings()

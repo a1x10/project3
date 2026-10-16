@@ -278,6 +278,11 @@ class Brain:
         # всегда: «сама пишет» можно включить в панели без перезапуска (тик сам смотрит INITIATIVE_PER_WEEK)
         self._background.append(asyncio.create_task(self._initiative_loop()))
         self._background.append(asyncio.create_task(reminder_loop(self)))
+        tg = getattr(self.evo, "tg", None)
+        if tg is not None:  # та же Стелла в Telegram: забираем сообщения long polling'ом
+            from .telegram import poll_forever
+
+            self._background.append(asyncio.create_task(poll_forever(self, tg)))
         if self.admin.enabled() and self.s.tunnel_metrics_url:
             self._background.append(asyncio.create_task(self._tunnel_loop()))
 
@@ -435,6 +440,9 @@ class Brain:
         return False
 
     def _allowed(self, inc: Incoming) -> bool:
+        if inc.is_group and inc.chat_jid.endswith("@tg.chat"):  # группы Telegram — свой список (пусто — любые)
+            allowed = self.s.telegram_allowed_chats
+            return not allowed or inc.chat_jid.split("@", 1)[0] in allowed or inc.chat_jid in allowed
         if inc.is_group:
             return not self.s.allowed_groups or inc.chat_jid in self.s.allowed_groups
         return self.s.allow_dms
@@ -498,7 +506,8 @@ class Brain:
             if heard:
                 inc.text = text = heard
                 await self.db.update_message_text(msg_id, text)
-        if inc.kind == "sticker" and self.s.sticker_collect:
+        if inc.kind == "sticker" and self.s.sticker_collect and not (inc.raw_message.get("stickerMessage") or {}).get(
+                "isAnimated"):  # анимированные (Telegram) — только превью, в коллекцию не берём
             self.spawn(self._collect_sticker(inc))
         if not self.over_budget():
             await self.memory.note_message(chat["id"])
@@ -581,7 +590,7 @@ class Brain:
 
         dl = self.downloader
         today = date.today().isoformat()
-        owner = bool(self.s.owner_phone) and (phone_of(inc.sender_jid) or "") == self.s.owner_phone
+        owner = self.s.is_owner(phone_of(inc.sender_jid))
         person = phone_of(inc.sender_jid) or inc.sender_alt or inc.sender_jid
         keys = [(f"viddl:{chat['id']}:{today}", self.s.video_dl_per_day),
                 (f"viddl:all:{today}", dl.GLOBAL_DAY)]
@@ -1006,7 +1015,9 @@ class Brain:
             return extra
         self.sandbox.model = self.s.sandbox_model
         extra += build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)
-        if chat["is_group"] or self.s.is_admin(phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else ""):
+        on_whatsapp = not chat["jid"].endswith("@tg.chat")
+        if on_whatsapp and (chat["is_group"]
+                            or self.s.is_admin(phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else "")):
             extra += build_group_tools(
                 self.db, self.s, ctx, api=GroupApi(self.evo), chat=chat,
                 is_group_admin=lambda c, p: self.is_group_admin(c, p, max_age=GROUP_ADMIN_FRESH),
@@ -1417,8 +1428,21 @@ class Brain:
         if self.s.owner_phone and self.connection_state == "open":
             try:
                 self.outbox.remember_sent(await self.evo.send_text(self.s.owner_phone, text))
+                return
             except EvolutionError:
                 log.warning("не смогла написать владельцу", exc_info=True)
+        await self._tell_owner_telegram(text)
+
+    async def _tell_owner_telegram(self, text: str) -> bool:
+        """Написать владельцу в Telegram (TELEGRAM_OWNER_ID), если Telegram подключён. True — ушло."""
+        if getattr(self.evo, "tg", None) is None or not self.s.telegram_owner_id.strip():
+            return False
+        try:
+            self.outbox.remember_sent(await self.evo.send_text(f"{self.s.telegram_owner_id.strip()}@tg.chat", text))
+            return True
+        except EvolutionError:
+            log.warning("не смогла написать владельцу в Telegram", exc_info=True)
+            return False
 
     async def unlock_panel(self) -> None:
         """«стелла разблокируй панель» от владельца: снять блокировки подбора паролей."""
@@ -1432,6 +1456,9 @@ class Brain:
         """Важное владельцу (вход в панель, подбор паролей): без ограничения частоты; если WhatsApp сейчас
         не на связи — сообщение подождёт и уйдёт после переподключения."""
         await self.alert(text)
+        if not self.s.owner_phone or self.connection_state != "open":
+            if await self._tell_owner_telegram(text):  # WhatsApp не на связи — значит, в Telegram
+                return
         if not self.s.owner_phone:
             return
         if self.connection_state != "open":
