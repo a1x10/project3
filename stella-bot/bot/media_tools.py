@@ -210,20 +210,21 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 done, _ = await asyncio.wait({task}, timeout=eta_s * 1.5 + 10)
                 if not done:
                     await wait_reply()
-                    await actions.say("ещё чуть-чуть, мультик почти готов ⏳")
+                    if not await is_paused():
+                        await actions.say("ещё чуть-чуть, мультик почти готов ⏳")
                 data = await task
             except runner.RenderError as exc:
-                await db.kv_add(day_key, -1)
-                await db.kv_add(media_key, -1)
+                await refund()
                 await wait_reply()
-                await actions.say(f"мультик не получился 😕 {exc}")
+                if not await is_paused():
+                    await actions.say(f"мультик не получился 😕 {exc}")
                 return
             except Exception:
                 log.exception("мультик: ошибка")
-                await db.kv_add(day_key, -1)
-                await db.kv_add(media_key, -1)
+                await refund()
                 await wait_reply()
-                await actions.say("мультик не получился 😕 попробуй ещё раз")
+                if not await is_paused():
+                    await actions.say("мультик не получился 😕 попробуй ещё раз")
                 return
             finally:
                 if not task.done():
@@ -231,7 +232,23 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 runner.STATE.busy_chats.discard(ctx.chat_id)
             await wait_reply()
             log.info("мультик готов за %.0f с (обещала %.0f)", time.monotonic() - started, eta_s)
-            await actions.send_file(media.MediaFile("video", data, media.MIME["mp4"], "cartoon.mp4"), caption)
+            if await is_paused():  # пока рисовался, чат поставили на паузу — молчим
+                await refund()
+                return
+            sent = await actions.send_file(media.MediaFile("video", data, media.MIME["mp4"], "cartoon.mp4"), caption)
+            if sent is False:
+                await refund()
+
+        async def refund() -> None:  # ролик не дошёл — дневной лимит не тратим
+            await db.kv_add(day_key, -1)
+            await db.kv_add(media_key, -1)
+
+        async def is_paused() -> bool:
+            check = getattr(actions, "paused", None)
+            try:
+                return bool(check and await check())
+            except Exception:
+                return False
 
         async def release() -> None:  # сразу после её сообщения; очередь ответов чата не ждёт рендер
             if not getattr(ctx, "replied", 0):
@@ -371,7 +388,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             "делаешь мультик и сколько ждать. Пока бета: kind — cat, fox, bunny, bear, toy (3D-зверёк); shape — gem, "
             "star, donut, ball; фон — meadow (день), sunset, night. cast: {id: {kind, color?, eyes?}} до 4; "
             "things: {id: {shape, color?, size? 0.4–1.4}} до 3; scenes (1–4): {seconds, background, zoom? 1–1.3, "
-            "place: {id: {x 0..1, y (только предметам), facing?}}, events: [{t: секунда сцены, who, do?: walk (to: "
+            "place: {id: {x 0..1, y (только предметам), facing?}} — не указан: в кадре все; персонажей сервер сам "
+            "раздвинет, events: [{t: секунда сцены, who, do?: walk (to: "
             "x)|wave|jump|dance|spin, say?: до 80 знаков, emotion?, dur?}, {t, fx: confetti, x, y}]}. Пиши живо: "
             "4–10 событий на сцену, короткие реплики, смена эмоций. Эмодзи не рисуются (можно ♥ ★ ♪ ☺).",
             cartoon_schema,

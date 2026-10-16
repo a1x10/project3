@@ -15,7 +15,7 @@ GOOD = {
     "caption": "Мурка нашла кристалл",
     "cast": {"murka": {"kind": "cat", "color": "#ff9f43"}, "zhora": {"kind": "лиса"}, "bobo": {"kind": "toy"}},
     "things": {"gem": {"shape": "gem"}},
-    "scenes": [{"seconds": 4, "background": "meadow",
+    "scenes": [{"seconds": 5.5, "background": "meadow",
                 "place": {"murka": {"x": 0.2}, "zhora": {"x": 0.8}, "bobo": {"x": 0.5}, "gem": {"x": 0.5, "y": 0.3}},
                 "events": [{"t": 0, "who": "murka", "do": "walk", "to": 0.4},
                            {"t": 0.5, "who": "zhora", "do": "wave", "say": "Привет! ❤️🎉"},
@@ -293,3 +293,85 @@ async def test_disabled_and_schema(brain, fake_render):
 
     with pytest.raises(ToolError, match="выключены"):
         await tools["make_cartoon"].handler(GOOD)
+
+
+# ---------- после ревью ----------
+def test_place_ids_with_capitals_and_spaces():
+    plan, _, _ = spec.parse({"cast": {"Барсик": {"kind": "cat"}, "Лиса Алиса": {"kind": "fox"}},
+                             "scenes": [{"seconds": 3, "place": {"Барсик": {"x": 0.8, "facing": "left"},
+                                                                 "Лиса Алиса": {"x": 0.2, "facing": "right"}},
+                                         "events": [{"who": "Барсик", "say": "Привет"}]}]})
+    place = plan["scenes"][0]["place"]
+    assert place["барсик"]["x"] > 0.6 and place["барсик"]["face"] == -1
+    assert place["лиса_алиса"]["x"] < 0.4 and place["лиса_алиса"]["face"] == 1
+
+
+@pytest.mark.parametrize("fmt", ["square", "tall", "wide"])
+def test_characters_do_not_overlap_or_leave_frame(fmt):
+    cast = {k: {"kind": k} for k in ("cat", "fox", "bear", "bunny")}
+    raw = {"format": fmt, "cast": cast, "scenes": [
+        {"seconds": 3, "events": []},
+        {"seconds": 3, "place": {"cat": {"x": 0.4}, "fox": {"x": 0.45}, "bear": {"x": 0.02}},
+         "events": [{"who": "cat", "do": "walk", "to": 0.99}]}]}
+    plan, _, _ = spec.parse(raw)
+    w, h = plan["size"]
+    for sc in plan["scenes"]:
+        zoom = sc["camera"][1]["zoom"]
+        xs = sorted((p["x"], plan["cast"][k]) for k, p in sc["place"].items() if k in plan["cast"])
+        for x, c in xs:
+            half = spec._char_w(c, w, h) / 2
+            assert x - half >= 0.5 - 0.5 / zoom - 1e-6 and x + half <= 0.5 + 0.5 / zoom + 1e-6
+        for (a, ca), (b, _) in zip(xs, xs[1:], strict=False):
+            assert b - a >= spec._char_w(ca, w, h) * 0.75  # лица не закрывают друг друга
+        for e in sc["events"]:
+            if e.get("act") == "walk":
+                assert e["to"][0] + spec._char_w(plan["cast"][e["who"]], w, h) / 2 <= 0.5 + 0.5 / zoom + 1e-6
+
+
+def test_scene_grows_to_fit_events_and_place_omitted_means_everyone():
+    plan, warnings, _ = spec.parse({"cast": {"cat": {"kind": "cat"}, "fox": {"kind": "fox"}, "bear": {"kind": "bear"}},
+                                    "scenes": [{"seconds": 4, "events": [
+                                        {"t": 0.5, "who": "cat", "do": "wave"},
+                                        {"t": 3.5, "who": "cat", "say": "Это длинная реплика котика про звёзды"},
+                                        {"t": 5, "who": "cat", "do": "jump"}]}]})
+    sc = plan["scenes"][0]
+    assert sc["dur"] >= 5.9 and any("продлила" in w for w in warnings)
+    assert set(sc["place"]) == {"cat", "fox", "bear"}
+
+
+def test_long_bubble_text_is_shrunk_not_cut():
+    import cairocffi as cairo
+
+    from bot.anim_beta import frame
+
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 720, 720)
+    ctx = cairo.Context(surf)
+    text = spec.clean_text("Привет, друзья! Сегодня мы пойдём гулять в большой зелёный парк и будем там играть", 80)
+    ctx.set_font_size(30)
+    ctx.select_font_face("DejaVu Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    assert len(frame._wrap(ctx, "Ш" * 80, 300)) > 1  # слово без пробелов режется
+    frame.bubble(ctx, 720, 720, text, 360, 400, 1.0)
+    frame.bubble(ctx, 720, 720, "Ш" * 80, 360, 400, 1.0)
+
+
+async def test_paused_chat_gets_no_video_and_limit_is_refunded(brain, fake_render):
+    from datetime import date
+
+    fake_render["delay"] = 0.3
+
+    async def talk(tools, prompt):
+        await tools["make_cartoon"].handler(GOOD)
+        chat = await brain.db.get_chat_by_jid("stella", "120363000000000001@g.us")
+        from datetime import timedelta
+
+        from bot.util import utcnow
+
+        await brain.db.update_chat(chat["id"], paused_until=utcnow() + timedelta(minutes=5))
+        return "рисую"
+
+    brain.llm.queue = [talk]
+    await feed(brain, upsert("стелла мультик"))
+    assert not [m for m in brain.evo.sent if m["type"] == "media"]
+    chat = await brain.db.get_chat_by_jid("stella", "120363000000000001@g.us")
+    used = await brain.db.kv_get(f"anim:{chat['id']}:{date.today().isoformat()}")
+    assert not used or used[1] == 0

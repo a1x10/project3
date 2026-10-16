@@ -173,27 +173,72 @@ def confetti(ctx, w: int, h: int, ev: dict, t: float, seed: int) -> int:
     return n
 
 
-def bubble(ctx, w: int, h: int, text: str, ax: float, ay: float, scale: float) -> None:
-    """Пузырь речи с хвостиком к говорящему; текст переносится по словам; рамка не выходит за кадр."""
-    ctx.select_font_face("DejaVu Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    fs = 30 * scale
-    ctx.set_font_size(fs)
-    max_w = w * (0.38 if w >= h else 0.7)
-    words, lines, line = text.split(), [], ""
-    for wd in words:
+def _wrap(ctx, text: str, max_w: float) -> list[str]:
+    """Перенос по словам; слово длиннее строки режется по буквам."""
+    lines: list[str] = []
+    line = ""
+    for wd in text.split():
+        while ctx.text_extents(wd)[4] > max_w and len(wd) > 1:  # «Шшшшш…» без пробелов
+            cut = len(wd) - 1
+            while cut > 1 and ctx.text_extents(wd[:cut])[4] > max_w:
+                cut -= 1
+            if line:
+                lines.append(line)
+                line = ""
+            lines.append(wd[:cut])
+            wd = wd[cut:]
         probe = (line + " " + wd).strip()
         if ctx.text_extents(probe)[4] > max_w and line:
             lines.append(line)
             line = wd
         else:
             line = probe
-    lines.append(line)
-    lines = lines[:4]
-    tw = min(max(ctx.text_extents(ln)[4] for ln in lines), w - 60 * scale)
+    if line:
+        lines.append(line)
+    return lines or [""]
+
+
+def bubble(ctx, w: int, h: int, text: str, ax: float, ay: float, scale: float,
+           taken: list | None = None, draw: bool = True, at: tuple | None = None) -> tuple:
+    """Нарисовать пузырь (или только найти ему место: draw=False). Возвращает (bx, by) — где он встал."""
+    """Пузырь речи с хвостиком к говорящему; текст переносится по словам; рамка не выходит за кадр."""
+    ctx.select_font_face("DejaVu Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    max_w = w * (0.42 if w > h else 0.62 if w == h else 0.8)
+    fs = 30 * scale
+    for _ in range(5):  # мельче шрифт, пока реплика не влезет в 4 строки
+        ctx.set_font_size(fs)
+        lines = _wrap(ctx, text, max_w)
+        if len(lines) <= 4:
+            break
+        fs *= 0.86
+    if len(lines) > 4:
+        lines = lines[:4]
+        lines[-1] = lines[-1].rstrip(" ,.!?…")[:-1] + "…"
+    tw = min(max(ctx.text_extents(ln)[4] for ln in lines), max_w)
     pad = 18 * scale
     bw, bh = tw + 2 * pad, len(lines) * fs * 1.2 + 2 * pad - fs * 0.2
     bx = min(max(ax - bw / 2, 10), w - bw - 10)
     by = max(ay - bh - 40 * scale, 10)
+    if taken:  # два пузыря одновременно — второй не должен закрывать первый
+        def hits(x, y):
+            return any(x < tx + tw_ + 6 and tx < x + bw + 6 and y < ty + th + 6 and ty < y + bh + 6
+                       for tx, ty, tw_, th in taken)
+
+        if hits(bx, by):
+            options = [(bx, ty - bh - 10) for tx, ty, tw_, th in taken] + \
+                      [(bx, ty + th + 10) for tx, ty, tw_, th in taken] + \
+                      [(tx + tw_ + 10, by) for tx, ty, tw_, th in taken] + [(tx - bw - 10, by) for tx, ty, tw_, th in taken]
+            for x, y in options:
+                x, y = min(max(x, 10), w - bw - 10), min(max(y, 10), h - bh - 10)
+                if not hits(x, y):
+                    bx, by = x, y
+                    break
+    if at is not None:
+        bx, by = at
+    if taken is not None:
+        taken.append((bx, by, bw, bh))
+    if not draw:
+        return bx, by
     r = 22 * scale
     ctx.new_path()
     ctx.arc(bx + bw - r, by + r, r, -math.pi / 2, 0)
@@ -216,6 +261,7 @@ def bubble(ctx, w: int, h: int, text: str, ax: float, ay: float, scale: float) -
         ctx.move_to(bx + (bw - ctx.text_extents(ln)[4]) / 2, y)
         ctx.show_text(ln)
         y += fs * 1.2
+    return bx, by
 
 
 def render_frame(plan: dict, i: int, surf, stats: dict | None = None) -> None:
@@ -230,6 +276,8 @@ def render_frame(plan: dict, i: int, surf, stats: dict | None = None) -> None:
     sky = SKIES.get(scene.get("bg", "meadow"), SKIES["meadow"])
     bg = bg_static(w, h, scene.get("bg", "meadow"), M)
     ox, oy = (cam["x"] - 0.5) * w, (cam["y"] - 0.5) * h
+    ctx.set_source_rgb(*sky["ground"][1])  # подложка: кадр всегда закрашен целиком, без остатков прошлого
+    ctx.paint()
     ctx.save()
     ctx.translate(w / 2, h / 2)
     ctx.scale(z, z)
@@ -303,10 +351,14 @@ def render_frame(plan: dict, i: int, surf, stats: dict | None = None) -> None:
             n += confetti(ctx, w, h, ev, t, seed)
     ctx.restore()  # камера
     # пузыри — в экранных координатах поверх мира; позиция через камеру
-    for text, (hx, hy) in bubbles:
+    taken: list = []
+    placed = []
+    for text, (hx, hy) in bubbles:  # сначала места, потом рисуем с конца: хвостик позднего уходит под ранний
         sx = (hx - w / 2 - ox) * z + w / 2
         sy = (hy - h / 2 - oy) * z + h / 2
-        bubble(ctx, w, h, text, sx, sy, ref)
+        placed.append((text, sx, sy, bubble(ctx, w, h, text, sx, sy, ref, taken, draw=False)))
+    for text, sx, sy, pos in reversed(placed):
+        bubble(ctx, w, h, text, sx, sy, ref, None, at=pos)
     ctx.set_source_surface(vignette(w, h), 0, 0)
     ctx.paint()
     # затемнение в начале и в конце ролика

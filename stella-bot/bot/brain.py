@@ -135,12 +135,19 @@ class _ChatActions:
         except EvolutionError:
             log.warning("не удалось отправить опрос", exc_info=True)
 
-    async def send_file(self, file: Any, caption: str = "") -> None:
+    async def send_file(self, file: Any, caption: str = "") -> bool:
         try:
             await self.brain.outbox.send_media(self.chat, file, caption)
         except EvolutionError:
             log.warning("не удалось отправить файл", exc_info=True)
             await self.say("не получилось отправить файл 😕")
+            return False
+        return True
+
+    async def paused(self) -> bool:
+        """Чат сейчас на паузе (её попросили помолчать или пишет владелец) — фоновое не отправляем."""
+        chat = await self.brain.db.get_chat(self.chat["id"])
+        return chat is not None and chat_paused(chat)
 
     async def fetch_media(self, key: dict[str, Any], message: dict[str, Any] | None) -> bytes | None:
         try:
