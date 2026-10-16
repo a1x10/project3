@@ -359,6 +359,7 @@ def draw_title3d(ctx: cairo.Context, title: PlannedTitle, t: float, w: int, h: i
     """3D-заголовок на кадре w×h в момент t (секунды ролика): буквы падают/крутятся/выпрыгивают по очереди."""
     if t < title.t0 or t > title.t1:
         return
+    ctx.new_path()
     text, _ = clean_text(title.text, catalog.MAX_TITLE_CHARS)
     text = text.strip()
     if not text:
@@ -422,6 +423,7 @@ def draw_word(ctx: cairo.Context, text: str, x: float, y: float, em: float, *, c
               material: str | None, anim: str, t: float, phase: float, cache: dict, quality: str = "normal",
               max_w: float | None = None) -> None:
     """Надпись-предмет: строка объёмных букв с центром (x, y). em — пикселей на em (≈ высота строки)."""
+    ctx.new_path()
     text, _ = clean_text(text, catalog.MAX_TEXT3D_CHARS)
     text = text.replace("\n", " ").strip()
     if not text:

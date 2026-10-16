@@ -21,7 +21,7 @@ from ..palette import hx, luminance, mix
 from .mesh import cached, lathe, lod_for_radius, lod_level, rounded_profile
 from .props3d import Kit
 from .render3d import (OBJECT_BUDGET, Camera3D, Obj, draw_parts, estimate_tris, outline_px, sprite_camera, stats,
-                       surface_affine)
+                       surface_affine, world)
 from .shade import Material
 
 FaceFn = Callable[[Any, Any, Pose, float, float, float, float], None]
@@ -134,6 +134,7 @@ def _build_robot(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, acc
     # лицо робота-3D — экран с огоньками (его рисует face_fn: у chars.draw_face для robot3d — экран)
     head.decals.append(_face_decal(face_fn, look, pose, (0.0, 0.0, 0.995), (0.0, 0.0, 1.0), 0.42))
     head.clip_decals = True
+    k.head, k.head_r = head, 0.42
     stalk = cached(k.cache, ("lathe", "stalk", 8), lambda: lathe(rounded_profile(1.0, -1.0, 1.0, 0.0), 8,
                                                                     convex=True))
     wob = 0.12 * math.sin(k.t * 4.0)
@@ -199,6 +200,7 @@ def _build_penguin(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
     fz = math.sqrt(max(0.0, 1 - fy * fy))
     body.decals.append(_face_decal(face_fn, look, pose, (0.0, fy, fz), (0.0, fy * 0.3, fz), 0.27))
     body.clip_decals = True
+    k.head, k.head_r = body, 0.5
 
     flap = float(pose.wing_flap) if math.isfinite(pose.wing_flap) else 0.0
     flip_m = k.sph(k.lv(0.55, 10))
@@ -241,6 +243,7 @@ def _build_snowman(k: Kit, pose: Pose, look: Any, face_fn: FaceFn, color: RGB, a
     head = k.add(k.sph(k.lv(0.8, 12)), snow, pos=(0, 0.25, 0), scale=0.27, parent=neck, bias=-0.02)
     head.decals.append(_face_decal(face_fn, look, pose, (0.0, 0.18, 0.98), (0.0, 0.18, 0.98), 0.2))
     head.clip_decals = True
+    k.head, k.head_r = head, 0.3
     hat_pv = Obj(None, pos=(0.0, 0.47, 0.0), rot=(-0.12, 0.0, 0.14), parent=neck)
     hat_m = cached(k.cache, ("lathe", "hat", k.lv(0.7, 12)), lambda: lathe(_hat_profile(), k.lv(0.7, 12)))
     k.add(hat_m, Material((0.17, 0.15, 0.24), "plastic"), parent=hat_pv, bias=-0.2)
@@ -350,7 +353,7 @@ def draw_toy(ctx: cairo.Context, look: Any, pose: Pose, x: float, y: float, heig
         root = Obj(None, rot=(0.0, fc * (BASE_TURN + 0.9 * yaw), 0.0), parent=back)
         kit = Kit(cache, seg, Material(color), _num(pose.t, 0.0, -1e6, 1e6), root)
         BUILDERS[base](kit, pose, look, face_fn, color, accent, fc)
-        if estimate_tris(kit.parts) <= OBJECT_BUDGET or seg <= 8:
+        if estimate_tris(kit.parts, cam) <= OBJECT_BUDGET or seg <= 8:
             break
         lower = lod_level(seg - 1)
         if lower >= seg:
@@ -363,4 +366,36 @@ def draw_toy(ctx: cairo.Context, look: Any, pose: Pose, x: float, y: float, heig
     if alpha < 1.0:
         ctx.pop_group_to_source()
         ctx.paint_with_alpha(alpha)
+    _draw_marks(ctx, kit, cam, pose, x, y, H, fc, alpha)
+
+
+def _draw_marks(ctx: cairo.Context, kit: Kit, cam: Camera3D, pose: Pose, x: float, y: float, H: float, fc: int,
+                alpha: float) -> None:
+    """Значки над головой (сердечки, капля, «?», зззз…) и облачко «пуф» — теми же рисовалками, что у 2D-героев
+    (chars.marks): у 2D-кукол их рисует draw_character, у игрушек — здесь."""
+    marks = getattr(pose, "marks", ()) or ()
+    if not marks or kit.head is None:
+        return
+    try:
+        from ..chars.marks import draw_mark, draw_puff
+    except ImportError:  # пакета персонажей нет (тесты 3D отдельно) — без значков
+        return
+    _, T = world(kit.head)
+    hx_, hy_ = (float(v) for v in cam.project(T[None])[0])
+    u = H / 300.0  # пикселей на единицу куклы (рост 300)
+    r_units = kit.head_r * cam.px_per_unit() / max(u, 1e-6)
+    for item in marks:
+        try:
+            kind, p = str(item[0]), float(item[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not math.isfinite(p):
+            continue
+        ctx.save()
+        ctx.new_path()
+        if kind == "_puff":
+            draw_puff(ctx, p, x, y - H * 0.42 + _num(pose.bob, 0.0, -400.0, 100.0) * u, u)
+        elif not kind.startswith("_") and alpha > 0.02:
+            draw_mark(ctx, kind, p, hx_, hy_, u, fc, r_units, _num(pose.t, 0.0, -1e6, 1e6))
+        ctx.restore()
 
