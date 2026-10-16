@@ -154,12 +154,20 @@ class FakeStream:
 
 
 class FakeClient:
-    def __init__(self, text=PAGE, stop="end_turn"):
+    """replies — по ответу (текст, stop_reason) на каждый запрос; последний повторяется."""
+
+    def __init__(self, text=PAGE, stop="end_turn", replies=None):
         self.calls = []
-        self.reply = SimpleNamespace(stop_reason=stop, content=[SimpleNamespace(type="thinking", thinking=""),
-                                                                 SimpleNamespace(type="text", text=text)],
-                                     usage=SimpleNamespace(input_tokens=3000, output_tokens=20000))
+        self.replies = replies or [(text, stop)]
         self.messages = SimpleNamespace(stream=lambda **kw: FakeStream(self, kw))
+        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=lambda **kw: FakeStream(self, kw)))
+
+    @property
+    def reply(self):
+        text, stop = self.replies[min(len(self.calls), len(self.replies)) - 1]
+        return SimpleNamespace(stop_reason=stop, content=[SimpleNamespace(type="thinking", thinking=""),
+                                                          SimpleNamespace(type="text", text=text)],
+                               usage=SimpleNamespace(input_tokens=3000, output_tokens=20000))
 
 
 async def test_generate_asks_the_strong_model_with_design_prompt(settings, monkeypatch):
@@ -169,17 +177,21 @@ async def test_generate_asks_the_strong_model_with_design_prompt(settings, monke
     call = fake.calls[0]
     assert res.html == PAGE and res.cost_usd > 0.3
     assert call["model"] == "claude-opus-5-5" and call["thinking"] == {"type": "adaptive"}
-    assert call["output_config"] == {"effort": "max"} and call["max_tokens"] == 128000
+    assert call["output_config"] == {"effort": "max", "task_budget": {"type": "tokens", "total": 100000}}
+    assert call["betas"] == ["task-budgets-2026-03-13"] and call["max_tokens"] == 128000
     assert "lib/three.js" in call["system"] and "Unbounded" in call["system"]
     image, text = call["messages"][0]["content"]
     assert image["type"] == "image" and "__PHOTO__" in text["text"] and BRIEF in text["text"]
 
 
 async def test_generate_errors_keep_the_cost(settings, monkeypatch):
-    monkeypatch.setattr(html_studio, "_client", FakeClient(PAGE, stop="max_tokens"))
+    cut = PAGE.replace("</html>", "")  # оборвалось на полуслове
+    fake = FakeClient(replies=[(cut, "max_tokens")])
+    monkeypatch.setattr(html_studio, "_client", fake)
     with pytest.raises(html_studio.StudioError, match="слишком большой") as exc:
         await html_studio.generate(settings, BRIEF, "x")
-    assert exc.value.cost_usd > 0
+    assert exc.value.cost_usd > 0.8  # обе попытки посчитаны
+    assert [c["output_config"]["effort"] for c in fake.calls] == ["max", "high"]
     monkeypatch.setattr(html_studio, "_client", FakeClient("не буду", stop="refusal"))
     with pytest.raises(html_studio.StudioError, match="отказались"):
         await html_studio.generate(settings, BRIEF, "x")
@@ -194,7 +206,7 @@ async def test_polish_call_sees_draft_screenshots_and_errors(settings, monkeypat
                   ["ошибка JS: TypeError: x is null"], overflow=True)
     await html_studio.generate(settings, BRIEF, "x", draft="<h1>черновик</h1>", shots=shots)
     call = fake.calls[0]
-    assert call["output_config"] == {"effort": "high"}  # доводка — со своим усилием
+    assert call["output_config"]["effort"] == "high"  # доводка — со своим усилием
     blocks = call["messages"][0]["content"]
     texts = "\n".join(b["text"] for b in blocks if b["type"] == "text")
     assert "<h1>черновик</h1>" in texts and "TypeError: x is null" in texts and "горизонтальная прокрутка" in texts
@@ -700,3 +712,33 @@ async def test_overload_is_retried_and_api_errors_are_readable(settings, monkeyp
     with pytest.raises(html_studio.StudioError, match="ANTHROPIC_API_KEY"):
         await html_studio.generate(settings, BRIEF, "x")
     assert len(calls) == 1  # неверный ключ не повторяем
+
+
+async def test_max_tokens_retries_one_effort_lower(settings, monkeypatch):
+    fake = FakeClient(replies=[("<!doctype html><html><body>обрыв", "max_tokens"), (PAGE, "end_turn")])
+    monkeypatch.setattr(html_studio, "_client", fake)
+    res = await html_studio.generate(settings, BRIEF, "x")
+    assert res.html == PAGE and res.cost_usd == pytest.approx(2 * 0.412)
+    assert [c["output_config"]["effort"] for c in fake.calls] == ["max", "high"]
+    # документ целиком уже написан, а дальше модель продолжала болтать — берём его
+    fake = FakeClient(replies=[(PAGE + "\nи ещё пояснения…", "max_tokens")])
+    monkeypatch.setattr(html_studio, "_client", fake)
+    assert (await html_studio.generate(settings, BRIEF, "x")).html == PAGE and len(fake.calls) == 1
+    settings.html_effort = "high"  # ниже high не опускаемся
+    fake = FakeClient(replies=[("<html>обрыв", "max_tokens")])
+    monkeypatch.setattr(html_studio, "_client", fake)
+    with pytest.raises(html_studio.StudioError, match="слишком большой"):
+        await html_studio.generate(settings, BRIEF, "x")
+    assert len(fake.calls) == 1
+
+
+async def test_budget_rejected_by_api_falls_back(settings, monkeypatch):
+    calls = _sdk_client(monkeypatch, [(400, "output_config.task_budget: unknown field"), "ok"])
+    res = await html_studio.generate(settings, BRIEF, "x")
+    assert res.html == PAGE and len(calls) == 2
+    import json as _json
+
+    first, second = (_json.loads(c.content) for c in calls)
+    assert "task_budget" in first["output_config"] and "task_budget" not in second["output_config"]
+    assert calls[0].headers.get("anthropic-beta") == "task-budgets-2026-03-13"
+    assert "task-budgets" not in (calls[1].headers.get("anthropic-beta") or "")

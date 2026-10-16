@@ -295,8 +295,6 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
                    draft: str | None = None, shots: Any = None, kind: str = "page") -> StudioResult:
     """Написать страницу по заданию (или, с draft и shots, доделать черновик по скриншотам).
     image — фото из чата, которое модель видит (вставляется как __PHOTO__)."""
-    import anthropic
-
     from .llm.messages_api import estimate_cost
 
     model = settings.html_model
@@ -320,26 +318,85 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
         if problems:
             notes.append("Проверка нашла:\n" + "\n".join(f"- {p}" for p in problems))
         content.append({"type": "text", "text": "\n".join(notes) + "\n\n" + (DECK_POLISH if kind == "deck" else POLISH)})
-    kwargs: dict[str, Any] = {
+    base: dict[str, Any] = {
         "model": model, "max_tokens": settings.html_max_tokens, "system": DECK_SYSTEM if kind == "deck" else SYSTEM,
         "messages": [{"role": "user", "content": content if len(content) > 1 else text}], **_thinking(model),
     }
-    if effort:
-        kwargs["output_config"] = {"effort": effort}
+    budget = int(getattr(settings, "html_task_budget", 0) or 0)
     started = time.monotonic()
+    cost = 0.0
+    while True:
+        msg = await _call(settings, base, effort, budget)
+        if msg is _NO_BUDGET:  # API не принял бюджет — без него
+            budget = 0
+            continue
+        cost += estimate_cost(model, msg.usage)
+        out_tokens = getattr(msg.usage, "output_tokens", 0) or 0
+        body = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        log.info("страница%s: %.0f с, %d токенов (код — %d знаков), effort %s, %.3f$, %s", " (доводка)" if draft else "",
+                 time.monotonic() - started, out_tokens, len(body), effort, cost, msg.stop_reason)
+        if msg.stop_reason == "refusal":
+            raise StudioError("такую страницу делать отказались", cost)
+        if msg.stop_reason == "max_tokens" and "</html>" not in body.lower():
+            lower = _lower_effort(effort)
+            if lower is None:
+                raise StudioError("страница получилась слишком большой — попробуй попроще", cost)
+            # упёрлись в потолок длины (обдумывание тоже его ест) — ещё раз, подумав меньше
+            log.warning("студия: упёрлась в max_tokens на effort %s — повторяю на %s", effort, lower)
+            effort = lower
+            continue
+        try:
+            html = extract_html(body)
+        except StudioError as exc:
+            exc.cost_usd = cost
+            raise
+        return StudioResult(html, cost, time.monotonic() - started, out_tokens)
+
+
+_NO_BUDGET = object()
+TASK_BUDGET_BETA = "task-budgets-2026-03-13"
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _lower_effort(effort: str | None) -> str | None:
+    """Повтор после потолка длины — сразу на high (думает заметно меньше, страница остаётся сильной); с high и ниже
+    не повторяем: каждая попытка стоит денег."""
+    if effort not in EFFORTS or EFFORTS.index(effort) <= EFFORTS.index("high"):
+        return None
+    return "high"
+
+
+async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget: int) -> Any:
+    """Один запрос потоком: при обрыве связи и перегрузке — ещё попытка. budget — сколько токенов модель видит
+    на всю работу (обдумывание + код) и под это распределяет силы (бета task budgets)."""
+    import anthropic
+
     cl = client(settings.html_timeout)
+    kwargs = dict(base)
+    config: dict[str, Any] = {}
+    if effort:
+        config["effort"] = effort
+    if budget:
+        config["task_budget"] = {"type": "tokens", "total": max(20000, budget)}
+    if config:
+        kwargs["output_config"] = config
 
     async def call() -> Any:
+        if budget:
+            async with cl.beta.messages.stream(betas=[TASK_BUDGET_BETA], **kwargs) as stream:
+                return await stream.get_final_message()
         async with cl.messages.stream(**kwargs) as stream:
             return await stream.get_final_message()
 
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            msg = await asyncio.wait_for(call(), timeout=settings.html_timeout)
-            break
+            return await asyncio.wait_for(call(), timeout=settings.html_timeout)
         except asyncio.TimeoutError as exc:
             raise StudioError("страница делалась слишком долго — попробуй попроще") from exc
         except anthropic.APIStatusError as exc:
+            if budget and exc.status_code == 400 and "budget" in str(exc).lower():
+                log.warning("студия: бюджет токенов не принят (%s) — без него", str(exc)[:200])
+                return _NO_BUDGET
             if exc.status_code in RETRY_STATUS and attempt < ATTEMPTS:
                 log.warning("студия: %s — повторяю через %d с", exc.status_code, RETRY_PAUSE)
                 await asyncio.sleep(RETRY_PAUSE)
@@ -353,22 +410,7 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
                 continue
             log.exception("студия: связь оборвалась")
             raise StudioError(f"связь со студией оборвалась ({type(exc).__name__}) — попробуй ещё раз") from exc
-    cost = estimate_cost(model, msg.usage)
-    seconds = time.monotonic() - started
-    out_tokens = getattr(msg.usage, "output_tokens", 0) or 0
-    log.info("страница%s: %.0f с, %d токенов, %.3f$, %s", " (доводка)" if draft else "", seconds, out_tokens, cost,
-             msg.stop_reason)
-    if msg.stop_reason == "refusal":
-        raise StudioError("такую страницу делать отказались", cost)
-    if msg.stop_reason == "max_tokens":
-        raise StudioError("страница получилась слишком большой — попробуй попроще", cost)
-    body = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-    try:
-        html = extract_html(body)
-    except StudioError as exc:
-        exc.cost_usd = cost
-        raise
-    return StudioResult(html, cost, seconds, out_tokens)
+    raise StudioError("студия недоступна")
 
 
 async def make(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
