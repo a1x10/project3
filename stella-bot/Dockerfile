@@ -12,14 +12,14 @@ RUN apt-get update \
 WORKDIR /app
 # WITH_VOICE=false — собрать без голосовых (образ меньше на ~480 МБ)
 ARG WITH_VOICE=true
-# WITH_BROWSER=false — без браузера (образ меньше на ~600 МБ): HTML-страницы без доводки по скриншотам
+# WITH_BROWSER=false — без браузера (образ меньше на ~350 МБ): HTML-страницы без доводки по скриншотам
 ARG WITH_BROWSER=true
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 COPY requirements.txt requirements-voice.txt requirements-browser.txt ./
 RUN pip install -r requirements.txt \
     && if [ "$WITH_VOICE" = "true" ]; then pip install -r requirements-voice.txt; fi \
     && if [ "$WITH_BROWSER" = "true" ]; then pip install -r requirements-browser.txt \
-         && python -m playwright install --with-deps chromium \
+         && python -m playwright install --with-deps --only-shell chromium \
          && apt-get install -y --no-install-recommends fonts-noto-color-emoji \
          && rm -rf /var/lib/apt/lists/*; fi
 # меньше «пустой» памяти у моделей голоса
