@@ -232,7 +232,8 @@ async def test_run_due_survives_errors_and_retries(brain):
     assert await run_due(brain, at) == 0  # ничего не ушло, но цикл жив
     assert (await rem.get(chat["id"], good))["done"] is False  # попробуем ещё раз
     brain.evo.send_text = real_send
-    assert await run_due(brain, at + timedelta(seconds=30)) == 1
+    assert await run_due(brain, at + timedelta(seconds=30)) == 0  # после сбоя — пауза, а не долбёжка каждые 30 с
+    assert await run_due(brain, at + timedelta(minutes=3)) == 1
     assert (await rem.get(chat["id"], good))["done"] is True
     assert brain.evo.texts() == ["⏰ @77011111111, напоминаю: дз"]
 

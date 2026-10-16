@@ -32,7 +32,6 @@ from sqlalchemy import (
 from .db import DB, Person, metadata
 from .humanize import Segment
 from .llm.base import ToolSpec
-from .outbox import EVERYONE_RE
 from .util import mask_phone, norm, utcnow
 
 if TYPE_CHECKING:
@@ -101,6 +100,7 @@ class Reminders:
     def __init__(self, db: DB, settings: Any):
         self.db = db
         self.s = settings
+        self.fails: dict[int, tuple[int, datetime]] = {}  # id -> (сколько раз не ушло, когда пробовать снова)
 
     # ---------- время ----------
     @property
@@ -271,7 +271,7 @@ def _mentionable(person: Person) -> bool:
 
 def reminder_text(text: str, person: Person | None, late: timedelta = timedelta(0)) -> str:
     """«⏰ @Вася, напоминаю: скинуть дз». «@все» из текста убираем, чтобы напоминание не тегало весь чат."""
-    body = EVERYONE_RE.sub(lambda m: m.group(0)[1:], text.strip())
+    body = re.sub(r"@+(все|всем|всех|all|everyone)(?![\wА-Яа-яЁё])", r"\1", text.strip(), flags=re.IGNORECASE)
     if person is None:
         msg = f"⏰ напоминаю: {body}"
     else:
@@ -313,11 +313,25 @@ async def run_due(brain: Any, now: datetime | None = None) -> int:
     rem = getattr(brain, "reminders", None) or Reminders(brain.db, brain.s)
     sent = 0
     for row in await rem.due(now):
+        fails, next_try = rem.fails.get(row["id"], (0, None))
+        if next_try and now < next_try:
+            continue
         try:
             if await _deliver(brain, rem, row, now):
                 sent += 1
-        except Exception:
-            log.exception("напоминание №%s: ошибка", row.get("id"))
+                rem.fails.pop(row["id"], None)
+                continue
+        except Exception as exc:
+            if fails == 0:
+                log.exception("напоминание №%s: ошибка", row.get("id"))
+            else:
+                log.warning("напоминание №%s: снова ошибка (%s)", row.get("id"), exc)
+        fails += 1
+        if fails >= 6:  # раз за разом не уходит — пропускаем этот раз (повторяющееся перейдёт на следующий)
+            rem.fails.pop(row["id"], None)
+            await rem.mark_sent(row, now)
+        else:
+            rem.fails[row["id"]] = (fails, now + timedelta(minutes=2 ** fails))
     return sent
 
 

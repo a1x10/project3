@@ -148,7 +148,7 @@ class Outbox:
             label = "(свой стикер)"
         elif file.kind == "audio":  # голосовое — именно как голосовое, а не как аудиофайл
             wa_id = await self.evo.send_voice(chat["jid"], b64, delay_ms=self._delay(self.rng.randint(1500, 3000)))
-            label = f"[голосовое] {caption}".strip()
+            label = caption  # пометку «[голосовое]» добавит формат истории (kind=audio)
             caption = ""
         else:
             delay = self._delay(self.rng.randint(1500, 3000))

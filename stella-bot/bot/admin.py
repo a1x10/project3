@@ -406,7 +406,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
                 return JSONResponse({"error": "locked", "retry_after": lock.retry_after}, status_code=429,
                                     headers={"Retry-After": str(lock.retry_after)})
             await asyncio.sleep(LOGIN_DELAY)
-            ok = auth.check_passwords(body.p1, body.p2)
+            ok = auth.check_passwords(body.p1.strip(), body.p2.strip())
             locked = None if ok else auth.register_failure(ip)
         if ok:
             token = auth.new_session(ip)

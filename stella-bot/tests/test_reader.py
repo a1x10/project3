@@ -612,13 +612,15 @@ async def test_page_text_is_cut(net):
 
 # ---------- инструмент для модели ----------
 async def test_read_link_tool(net):
-    from bot.tools import ToolError
+    from bot.tools import ToolContext, ToolError
 
     net.pages["https://example.com/"] = page(ARTICLE)
-    (tool,) = reader.build_reader_tools(None, None, None)
+    ctx = ToolContext(chat_id=1, sender=None, people_refs={}, is_admin=False)
+    (tool,) = reader.build_reader_tools(None, None, ctx)
     assert tool.name == "read_link" and tool.input_schema["required"] == ["url"]
     out = await tool.handler({"url": "https://example.com/"})
     assert out.startswith("Страница https://example.com/:\nНовости") and "Стелла научилась читать" in out
+    assert ctx.untrusted  # после чужой страницы опасные инструменты в этом ответе отключаются
     with pytest.raises(ToolError, match="^не получилось открыть ссылку: это внутренний адрес"):
         await tool.handler({"url": "http://127.0.0.1/"})
     with pytest.raises(ToolError, match="нужна ссылка"):

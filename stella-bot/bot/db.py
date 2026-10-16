@@ -690,6 +690,11 @@ class DB:
         except IntegrityError:
             return None
 
+    async def update_message_text(self, message_id: int, text: str) -> None:
+        """Текст сообщения стал известен позже (расшифровали голосовое)."""
+        async with self.engine.begin() as conn:
+            await conn.execute(update(messages).where(messages.c.id == message_id).values(text=text))
+
     async def recent_messages(self, chat_id: int, limit: int) -> list[dict[str, Any]]:
         async with self.engine.connect() as conn:
             rows = (

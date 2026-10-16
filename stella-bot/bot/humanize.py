@@ -45,7 +45,7 @@ def _drop_filler(line: str) -> str:
 
 
 # Поиск в интернете приучает модель дописывать «Sources: [заголовок](ссылка)» — в чате это не нужно
-_SOURCES_RE = re.compile(r"^\s*(sources|источники|ссылки)\s*:?\s*$", re.IGNORECASE)
+_SOURCES_RE = re.compile(r"^\s*sources\s*:?\s*$", re.IGNORECASE)
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 

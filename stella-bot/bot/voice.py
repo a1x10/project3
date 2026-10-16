@@ -241,7 +241,11 @@ def decode_audio(data: bytes) -> bytes:
             f.write(data)
         try:
             proc = subprocess.run(
-                [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src,
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
+                 # только аудиоформаты и только этот файл: «голосовое» может оказаться манифестом
+                 # DASH/HLS со ссылками на внутренние адреса — такой ffmpeg не откроет
+                 "-format_whitelist", "ogg,mp3,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,wav,aac,flac,amr,aiff",
+                 "-protocol_whitelist", "file", "-i", src,
                  "-t", str(MAX_INPUT_SECONDS + 1), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "pipe:1"],
                 capture_output=True, timeout=FFMPEG_TIMEOUT, check=False,
             )
@@ -617,7 +621,7 @@ def build_voice_tools(db: DB, settings: Settings, ctx: ToolContext, *, speaker: 
             raise ToolError(f"голосом сейчас не получится ({exc}) — ответь текстом") from exc
         except VoiceError as exc:
             raise ToolError(str(exc)) from exc
-        await budget.queue(file)
+        await budget.queue(file, str(args.get("text") or "")[:600])  # в истории — что она сказала
         return "голосовое записано — уйдёт в чат сразу после твоего сообщения; текстом его не повторяй"
 
     return [

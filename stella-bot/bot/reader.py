@@ -18,7 +18,10 @@ import ipaddress
 import json
 import logging
 import re
+import os
 import socket
+import subprocess
+import sys
 import time
 import zipfile
 import zlib
@@ -572,6 +575,47 @@ def _kind(data: bytes, filename: str, mime: str) -> str:
     raise ReaderError("такой файл я пока не читаю")
 
 
+# Разбор файла — в отдельном процессе с лимитом времени и памяти: хитрый маленький PDF может «думать» минутами,
+# а такой процесс можно просто убить, и бот продолжит работать.
+_EXTRACT_WORKER = r"""
+import json, resource, sys
+resource.setrlimit(resource.RLIMIT_AS, (1536 * 1024 * 1024, 1536 * 1024 * 1024))
+resource.setrlimit(resource.RLIMIT_CPU, (45, 45))
+sys.path.insert(0, sys.argv[1])
+from bot.reader import ReaderError, extract_text
+meta = json.loads(sys.stdin.buffer.readline())
+data = sys.stdin.buffer.read()
+try:
+    out = {"text": extract_text(data, meta["filename"], meta["mimetype"])}
+except ReaderError as exc:
+    out = {"error": str(exc)}
+sys.stdout.write(json.dumps(out, ensure_ascii=False))
+"""
+EXTRACT_TIMEOUT = 40
+
+
+def extract_text_isolated(data: bytes, filename: str, mimetype: str | None, timeout: float = EXTRACT_TIMEOUT) -> str:
+    """То же, что extract_text, но в отдельном процессе, который убивается по таймауту. Синхронная (в поток)."""
+    if not data:
+        raise ReaderError("файл пустой")
+    if len(data) > MAX_INPUT_BYTES:
+        raise ReaderError("файл слишком большой — больше 20 МБ")
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    payload = json.dumps({"filename": filename or "", "mimetype": mimetype}).encode() + b"\n" + bytes(data)
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-c", _EXTRACT_WORKER, app_dir], input=payload,
+                              capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ReaderError("файл слишком тяжёлый — не успела прочитать") from exc
+    try:
+        out = json.loads(proc.stdout or b"{}")
+    except ValueError:
+        out = {}
+    if "text" in out:
+        return out["text"]
+    raise ReaderError(out.get("error") or "не получилось прочитать файл")
+
+
 def extract_text(data: bytes, filename: str, mimetype: str | None) -> str:
     """Текст из присланного файла. Не больше MAX_OUTPUT_CHARS символов.
 
@@ -800,7 +844,7 @@ async def _answer(resp: httpx.Response, max_bytes: int) -> _Answer:
 
 def _page_text(answer: _Answer) -> str:
     if answer.ctype == "application/pdf":
-        text = extract_text(answer.body, "page.pdf", "application/pdf")
+        text = extract_text_isolated(answer.body, "page.pdf", "application/pdf")
     elif answer.ctype in ("text/html", "application/xhtml+xml"):
         text = _read_html(answer.body, answer.charset)
     elif answer.ctype == "application/json":
@@ -877,6 +921,7 @@ def build_reader_tools(db: "DB", settings: "Settings", ctx: "ToolContext") -> li
         if opened >= MAX_LINKS_PER_REPLY:
             raise ToolError("за один ответ хватит трёх ссылок")
         opened += 1
+        ctx.untrusted = True  # дальше в этом ответе — чужой текст: опасные действия отключаются
         try:
             final_url, text = await fetch_url(url)
         except ReaderError as exc:
