@@ -202,7 +202,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
 
         async def deliver() -> None:
             libs = asyncio.ensure_future(weblibs.ensure())  # библиотеки докачиваются, пока пишется страница
-            task = asyncio.ensure_future(html_studio.run(settings, brief, title, seen))
+            task = asyncio.ensure_future(html_studio.run(
+                settings, brief, title, seen, build=lambda html: media.html_page(title, html, photo).data))
             try:
                 done, _ = await asyncio.wait({task}, timeout=eta_s * 1.5 + 30)
                 if not done:

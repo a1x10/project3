@@ -1,6 +1,8 @@
 """Студия HTML-страниц: Стелла в чате только описывает задание, а страницу пишет отдельный вызов модели —
-с подробным дизайн-промптом, долгим обдумыванием и большим запасом длины (в чате модель отвечает быстро и
-коротко — для сайта уровня «вау» этого мало). Страница приходит в чат файлом через несколько минут.
+с подробным дизайн-промптом, максимальным обдумыванием и большим запасом длины (в чате модель отвечает быстро
+и коротко — для сайта уровня «вау» этого мало). Потом проход «арт-директора»: страница открывается в браузере
+как на телефоне, модель смотрит на скриншоты и ошибки и выдаёт исправленную и усиленную версию. Страница
+приходит в чат файлом через несколько минут.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,6 +103,18 @@ try/catch: нет WebGL — красивый 2D-вариант, а не пуст
 
 Сначала продумай концепцию, палитру, шрифты, композицию и анимации, затем выдай документ целиком."""
 
+POLISH = """Выше — задание и твой черновик страницы, а на картинках — как он на самом деле выглядит в телефоне \
+(браузер 390×844; WebGL здесь программный, поэтому 3D может выглядеть чуть проще, а анимации пойманы на середине). \
+Посмотри на скриншоты глазами придирчивого арт-директора топ-студии и доведи работу до уровня, за который не стыдно \
+на Awwwards:
+1. Сначала исправь всё сломанное: ошибки JS из консоли, пустые или чёрные области, то, что не появилось или не \
+нарисовалось, наложения, вылезание за край экрана и горизонтальный скролл, обрезанный или нечитаемый текст, \
+кнопки, которые ничего не делают, слишком мелкие элементы.
+2. Затем усиль впечатление: композиция первого экрана, выразительность и иерархия типографики, цвет и свет, \
+глубина, плавность и богатство анимаций, микро-взаимодействия, финальные детали. Не упрощай и не выкидывай \
+удачное — улучшай.
+Ответ — только исправленный документ целиком, от <!doctype html> до </html>, по тем же правилам."""
+
 PHOTO_NOTE = ("\n\nК заданию приложено фото из чата — ты его видишь. Вставляй его строкой __PHOTO__ "
               "(<img src=\"__PHOTO__\" alt=\"…\"> или CSS url(__PHOTO__)), бот подставит само фото. "
               "Лучше один раз — например, в CSS-переменную или один <img>.")
@@ -124,7 +139,7 @@ class _State:
     busy_chats: set[int] = field(default_factory=set)
     running: int = 0
     waiting: int = 0
-    seconds: float = 240.0  # сколько обычно делается страница (скользящее среднее)
+    seconds: float = 480.0  # сколько обычно делается страница целиком (скользящее среднее)
 
 
 STATE = _State()
@@ -187,28 +202,44 @@ def client(timeout: float) -> Any:
     return _client
 
 
-async def generate(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None) -> StudioResult:
-    """Написать страницу по заданию. image — фото из чата, которое модель видит (вставляется как __PHOTO__)."""
+def _image_block(mime: str, data: bytes) -> dict[str, Any]:
     import base64
 
+    return {"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.b64encode(data).decode()}}
+
+
+async def generate(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None, *,
+                   draft: str | None = None, shots: Any = None) -> StudioResult:
+    """Написать страницу по заданию (или, с draft и shots, доделать черновик по скриншотам).
+    image — фото из чата, которое модель видит (вставляется как __PHOTO__)."""
     import anthropic
 
     from .llm.messages_api import estimate_cost
 
     model = settings.html_model
     text = f"Название: {title}\n\nЗадание:\n{brief.strip()}" + (PHOTO_NOTE if image else "")
-    content: Any = text
+    content: list[dict[str, Any]] = []
     if image is not None:
-        mime, data = image
-        content = [{"type": "image", "source": {"type": "base64", "media_type": mime,
-                                                "data": base64.b64encode(data).decode()}},
-                   {"type": "text", "text": text}]
+        content.append(_image_block(*image))
+    content.append({"type": "text", "text": text})
+    effort = settings.html_effort
+    if draft is not None:
+        effort = settings.html_polish_effort or effort
+        content.append({"type": "text", "text": f"Твой черновик:\n```html\n{draft}\n```"})
+        for label, jpeg in getattr(shots, "images", []):
+            content.append({"type": "text", "text": f"Скриншот — {label}:"})
+            content.append(_image_block("image/jpeg", jpeg))
+        errors = getattr(shots, "errors", [])
+        notes = ["Ошибки в консоли:\n" + "\n".join(f"- {e}" for e in errors) if errors else "Ошибок в консоли нет."]
+        if getattr(shots, "overflow", False):
+            notes.append("Страница шире экрана телефона: есть горизонтальная прокрутка.")
+        content.append({"type": "text", "text": "\n".join(notes) + "\n\n" + POLISH})
     kwargs: dict[str, Any] = {
         "model": model, "max_tokens": settings.html_max_tokens, "system": SYSTEM,
-        "messages": [{"role": "user", "content": content}], **_thinking(model),
+        "messages": [{"role": "user", "content": content if len(content) > 1 else text}], **_thinking(model),
     }
-    if settings.html_effort:
-        kwargs["output_config"] = {"effort": settings.html_effort}
+    if effort:
+        kwargs["output_config"] = {"effort": effort}
     started = time.monotonic()
     cl = client(settings.html_timeout)
 
@@ -227,7 +258,8 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
     cost = estimate_cost(model, msg.usage)
     seconds = time.monotonic() - started
     out_tokens = getattr(msg.usage, "output_tokens", 0) or 0
-    log.info("страница: %.0f с, %d токенов, %.3f$, %s", seconds, out_tokens, cost, msg.stop_reason)
+    log.info("страница%s: %.0f с, %d токенов, %.3f$, %s", " (доводка)" if draft else "", seconds, out_tokens, cost,
+             msg.stop_reason)
     if msg.stop_reason == "refusal":
         raise StudioError("такую страницу делать отказались", cost)
     if msg.stop_reason == "max_tokens":
@@ -238,12 +270,47 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
     except StudioError as exc:
         exc.cost_usd = cost
         raise
-    STATE.seconds = 0.7 * STATE.seconds + 0.3 * seconds
     return StudioResult(html, cost, seconds, out_tokens)
 
 
-async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None) -> StudioResult:
-    """generate() с общей очередью: одновременно не больше HTML_CONCURRENCY страниц."""
+async def make(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
+               build: Callable[[str], bytes] | None = None) -> StudioResult:
+    """Черновик, затем доводка по скриншотам. build(html) -> готовый файл (с библиотеками и фото) для браузера.
+    Доводка не удалась или сломала страницу — остаётся черновик."""
+    from . import page_shots, weblibs
+
+    started = time.monotonic()
+    draft = await generate(settings, brief, title, image)
+    cost, result = draft.cost_usd, draft
+    if settings.html_polish and build is not None and page_shots.available():
+        try:
+            await weblibs.ensure()
+            if await asyncio.to_thread(weblibs.missing):
+                raise page_shots.ShotsError("библиотеки не скачались — в браузере без сети страница не откроется")
+            before = await page_shots.shoot(await asyncio.to_thread(build, draft.html))
+            polished = await generate(settings, brief, title, image, draft=draft.html, shots=before)
+            cost += polished.cost_usd
+            after = await page_shots.shoot(await asyncio.to_thread(build, polished.html))
+            if after.page_errors() > before.page_errors():
+                log.warning("доводка добавила ошибок JS (%d > %d) — оставляю черновик", after.page_errors(),
+                            before.page_errors())
+            else:
+                result = polished
+        except StudioError as exc:
+            cost += exc.cost_usd
+            log.warning("доводка не удалась: %s — оставляю черновик", exc)
+        except page_shots.ShotsError as exc:
+            log.warning("скриншоты не получились: %s — без доводки", exc)
+        except Exception:
+            log.exception("доводка: ошибка — оставляю черновик")
+    seconds = time.monotonic() - started
+    STATE.seconds = 0.7 * STATE.seconds + 0.3 * seconds
+    return StudioResult(result.html, cost, seconds, result.output_tokens)
+
+
+async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
+              build: Callable[[str], bytes] | None = None) -> StudioResult:
+    """make() с общей очередью: одновременно не больше HTML_CONCURRENCY страниц."""
     slots = _semaphore(settings.html_concurrency)
     STATE.waiting += 1
     try:
@@ -252,7 +319,7 @@ async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | 
         STATE.waiting -= 1
     STATE.running += 1
     try:
-        return await generate(settings, brief, title, image)
+        return await make(settings, brief, title, image, build)
     finally:
         STATE.running -= 1
         slots.release()
