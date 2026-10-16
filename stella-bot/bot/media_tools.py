@@ -169,7 +169,9 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         if not owner and used_all and used_all[1] >= settings.html_per_day_total:
             raise ToolError(f"на сегодня {w['many']} хватит, давай завтра")
         spent = await db.kv_get(f"spend:{today}")
-        if not owner and settings.daily_budget_usd > 0 and spent and spent[1] >= settings.daily_budget_usd:
+        # учитываем и то, что ещё делается: расходы записываются только по готовности, через минуты
+        projected = (spent[1] if spent else 0.0) + html_studio.STATE.reserved_usd
+        if not owner and settings.daily_budget_usd > 0 and projected >= settings.daily_budget_usd:
             raise ToolError(f"на сегодня бюджет кончился — {w['acc']} сделаю завтра")
         if ctx.chat_id in html_studio.STATE.busy_chats:
             raise ToolError(f"я уже делаю {w['acc']} для этого чата — подожди, пока пришлю")
@@ -191,6 +193,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         for key in (media_key, day_key, all_key):
             await db.kv_add(key, 1)
         html_studio.STATE.busy_chats.add(ctx.chat_id)  # сразу: второй заказ в этот чат не встанет в очередь
+        reserve = html_studio.expected_cost(settings)
+        html_studio.STATE.reserved_usd += reserve
         actions = ctx.actions
         released = asyncio.Event()
 
@@ -242,6 +246,7 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                 if not task.done():
                     task.cancel()
                 html_studio.STATE.busy_chats.discard(ctx.chat_id)
+                html_studio.STATE.reserved_usd = max(0.0, html_studio.STATE.reserved_usd - reserve)
             if ctx.on_cost is not None:
                 await ctx.on_cost(result.cost_usd)
             try:

@@ -17,10 +17,32 @@ from typing import Any
 
 log = logging.getLogger("stella.html")
 
-FONTS_LINE = ("'Unbounded' (широкий современный, для заголовков), 'Montserrat', 'Inter' (текст и интерфейс), "
-              "'Rubik' (дружелюбный), 'Playfair Display' (элегантная антиква), 'Comfortaa' (округлый, милый), "
-              "'Caveat' (рукописный), 'Lobster' (ретро-надпись), 'Russo One' (жирный: игры, спорт), "
-              "'Press Start 2P' (пиксельный, ретро-игры)")
+FONTS_LINE = ("вариативные, толщины 200–900 (смело бери 800/900): 'Unbounded' (широкий современный, заголовки), "
+              "'Montserrat', 'Inter' (текст и интерфейс), 'Rubik' (дружелюбный, от 300), 'Playfair Display' "
+              "(элегантная антиква, от 400); до 700: 'Comfortaa' (округлый, милый), 'Caveat' (рукописный); одно "
+              "начертание 400 — font-weight им не ставь: 'Lobster' (ретро-надпись), 'Russo One' (жирный: игры, спорт), "
+              "'Press Start 2P' (пиксельный)")
+
+FONT_RULES = """- Контурный текст: у вариативных шрифтов контуры букв перекрываются, и -webkit-text-stroke с прозрачной \
+заливкой рисует лишние линии внутри букв. Контур — только с заливкой цветом фона под текстом и paint-order: stroke \
+fill, или не делай его на крупных буквах.
+- Значков ★ ✓ ↻ ∞ ▲ ♥ и подобных в шрифтах нет — иконки только inline SVG."""
+
+THREE_RECIPE = """- Цвет и свет (r128), точные числа: renderer.outputEncoding = THREE.sRGBEncoding; renderer.toneMapping = \
+THREE.ACESFilmicToneMapping, toneMappingExposure 0.9–1.1; цвета материалов — new THREE.Color('#hex')\
+.convertSRGBToLinear(), у CanvasTexture — texture.encoding = THREE.sRGBEncoding (иначе палитра выцветает).
+- Bloom: new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.6–0.9, 0.4, 0.75–0.85) — порог ниже 0.6 не ставь \
+никогда. Светятся только тонкие неоновые детали (MeshBasicMaterial или emissive на мелочах); у главных объектов \
+emissiveIntensity ≤ 0.3 и базовый цвет не светлее ~#c8c8dc — должны читаться форма, блик и материал, а не белое \
+пятно. Металл и clearcoat без окружения выглядят пластиком: scene.environment = new THREE.PMREMGenerator(renderer)\
+.fromScene(envScene, 0.04).texture, где envScene — 3–4 цветные светящиеся плоскости вокруг.
+- Кадр в портрете: видимая высота на дистанции d — 2·d·tan(fov/2), ширина — высота × aspect (≈0.46). fov 40–50; \
+герой занимает 50–70% ширины, фоновые объекты (планеты, кольца) — не больше 35% ширины, в углу и частично за кадром; \
+пересчитывай на resize.
+- Без артефактов: тонкие трубки и THREE.Line/LineSegments (всегда 1 px) с ребра выглядят полосками-ошибками — \
+лучи, лазеры и варп делай вытянутыми Sprite/плоскостями с градиентом; конусы света — Sprite с радиальным градиентом, \
+а не прозрачный открытый цилиндр; кольца планет наклоняй на 25° и больше; размер Points умножай на pixelRatio \
+(звёзды 2–4 css px)."""
 
 SYSTEM = f"""Ты — арт-директор и креативный фронтенд-разработчик уровня Awwwards и Codrops. По заданию из чата \
 делаешь одну HTML-страницу. Её откроют на телефоне прямо из WhatsApp или Telegram, и с первой секунды она \
@@ -30,7 +52,8 @@ SYSTEM = f"""Ты — арт-директор и креативный фронт
 - Только готовый документ: от <!doctype html> до </html>. Без пояснений до и после, без ```.
 - Всё в одном файле: CSS в <style>, свой JS в обычном <script> (не type="module", без import/export).
 - Тексты — на языке задания (обычно русский): живые, конкретные, по фактам из задания. Никаких «lorem ipsum», \
-«Заголовок», «Текст здесь» и прочих заглушек.
+«Заголовок», «Текст здесь» и прочих заглушек. Факты, цифры, даты и имена — точные; в чём не уверен — не пиши. \
+Шуточные детали в духе задания можно и нужно, выдумывать важное (даты, адреса, события) — нельзя.
 
 ОГРАНИЧЕНИЯ (нарушишь — страница сломается)
 - Интернета у страницы нет: fetch/XMLHttpRequest/WebSocket не работают; внешние картинки, видео, звуки, шрифты, \
@@ -43,52 +66,86 @@ CSS и скрипты не загрузятся; формы никуда не о
   <script src="lib/three-bloom.js"></script> — THREE.EffectComposer, RenderPass, ShaderPass, UnrealBloomPass \
 (после three.js) — неоновое свечение
   <script src="lib/three-roundedbox.js"></script> — THREE.RoundedBoxGeometry (после three.js)
-  <script src="lib/gsap.js"></script> — GSAP 3 (gsap.to/from/timeline, stagger, ease)
+  <script src="lib/gsap.js"></script> — GSAP 3 (gsap.to/fromTo/timeline, stagger, ease)
   <script src="lib/gsap-scrolltrigger.js"></script> — ScrollTrigger (после gsap; gsap.registerPlugin(ScrollTrigger))
   <script src="lib/confetti.js"></script> — confetti({{particleCount, spread, origin, colors}})
   <script src="lib/matter.js"></script> — Matter (2D-физика для игр)
 - Шрифты с кириллицей — просто пиши их в font-family (и в ctx.font у canvas), бот встроит их сам; никаких \
-<link> и @import: {FONTS_LINE}. Не больше двух-трёх семейств, всегда с запасным (sans-serif / serif). \
+<link> и @import. {FONTS_LINE}. Не больше двух-трёх семейств, всегда с запасным (sans-serif / serif). \
 Шрифт в canvas — только после document.fonts.ready.
+{FONT_RULES}
+
+БАЗА CSS — ВСЕГДА
+*,*::before,*::after{{box-sizing:border-box}} html,body{{margin:0;overflow-x:clip}} \
+button,input,select,textarea{{font:inherit;color:inherit}} img,svg,canvas{{display:block;max-width:100%}}
+(у <button> по умолчанию чёрный системный шрифт — без этой строки кнопки на тёмном фоне не читаются). \
+Наклонённые и масштабированные полосы во всю ширину (бегущая строка, ленты) — внутри обёртки width:100%; \
+overflow:hidden: любой вылет за 100vw на мобильном Chrome расширяет страницу и сдвигает fixed-элементы.
 
 ДИЗАЙН: ЧЕМ «ВАУ» ОТЛИЧАЕТСЯ ОТ ШАБЛОНА
 1. Концепция. Сначала придумай сильную идею и арт-дирекшн под этот повод и этих людей (день рождения — ночное \
-небо и 3D-торт из света; викторина про космос — кабина корабля; шпаргалка — неоновая доска). Никаких безликих \
-карточек на белом фоне и «бутстрап»-вида.
+небо и торт из света; викторина про космос — кабина корабля; шпаргалка — неоновая доска). Никаких безликих \
+карточек на белом фоне и «бутстрап»-вида. Один герой: на экране один главный визуальный объект (3D-сцена, крупная \
+SVG-иллюстрация или типографика) и 1–2 спокойных слоя фона. Каждый эффект должен улучшать кадр, а не добавляться \
+«для богатства»: стекло, зерно, bloom, частицы, параллакс — выбирай нужное.
 2. Цвет. Один доминирующий тон, один-два акцента, нейтральные — через CSS-переменные. Глубокие градиенты (mesh \
-из нескольких radial-gradient), свечения, стекло (backdrop-filter), зерно (SVG feTurbulence), мягкие тени. \
-Текст всегда читается.
-3. Типографика. Крупные выразительные заголовки (clamp(), трекинг, градиентный или контурный текст, переменная \
-толщина), ясная иерархия, межстрочный 1.4–1.6 у текста.
-4. Глубина и движение. Многослойность и параллакс (от пальца/мыши; от наклона телефона — deviceorientation, \
-на iOS разрешение спрашивай по тапу). Входная анимация со stagger, появление по скроллу (ScrollTrigger или \
-IntersectionObserver), микро-взаимодействия (кнопки пружинят, ripple, navigator.vibrate в играх), easing \
-power3/expo/back, живой фон (частицы, волны, шейдер, звёзды или 3D).
-5. 3D, когда уместно (а это почти всегда украшает). Сцена three.js с туманом, 2–3 источниками света \
-(HemisphereLight + DirectionalLight + цветной PointLight), MeshStandardMaterial/MeshPhysicalMaterial (metalness, \
-roughness, clearcoat, emissive), частицы (Points), bloom. Объекты плавно вращаются, «дышат», реагируют на палец \
-(OrbitControls с enableDamping или свой параллакс). Красивые формы собирай из примитивов (TorusKnot, \
-Icosahedron с flatShading, Lathe, Extrude из Shape, RoundedBox) или своими ShaderMaterial (градиенты, шум, \
-волны). Текст поверх 3D — HTML-слоем над canvas.
-6. Детали. Иконки — inline SVG. Отступы по 8-px сетке, аккуратные скругления, состояния нажатия. Ни одного \
-пустого или «поехавшего» места. Каждый экран — композиция, а не стопка блоков.
+из нескольких radial-gradient), мягкие свечения и тени. Текст всегда читается.
+3. Типографика. Крупные выразительные заголовки (clamp(), трекинг, градиент, переменная толщина), ясная иерархия, \
+межстрочный 1.4–1.6 у текста.
+4. Композиция экрана (проверяй на 390×844 и 360×640). Зоны не смешиваются: заголовок — в верхней трети \
+(grid-template-rows: auto 1fr auto, а не justify-content: space-between), главный объект — в своей средней зоне, \
+главная кнопка — внизу (16 px + env(safe-area-inset-bottom) от края). Крупный текст никогда не лежит на главном \
+3D-объекте или ярком пятне; под текстом над canvas — затемняющая подложка (radial-gradient) или text-shadow \
+0 2px 14px rgba(0,0,0,.7). Декор (рамки, прицелы, штампы, стикеры, подписи, нити) не перекрывает текст и данные — \
+оставь им место в сетке. Если сценарий что-то раскрывает (подарок открылся, объект вырос), раскрытие видно \
+целиком: уведи или уменьши заголовок, сдвинь камеру.
+5. Движение. Параллакс от пальца/мыши (от наклона телефона — deviceorientation, на iOS разрешение — по тапу), \
+появления со stagger, появление по скроллу (ScrollTrigger или IntersectionObserver), микро-взаимодействия \
+(нажатие пружинит, ripple, navigator.vibrate в играх), easing power3/expo/back, живой фон.
+   ПЕРВЫЙ КАДР: ссылку открывают из мессенджера, и через 1 с (даже на слабом телефоне) первый экран — законченная \
+композиция, заголовок и главная кнопка видны полностью. Всё интро ≤ 1 с; исходное состояние в CSS видимое — JS \
+только добавляет движение; 3D-объект сразу в кадре и лишь «доезжает», не со scale 0.
+   GSAP и CSS не делят одно свойство: у того, что двигает GSAP, нет CSS transition/animation на transform, \
+translate, scale, opacity (иначе gsap.from застывает в начале и элемент остаётся сдвинутым) — пружину нажатия \
+вешай на внутренний <span>. Появления — gsap.fromTo(el, {{…}}, {{…, clearProps: 'transform'}}); центрирование — \
+xPercent/yPercent: -50, а не CSS translate вместе с gsap x/y; позиции в timeline — абсолютные числа или метки.
+6. 3D (three.js) — когда объект и есть идея. Если 3D — фон под интерфейсом: canvas pointer-events: none, \
+параллакс от pointermove/deviceorientation; OrbitControls — только когда 3D и есть главный интерактивный экран. \
+Красивые формы — из примитивов (TorusKnot, Icosahedron с flatShading, Lathe, Extrude из Shape, RoundedBox) или \
+своими ShaderMaterial (градиенты, шум, волны). Текст поверх 3D — HTML-слоем.
+{THREE_RECIPE}
+7. Эффекты с гигиеной. Временные подписи и тосты — absolute внутри своего экрана (не fixed), исчезают за 2–3 с. \
+Конфетти — короткие залпы (particleCount ≤ 120, ticks ≤ 200), не поверх текста, который сейчас читают; при смене \
+экрана — confetti.reset(). Штампы и бейджи — на свободное поле, не на данные. Подписи и счётчики с первого кадра \
+говорят правду (не «0 часов сна», пока не досчитали до 24).
+8. Детали. Отступы по 8-px сетке, аккуратные скругления, состояния нажатия. Каждый экран — композиция, а не стопка \
+блоков.
 
 ТЕЛЕФОН — ГЛАВНОЕ
-- Основной экран — 360–430 px в ширину; на компьютере тоже должно быть красиво (max-width, сетки). Без \
-горизонтального скролла; 100dvh; отступы с env(safe-area-inset-*).
+- Основной экран — 360–430 px в ширину; на компьютере тоже красиво (max-width, сетки; в ландшафте визуал сбоку). \
+100dvh; отступы с env(safe-area-inset-*). Ширина контента на 360 px — 328 px: ряд пилюль или чипов либо влезает \
+(капс с трекингом ≈ 0.75em на букву), либо flex-wrap ровными рядами; текст кнопок — в одну строку.
+- Главное действие экрана (Играть, Открыть, Начать, Вступить) — первая <button> в DOM и с атрибутом data-primary; \
+кнопки звука и меню — после неё в DOM (на экране — где угодно). Без нужды не блокируй прокрутку модальным окном.
 - Управление пальцем: pointer-события, цели не меньше 44 px, ничего только по hover; в играх touch-action: none \
 и никакого зума двойным тапом.
-- Плавно, 60 fps: requestAnimationFrame; renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); частиц — тысячи, \
-а не сотни тысяч; анимируй transform/opacity; пауза на visibilitychange; правильный resize и смена ориентации.
+- Плавно, 60 fps: requestAnimationFrame; renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); одна полноэкранная \
+WebGL-сцена; не больше 1–2 крупных элементов с backdrop-filter; не анимируй полноэкранные слои с filter или зерном; \
+анимируй transform/opacity; пауза на visibilitychange; правильный resize. Если первые 2 с fps < 40 — pixelRatio 1, \
+без bloom, частиц вдвое меньше.
 - prefers-reduced-motion — приглуши движение.
 
 ПО ЖАНРАМ
 - Игра: стартовый экран с названием и кнопкой «Играть», правила одной строкой, счёт, рекорд (localStorage в \
 try/catch), экран «Игра окончена» с «Ещё раз», нарастающая сложность, «сочность» (частицы, тряска экрана, \
-вспышки, звуки через WebAudio — AudioContext создавай только после первого тапа), управление тапами и свайпами \
-(и клавишами на компьютере).
-- Викторина/тест: 5–10 вопросов, прогресс, анимированная реакция на ответ, итог с оценкой и конфетти, «Пройти \
-ещё раз».
+вспышки, звуки через WebAudio — AudioContext только после первого тапа), управление тапами и свайпами (и клавишами \
+на компьютере). Фон поля тёмный и спокойный (декор не ярче ~30% и не в полосе, откуда всё падает, и не у игрока); \
+игрок, бонусы и враги — самые яркие объекты на экране; первый предмет — не позже 0.5 с после «Играть»; dt ограничивай \
+0.1 (или фиксированный шаг), хитбоксы — в тех же единицах, что и картинка; игровой экран без прокрутки. Для аркады \
+чёткий 2D-canvas со свечением часто лучше перегруженного 3D.
+- Викторина/тест: 5–10 вопросов, прогресс, после ответа варианты блокируются, верный подсвечивается (и при ошибке), \
+короткое пояснение и кнопка «Дальше» без автоперехода; экран вопроса без прокрутки на 390×844, варианты от 56 px; \
+итог с оценкой и конфетти, «Пройти ещё раз».
 - Открытка/поздравление: эффектное появление (например, «открыть подарок» по тапу), имя крупно, тёплый личный \
 текст по фактам из задания, салют/конфетти/3D; музыка WebAudio — только по тапу.
 - Сайт/лендинг/шпаргалка: hero-экран с вау-эффектом, разделы с анимацией появления, удобная навигация, настоящее \
@@ -96,23 +153,30 @@ try/catch), экран «Игра окончена» с «Ещё раз», на�
 
 НАДЁЖНОСТЬ
 - Ноль ошибок в консоли: свой код запускай после загрузки DOM, проверяй элементы. WebGLRenderer создавай в \
-try/catch: нет WebGL — красивый 2D-вариант, а не пустой экран. Никаких alert/prompt/confirm.
+try/catch: нет WebGL — простой красивый 2D-вариант (градиенты, свечение, точки-звёзды), а не пустой экран. Никаких \
+alert/prompt/confirm.
 - Работает сразу, без сети и сервера, при открытии файла с телефона.
-- Объём — насыщенно, но разумно (обычно 400–1500 строк). Законченная и отполированная страница лучше огромной \
+- Объём — насыщенно, но разумно (обычно 500–1200 строк). Законченная и отполированная страница лучше огромной \
 и недоделанной.
 
-Сначала продумай концепцию, палитру, шрифты, композицию и анимации, затем выдай документ целиком."""
+ПЕРЕД ВЫДАЧЕЙ мысленно открой страницу на 390×844 и 360×640 — через 1 с, после главного тапа и после прокрутки — \
+и проверь: 1) заголовок и главная кнопка видны целиком через 1 с; 2) ни один текст не лежит на ярком 3D или декоре \
+и не перекрыт штампом, подписью, конфетти или fixed-элементом; 3) каждый ряд влезает в 328 px, ничто не выходит за \
+100vw; 4) у кнопок свой цвет и шрифт; 5) bloom: порог ≥ 0.7, главный объект — не белое пятно; 6) раскрытие после \
+тапа видно целиком; 7) нет CSS transition на свойствах, которые двигает GSAP; 8) первая <button> — главное действие; \
+9) счётчики и подписи с первого кадра говорят правду. Исправь найденное — и выдай документ целиком."""
 
 POLISH = """Выше — задание и твой черновик страницы, а на картинках — как он на самом деле выглядит в телефоне \
 (браузер 390×844; WebGL здесь программный, поэтому 3D может выглядеть чуть проще, а анимации пойманы на середине). \
-Посмотри на скриншоты глазами придирчивого арт-директора топ-студии и доведи работу до уровня, за который не стыдно \
-на Awwwards:
-1. Сначала исправь всё сломанное: ошибки JS из консоли, пустые или чёрные области, то, что не появилось или не \
-нарисовалось, наложения, вылезание за край экрана и горизонтальный скролл, обрезанный или нечитаемый текст, \
-кнопки, которые ничего не делают, слишком мелкие элементы.
-2. Затем усиль впечатление: композиция первого экрана, выразительность и иерархия типографики, цвет и свет, \
-глубина, плавность и богатство анимаций, микро-взаимодействия, финальные детали. Не упрощай и не выкидывай \
-удачное — улучшай.
+Посмотри на скриншоты глазами придирчивого арт-директора топ-студии.
+1. Сначала исправь всё, что видно на скриншотах и в ошибках: ошибки JS; пустые, чёрные или недорисованные области; \
+текст на ярком 3D или декоре, текст под штампом, подписью, конфетти или fixed-элементом; вылезание за край экрана и \
+горизонтальная прокрутка; обрезанный, мелкий или нечитаемый текст (кнопки с чёрным системным шрифтом); белые \
+пересвеченные пятна вместо объектов (bloom: порог ≥ 0.7, emissive ≤ 0.3); раскрытие после тапа, которое не видно; \
+элементы, застрявшие со сдвигом (CSS transition вместе с GSAP); кнопки, которые ничего не делают; пустой первый кадр.
+2. Концепцию не меняй и новых эффектов не добавляй, пока не исправлено всё сломанное, — каждый новый эффект ты уже \
+не увидишь на скриншоте. Удачное не выкидывай.
+3. Затем, если всё чисто, усиль впечатление точечно: композиция первого экрана, типографика, цвет и свет, детали.
 Ответ — только исправленный документ целиком, от <!doctype html> до </html>, по тем же правилам."""
 
 DECK_SYSTEM = f"""Ты — арт-директор и дизайнер презентаций уровня Apple Keynote, Pitch и лучших брендинговых студий. \
@@ -200,6 +264,7 @@ class StudioResult:
 @dataclass
 class _State:
     busy_chats: set[int] = field(default_factory=set)
+    reserved_usd: float = 0.0  # оценка расходов заказов, которые ещё делаются
     running: int = 0
     waiting: int = 0
     seconds: float = 480.0  # сколько обычно делается страница целиком (скользящее среднее)
@@ -234,18 +299,24 @@ def human_eta(seconds: float) -> str:
 
 
 def extract_html(text: str) -> str:
-    """Ответ модели -> документ: без ``` и пояснений вокруг."""
+    """Ответ модели -> документ: без ``` и пояснений вокруг. Сначала ищем сам документ (<!doctype/<html …
+    последний </html>) — внутри страницы бывают свои ``` (шпаргалки по Markdown); ``` — только если документа нет."""
     t = (text or "").strip()
-    fence = re.search(r"```(?:html)?\s*\n(.*?)(?:\n```|$)", t, re.DOTALL | re.IGNORECASE)
-    if fence and "<" in fence.group(1):
-        t = fence.group(1).strip()
     low = t.lower()
     start = min((i for i in (low.find("<!doctype"), low.find("<html")) if i >= 0), default=-1)
-    if start > 0:
-        t, low = t[start:], low[start:]
     end = low.rfind("</html>")
-    if end >= 0:
-        t = t[: end + len("</html>")]
+    if start >= 0 and end > start:
+        return t[start: end + len("</html>")]
+    fence = re.search(r"```(?:html)?[ \t]*\n", t, re.IGNORECASE)
+    if fence:
+        close = t.rfind("\n```")
+        inner = t[fence.end(): close] if close > fence.end() else t[fence.end():]
+        if "<" in inner:
+            t = inner.strip()
+            low = t.lower()
+    start = min((i for i in (low.find("<!doctype"), low.find("<html")) if i >= 0), default=-1)
+    if start > 0:
+        t = t[start:]
     if "<" not in t or not re.search(r"<(?:body|div|main|section|canvas|svg|h1|style|script)\b", t, re.IGNORECASE):
         raise StudioError("не получилось сделать страницу")
     return t
@@ -272,8 +343,16 @@ def status_text(exc: Any) -> str:
 
 
 def _thinking(model: str) -> dict[str, Any]:
-    # у моделей 5-го поколения адаптивное обдумывание; глубину задаёт effort
-    return {"thinking": {"type": "adaptive"}} if re.search(r"-5(?:[-.]|$)|fable", model) else {}
+    """Адаптивное обдумывание (глубину задаёт effort): Opus/Sonnet 4.6+, всё 5-е поколение, Fable, Mythos. Старым
+    моделям его слать нельзя (400) — им без обдумывания."""
+    adaptive = {"thinking": {"type": "adaptive"}}
+    if re.search(r"fable|mythos", model):
+        return adaptive
+    m = re.search(r"claude-(opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?!\d)", model)  # claude-sonnet-4-20250514 — это 4.0
+    if not m:
+        return {}
+    family, major, minor = m.group(1), int(m.group(2)), int(m.group(3) or 0)
+    return adaptive if major >= 5 or (major == 4 and minor >= 6 and family != "haiku") else {}
 
 
 def client(timeout: float) -> Any:
@@ -330,7 +409,7 @@ async def generate(settings: Any, brief: str, title: str, image: tuple[str, byte
         if msg is _NO_BUDGET:  # API не принял бюджет — без него
             budget = 0
             continue
-        cost += estimate_cost(model, msg.usage)
+        cost += estimate_cost(model, msg.usage) + getattr(msg, "_studio_lost", 0.0)
         out_tokens = getattr(msg.usage, "output_tokens", 0) or 0
         body = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         log.info("страница%s: %.0f с, %d токенов (код — %d знаков), effort %s, %.3f$, %s", " (доводка)" if draft else "",
@@ -381,18 +460,27 @@ async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget:
     if config:
         kwargs["output_config"] = config
 
+    holder: dict[str, Any] = {}
+
     async def call() -> Any:
+        holder["started"] = time.monotonic()
         if budget:
             async with cl.beta.messages.stream(betas=[TASK_BUDGET_BETA], **kwargs) as stream:
+                holder["stream"] = stream
                 return await stream.get_final_message()
         async with cl.messages.stream(**kwargs) as stream:
+            holder["stream"] = stream
             return await stream.get_final_message()
 
+    lost = 0.0  # оборванные попытки тоже оплачены — учитываем оценкой
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            return await asyncio.wait_for(call(), timeout=settings.html_timeout)
+            msg = await asyncio.wait_for(call(), timeout=settings.html_timeout)
+            msg._studio_lost = lost  # type: ignore[attr-defined]
+            return msg
         except asyncio.TimeoutError as exc:
-            raise StudioError("страница делалась слишком долго — попробуй попроще") from exc
+            raise StudioError("страница делалась слишком долго — попробуй попроще",
+                              lost + _partial_cost(base, holder)) from exc
         except anthropic.APIStatusError as exc:
             if budget and exc.status_code == 400 and "budget" in str(exc).lower():
                 log.warning("студия: бюджет токенов не принят (%s) — без него", str(exc)[:200])
@@ -404,13 +492,32 @@ async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget:
             raise StudioError(status_text(exc)) from exc
         except Exception as exc:
             # обрыв связи посреди долгого ответа SDK отдаёт «сырой» сетевой ошибкой (RemoteProtocolError, ReadError…)
+            lost += _partial_cost(base, holder)
             if attempt < ATTEMPTS:
                 log.warning("студия: связь оборвалась (%s: %s) — повторяю", type(exc).__name__, exc)
                 await asyncio.sleep(RETRY_PAUSE)
                 continue
             log.exception("студия: связь оборвалась")
-            raise StudioError(f"связь со студией оборвалась ({type(exc).__name__}) — попробуй ещё раз") from exc
-    raise StudioError("студия недоступна")
+            raise StudioError(f"связь со студией оборвалась ({type(exc).__name__}) — попробуй ещё раз", lost) from exc
+        finally:
+            holder.pop("stream", None)
+    raise StudioError("студия недоступна", lost)
+
+
+def _partial_cost(base: dict[str, Any], holder: dict[str, Any]) -> float:
+    """Сколько стоила оборванная попытка. Счётчик выходных токенов приходит только в конце ответа, поэтому
+    оценка по времени (~80 токенов/с, не больше max_tokens) — лучше, чем считать её бесплатной."""
+    from .llm.messages_api import estimate_cost
+
+    stream = holder.get("stream")
+    if stream is None or "started" not in holder:
+        return 0.0
+    try:
+        inp = stream.current_message_snapshot.usage.input_tokens or 0
+    except Exception:
+        return 0.0  # ответ ещё не начался — денег не стоил
+    out = min(int(base.get("max_tokens") or 0), int((time.monotonic() - holder["started"]) * 80))
+    return estimate_cost(base["model"], type("U", (), {"input_tokens": inp, "output_tokens": out})())
 
 
 async def make(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
@@ -460,7 +567,20 @@ async def make(settings: Any, brief: str, title: str, image: tuple[str, bytes] |
 def _worse(after: Any, before: Any, deck: bool) -> bool:
     if after.page_errors() > before.page_errors():
         return True
+    if not deck and getattr(after, "overflow", False) and not getattr(before, "overflow", False):
+        return True  # доводка сделала страницу шире экрана
     return deck and len(after.slides) < max(1, round(len(before.slides) * 0.7))
+
+
+# Примерная цена одного заказа ($) по усилию — чтобы дневной бюджет учитывал и то, что ещё делается
+EFFORT_COST = {"low": 0.2, "medium": 0.4, "high": 0.8, "xhigh": 1.5, "max": 2.5}
+
+
+def expected_cost(settings: Any) -> float:
+    cost = EFFORT_COST.get(settings.html_effort, 1.0)
+    if settings.html_polish:
+        cost += EFFORT_COST.get(settings.html_polish_effort or settings.html_effort, 1.0)
+    return cost
 
 
 async def run(settings: Any, brief: str, title: str, image: tuple[str, bytes] | None = None,
