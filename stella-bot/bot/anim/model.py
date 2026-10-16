@@ -162,6 +162,7 @@ class Spec:
     caption: str
     seed: int
     warnings: tuple[str, ...]  # что поправили сами (модель увидит в ответе инструмента)
+    max_seconds: float = 20.0  # предел длительности (parse_spec(max_seconds=…)); по нему сжимает compile_plan
 
 
 # ======================= план по времени (timeline.compile_plan) =======================
