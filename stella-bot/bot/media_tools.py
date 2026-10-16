@@ -128,9 +128,130 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         return await budget.queue(file, str(args.get("caption") or "")[:500])
 
     async def make_html(args: dict[str, Any]) -> str:
+        from . import html_studio, weblibs
+        from .sandbox import is_owner
+
+        if not getattr(settings, "html_enabled", True):
+            raise ToolError("HTML-страницы сейчас выключены владельцем")
+        if ctx.sender is None:
+            raise ToolError("страница — только когда о ней просят")
+        if getattr(ctx, "html_queued", False):
+            raise ToolError("за один ответ — одна страница")
+        title = " ".join(str(args.get("title") or "").split())[:80] or "страница"
+        brief = str(args.get("brief") or "").strip()
+        if len(brief) < 20:
+            raise ToolError("brief: опиши подробно, что сделать (повод, тексты, стиль, что двигается и нажимается)")
         await budget.take()
-        file = await run(media.html_page, str(args.get("title") or "страница"), str(args.get("html") or ""))
-        return await budget.queue(file, str(args.get("caption") or "")[:500])
+        owner = is_owner(settings, ctx)
+        today = date.today().isoformat()
+        day_key, all_key = f"html:{ctx.chat_id}:{today}", f"html:all:{today}"
+        used = await db.kv_get(day_key)
+        if not ctx.is_admin and used and used[1] >= settings.html_per_day:
+            raise ToolError("на сегодня страниц в этом чате хватит, давай завтра")
+        used_all = await db.kv_get(all_key)
+        if not owner and used_all and used_all[1] >= settings.html_per_day_total:
+            raise ToolError("на сегодня страниц хватит, давай завтра")
+        spent = await db.kv_get(f"spend:{today}")
+        if not owner and settings.daily_budget_usd > 0 and spent and spent[1] >= settings.daily_budget_usd:
+            raise ToolError("на сегодня бюджет кончился — страницу сделаю завтра")
+        if ctx.chat_id in html_studio.STATE.busy_chats:
+            raise ToolError("я уже делаю страницу для этого чата — подожди, пока пришлю")
+        photo = seen = None
+        if args.get("use_photo"):
+            if ctx.quoted_media is None:
+                raise ToolError("фото нет: пусть ответят на фото или пришлют его с просьбой")
+            raw = await ctx.actions.fetch_media(*ctx.quoted_media)
+            photo = await asyncio.to_thread(media.photo_for_page, raw) if raw else None
+            seen = await asyncio.to_thread(media.image_for_model, raw) if raw else None
+            if photo is None or seen is None:
+                raise ToolError("не получилось скачать фото")
+        eta_s = html_studio.estimate_seconds(settings.html_concurrency)
+        eta = html_studio.human_eta(eta_s)
+        caption = str(args.get("caption") or "")[:500]
+        ctx.html_queued = True
+        ctx.media_queued += 1
+        media_key = f"media:{ctx.chat_id}:{today}"
+        for key in (media_key, day_key, all_key):
+            await db.kv_add(key, 1)
+        html_studio.STATE.busy_chats.add(ctx.chat_id)  # сразу: вторая страница в этот чат не встанет в очередь
+        actions = ctx.actions
+        released = asyncio.Event()
+
+        async def wait_reply() -> None:
+            try:
+                await asyncio.wait_for(released.wait(), 120)
+            except asyncio.TimeoutError:
+                pass  # её ответ так и не ушёл — шлём всё равно
+
+        async def refund() -> None:  # страница не дошла — лимиты не тратим
+            for key in (media_key, day_key, all_key):
+                await db.kv_add(key, -1)
+
+        async def is_paused() -> bool:
+            check = getattr(actions, "paused", None)
+            try:
+                return bool(check and await check())
+            except Exception:
+                return False
+
+        async def fail(text: str) -> None:
+            await refund()
+            await wait_reply()
+            if not await is_paused():
+                await actions.say(text)
+
+        async def deliver() -> None:
+            libs = asyncio.ensure_future(weblibs.ensure())  # библиотеки докачиваются, пока пишется страница
+            task = asyncio.ensure_future(html_studio.run(settings, brief, title, seen))
+            try:
+                done, _ = await asyncio.wait({task}, timeout=eta_s * 1.5 + 30)
+                if not done:
+                    await wait_reply()
+                    if not await is_paused():
+                        await actions.say("ещё чуть-чуть, страница почти готова ⏳")
+                result = await task
+            except html_studio.StudioError as exc:
+                if exc.cost_usd and ctx.on_cost is not None:
+                    await ctx.on_cost(exc.cost_usd)
+                await fail(f"страница не получилась 😕 {exc}")
+                return
+            except Exception:
+                log.exception("страница: ошибка")
+                await fail("страница не получилась 😕 попробуй ещё раз")
+                return
+            finally:
+                if not task.done():
+                    task.cancel()
+                html_studio.STATE.busy_chats.discard(ctx.chat_id)
+            if ctx.on_cost is not None:
+                await ctx.on_cost(result.cost_usd)
+            try:
+                await asyncio.wait_for(asyncio.shield(libs), 60)
+            except Exception:
+                log.warning("библиотеки для страницы не скачались — подключатся с CDN", exc_info=True)
+            try:
+                file = await asyncio.to_thread(media.html_page, title, result.html, photo)
+            except media.MediaError as exc:
+                await fail(f"страница не получилась 😕 {exc}")
+                return
+            await wait_reply()
+            if await is_paused():  # пока делалась, чат поставили на паузу — молчим
+                await refund()
+                return
+            sent = await actions.send_file(file, caption, reply=True)
+            if sent is False:
+                await refund()
+
+        async def release() -> None:  # сразу после её сообщения; очередь ответов чата не ждёт студию
+            if not getattr(ctx, "replied", 0):
+                await actions.say(f"делаю страницу ✨ будет готова {eta}")
+            released.set()
+
+        ctx.after.append(release)
+        actions.spawn(deliver())
+        return (f"страница «{title}» уже делается в студии, будет готова {eta}. Обязательно скажи в ответе своими "
+                f"словами, что делаешь и что ждать примерно {eta}; файл придёт отдельным сообщением. Код писать "
+                "не нужно.")
 
     async def make_spreadsheet(args: dict[str, Any]) -> str:
         await budget.take()
@@ -353,15 +474,20 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         ),
         ToolSpec(
             "make_html",
-            "Сделать HTML-страницу и прислать файлом .html (открывается в браузере телефона): мини-игру, "
-            "викторину, открытку с анимацией, шпаргалку, таймер, калькулятор, сайт-визитку. Всё в одном файле: "
-            "CSS в <style>, JS в <script>. Интернета у страницы нет — внешние картинки, шрифты, скрипты, запросы и "
-            "отправка форм не работают; рисуй CSS/SVG, картинки — data:. Делай красиво и под телефон.",
+            "Сделать HTML-страницу и прислать файлом .html (открывается в браузере телефона): игру, викторину, "
+            "открытку-поздравление с 3D и анимацией, сайт, лендинг, шпаргалку, калькулятор, таймер. Код пишешь НЕ "
+            "ты: отдельная дизайн-студия делает страницу минуты 2–5 (3D, анимации, шрифты), а ты пишешь только "
+            "brief — подробное задание. Файл придёт отдельным сообщением.",
             {"type": "object", "properties": {
-                "title": {"type": "string", "description": "название (и имя файла)"},
-                "html": {"type": "string", "description": "полный код страницы"},
-                "caption": {"type": "string"},
-            }, "required": ["title", "html"]},
+                "title": {"type": "string", "description": "короткое название (и имя файла)"},
+                "brief": {"type": "string", "description": (
+                    "подробное задание для дизайнера: что за страница и для кого, повод; все имена, факты, шутки и "
+                    "тексты из чата, которые нужны (дизайнер чата не видит); вопросы и ответы для викторины; правила "
+                    "для игры; настроение, стиль, цвета, если просили; что должно двигаться и что можно нажимать")},
+                "use_photo": {"type": "boolean",
+                              "description": "встроить фото, на которое ответили или которое прислали с просьбой"},
+                "caption": {"type": "string", "description": "подпись к файлу (необязательно)"},
+            }, "required": ["title", "brief"]},
             make_html,
         ),
         ToolSpec(

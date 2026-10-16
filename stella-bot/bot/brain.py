@@ -126,9 +126,10 @@ class ChatRunner:
 class _ChatActions:
     """Что Стелла может сделать в чате сама: опрос, удалить своё сообщение."""
 
-    def __init__(self, brain: "Brain", chat: dict[str, Any]):
+    def __init__(self, brain: "Brain", chat: dict[str, Any], target: Incoming | None = None):
         self.brain = brain
         self.chat = chat
+        self.target = target  # сообщение, на которое она отвечает (готовый позже файл уйдёт ответом на него)
 
     async def send_poll(self, question: str, options: list[str], multiple: bool) -> None:
         try:
@@ -136,9 +137,9 @@ class _ChatActions:
         except EvolutionError:
             log.warning("не удалось отправить опрос", exc_info=True)
 
-    async def send_file(self, file: Any, caption: str = "") -> bool:
+    async def send_file(self, file: Any, caption: str = "", reply: bool = False) -> bool:
         try:
-            await self.brain.outbox.send_media(self.chat, file, caption)
+            await self.brain.outbox.send_media(self.chat, file, caption, quoted=self.target if reply else None)
         except EvolutionError:
             log.warning("не удалось отправить файл", exc_info=True)
             await self.say("не получилось отправить файл 😕")
@@ -942,7 +943,7 @@ class Brain:
         shared = any(not self._same_sender(i, target) for i in starred)
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
                                is_admin=not shared and self.s.is_admin(phone_of(sender.jid) or sender.phone),
-                               actions=_ChatActions(self, chat), quoted_wa_id=target.quoted_id,
+                               actions=_ChatActions(self, chat, target), quoted_wa_id=target.quoted_id,
                                quoted_media=self._media_source(target) or self._recent_media_of(target, batch),
                                on_cost=self.track_cost)
 

@@ -70,6 +70,16 @@ class Settings:
     # мультики с движением (make_cartoon): рисуются на сервере в отдельном процессе, по одному за раз
     anim_enabled: bool = field(default_factory=lambda: _bool("ANIM_ENABLED", True))
     anim_per_day: int = field(default_factory=lambda: _int("ANIM_PER_DAY", 8))  # на чат в сутки (владельцу — без лимита)
+    # HTML-страницы (make_html): игры, открытки, викторины, сайты. Пишет их отдельный вызов модели («студия»)
+    # с дизайн-промптом и долгим обдумыванием — несколько минут и ~0.3–1 $ за страницу на Opus
+    html_enabled: bool = field(default_factory=lambda: _bool("HTML_ENABLED", True))
+    html_model: str = field(default_factory=lambda: _str("HTML_MODEL", "claude-opus-5-5"))
+    html_effort: str = field(default_factory=lambda: _str("HTML_EFFORT", "high"))
+    html_max_tokens: int = field(default_factory=lambda: _int("HTML_MAX_TOKENS", 64000))
+    html_timeout: float = field(default_factory=lambda: _float("HTML_TIMEOUT", 900))
+    html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 4))  # на чат в сутки (админам — без лимита)
+    html_per_day_total: int = field(default_factory=lambda: _int("HTML_PER_DAY_TOTAL", 20))  # на всех (кроме владельца)
+    html_concurrency: int = field(default_factory=lambda: _int("HTML_CONCURRENCY", 2))
     # видео по ссылке: скинули TikTok/YouTube — скачивает (yt-dlp) и присылает ответом на это сообщение
     video_dl_enabled: bool = field(default_factory=lambda: _bool("VIDEO_DL_ENABLED", True))
     video_dl_per_day: int = field(default_factory=lambda: _int("VIDEO_DL_PER_DAY", 30))  # на чат в сутки
