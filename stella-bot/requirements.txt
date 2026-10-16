@@ -17,4 +17,6 @@ fpdf2==2.8.9
 pypdf==6.19.0
 # мультики: 3D-математика
 numpy==2.5.3
+# видео по ссылкам TikTok/YouTube (deno — для YouTube, curl-cffi — для TikTok)
+yt-dlp[default,curl-cffi,deno]==2026.8.19
 tzdata>=2024.1

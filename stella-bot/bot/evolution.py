@@ -196,12 +196,14 @@ class Evolution:
         return ((data or {}).get("key") or {}).get("id")
 
     async def send_media(self, number: str, mediatype: str, media_b64: str, mimetype: str, filename: str,
-                         caption: str = "", *, delay_ms: int = 0) -> str | None:
-        """Картинка / видео / документ (base64). mediatype: image | video | document."""
+                         caption: str = "", *, delay_ms: int = 0, quoted: dict[str, Any] | None = None) -> str | None:
+        """Картинка / видео / документ (base64). mediatype: image | video | document. quoted — ответом на сообщение."""
         body: dict[str, Any] = {"number": number, "mediatype": mediatype, "mimetype": mimetype,
                                 "media": media_b64, "fileName": filename}
         if caption:
             body["caption"] = caption[:1000]
+        if quoted:
+            body["quoted"] = quoted
         if delay_ms:
             body["delay"] = int(delay_ms)
         data = await self._call("POST", f"/message/sendMedia/{self.instance}", json=body, timeout=delay_ms / 1000 + 180)

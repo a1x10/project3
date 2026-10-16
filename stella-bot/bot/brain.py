@@ -216,6 +216,9 @@ class Brain:
         # память — своим отдельным слотом, чтобы фоновая выжимка не задерживала живые ответы
         self.memory = Memory(db, llm, settings, on_cost=self.track_cost, spawn=self.spawn)
         self.reminders = Reminders(db, settings)
+        from .video_dl import Downloader
+
+        self.downloader = Downloader()  # видео по ссылкам TikTok/YouTube: очередь на весь бот
         self._make_voice()
         from .sandbox import CodeSandbox
 
@@ -515,6 +518,12 @@ class Brain:
                     return
             self._decision(inc, "чат на паузе (снять: «стелла вернись»)")
             return
+        if self.s.video_dl_enabled and inc.text:
+            from .video_dl import find_links
+
+            links = find_links(inc.text)
+            if links:  # ссылка на TikTok/YouTube — скачать и прислать ответом (в фоне, ответы чата не ждут)
+                self.spawn(self._send_linked_video(chat, inc, links[0], addressed=addressed))
         if addressed and inc.kind == "text":
             res = await self.commands.handle(inc, chat, sender, body, named=named)
             if res is not None:
@@ -543,6 +552,64 @@ class Brain:
         elif level == CONTINUE:
             self._decision(inc, "возможно, ей — модель решит, ответить ли")
         self.runners.setdefault(inc.chat_jid, ChatRunner(self, inc.chat_jid)).feed(inc, level)
+
+    async def _send_linked_video(self, chat: dict[str, Any], inc: Incoming, url: str, *, addressed: bool) -> None:
+        """Скинули ролик TikTok/YouTube — скачать и прислать видео ответом на это сообщение."""
+        from . import video_dl
+        from .media import MIME, MediaFile
+
+        if self.downloader.seen_recently(chat["id"], url):
+            return  # ту же ссылку только что качали
+        key = f"viddl:{chat['id']}:{date.today().isoformat()}"
+        async with self.downloader.limit_lock():  # проверка и учёт — разом, иначе две ссылки подряд проскочат лимит
+            used = await self.db.kv_get(key)
+            if used and used[1] >= self.s.video_dl_per_day:
+                self._decision(inc, "ссылка на видео — дневной лимит скачиваний исчерпан")
+                return
+            await self.db.kv_add(key, 1)
+        cookies = self.s.video_dl_cookies or os.path.join(self.s.data_dir, "cookies.txt")
+        try:
+            video = await self.downloader.fetch(url, max_seconds=self.s.video_dl_max_seconds,
+                                                max_mb=self.s.video_dl_max_mb, cookies=cookies)
+        except video_dl.VideoError as exc:
+            await self.db.kv_add(key, -1)
+            self._decision(inc, f"видео по ссылке не скачалось: {exc}")
+            if exc.kind == "blocked":
+                await self._video_blocked_note(video_dl.site_of(url))
+            if addressed:
+                await self.outbox.send_result(chat, self._canned([f"не получилось скачать видео: {exc} 😕"]),
+                                              reply_to=inc)
+            return
+        except Exception:
+            await self.db.kv_add(key, -1)
+            log.exception("видео по ссылке: ошибка")
+            return
+        fresh = await self.db.get_chat(chat["id"])
+        if fresh is None or chat_paused(fresh):
+            await self.db.kv_add(key, -1)
+            return
+        caption = video.title[:120] if video.site == "youtube" else ""
+        file = MediaFile("video", video.data, MIME["mp4"], f"{video.site}.mp4")
+        try:
+            await self.outbox.send_media(fresh, file, caption, quoted=inc)
+        except EvolutionError:
+            await self.db.kv_add(key, -1)
+            log.warning("не удалось отправить скачанное видео", exc_info=True)
+            return
+        self._decision(inc, f"скачала видео по ссылке ({video.site}, {len(video.data) // 1024} КБ) и прислала")
+
+    async def _video_blocked_note(self, site: str) -> None:
+        """Сайт не пускает сервер — сказать владельцу (не чаще раза в 6 часов), что делать."""
+        now = time.monotonic()
+        if now - self.downloader.blocked_note_at < 6 * 3600:
+            return
+        self.downloader.blocked_note_at = now
+        name = "YouTube" if site == "youtube" else "TikTok"
+        await self.tell_owner(
+            f"⚠️ {name} не даёт скачать видео с сервера (блокирует его IP или просит войти). "
+            "Для YouTube обычно помогает файл cookies: выгрузи cookies.txt из браузера, где ты вошёл в YouTube, "
+            "и положи в stella-bot/data/cookies.txt — подробно в README, раздел «Видео по ссылке»."
+        )
 
     @staticmethod
     def _age_seconds(inc: Incoming) -> float:

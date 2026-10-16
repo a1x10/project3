@@ -53,10 +53,12 @@ class FakeEvolution:
         self.sent.append({"type": "voice", "to": number, "size": len(audio_b64), "id": wa_id})
         return wa_id
 
-    async def send_media(self, number, mediatype, media_b64, mimetype, filename, caption="", *, delay_ms=0):
+    async def send_media(self, number, mediatype, media_b64, mimetype, filename, caption="", *, delay_ms=0,
+                         quoted=None):
         wa_id = self._id()
         self.sent.append({"type": "media", "to": number, "mediatype": mediatype, "mimetype": mimetype,
-                          "filename": filename, "caption": caption, "size": len(media_b64), "id": wa_id})
+                          "filename": filename, "caption": caption, "size": len(media_b64), "id": wa_id,
+                          "quoted": quoted})
         return wa_id
 
     async def send_poll(self, number, question, options, *, multiple=False, delay_ms=0):
