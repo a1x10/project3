@@ -428,9 +428,10 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         brain = get_brain(request)
         chat = await chat_or_404(request, chat_id)
         lines = [ln.strip() for ln in body.text.split("\n") if ln.strip()][:10]
-        await brain.outbox.send_result(chat, CasinoResult(lines))
-        log.info("панель: отправлено от Стеллы в %s", mask_phone(chat["jid"]))
-        return {"ok": True}
+        # «печатает…» занимает время — отправляем в фоне, панель не ждёт
+        brain.spawn(brain.outbox.send_result(chat, CasinoResult(lines)))
+        log.info("панель: отправляется от Стеллы в %s", mask_phone(chat["jid"]))
+        return {"ok": True, "queued": True}
 
     @router.post("/chats/{chat_id}/pause")
     async def pause(chat_id: int, body: PauseBody, request: Request,
@@ -461,8 +462,10 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
     async def poke(chat_id: int, request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
         brain = get_brain(request)
         chat = await chat_or_404(request, chat_id)
-        sent = await brain.initiate(chat["jid"])
-        return {"ok": True, "sent": sent}
+        if chat_paused(chat):
+            return {"ok": True, "sent": False, "queued": False}
+        brain.spawn(brain.initiate(chat["jid"]))  # модель думает до пары минут — в фоне
+        return {"ok": True, "sent": None, "queued": True}
 
     @router.get("/chats/{chat_id}/about")
     async def about(chat_id: int, request: Request, _: str = Depends(require_session)) -> dict[str, Any]:

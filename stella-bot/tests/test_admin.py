@@ -124,6 +124,7 @@ async def test_chat_actions_and_settings(panel, brain):
 
     assert (await panel.post(f"/admin/api/chats/{cid}/send", json={"text": "всем ку\nкак дела"},
                              headers=h)).status_code == 200
+    await settle(brain)
     assert brain.evo.texts()[-2:] == ["всем ку", "как дела"]
 
     r = await panel.post(f"/admin/api/chats/{cid}/pause", json={"minutes": 60}, headers=h)
