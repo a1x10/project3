@@ -30,7 +30,9 @@ import sys
 import tempfile
 import time
 import unicodedata
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .media import MediaError, MediaFile
 
@@ -48,7 +50,7 @@ MAX_INPUT_BYTES = 20 * 1024 * 1024
 MIN_INPUT_SECONDS = 0.3  # короче — там нечего слушать
 MAX_TRANSCRIPT_CHARS = 4000
 MAX_SPEAK_CHARS = 600  # примерно 40 секунд речи
-PIECE_CHARS = 160  # длинные фразы piper читает кусками: пик памяти растёт с длиной фразы
+PIECE_CHARS = 100  # длинные фразы piper читает кусками: пик памяти растёт с длиной фразы (160 → ~410 МБ, 100 → ~340)
 SENTENCE_PAUSE = 0.2  # пауза между фразами в озвучке, секунд
 
 FFMPEG_TIMEOUT = 60
@@ -201,8 +203,8 @@ class _Engine:
 
     def _failed(self, name: str, exc: Exception) -> VoiceUnavailable:
         self._retry_at[name] = time.monotonic() + RETRY_AFTER
-        log.warning("голосовые: не удалось загрузить модель %s (%s: %s) — попробую снова через %d мин",
-                    name, type(exc).__name__, exc, RETRY_AFTER // 60)
+        log.warning("голосовые: не удалось загрузить модель %s «%s» (%s: %s) — попробую снова через %d мин",
+                    self.package, name, type(exc).__name__, exc, RETRY_AFTER // 60)
         return VoiceUnavailable("модель не загрузилась, попробую позже")
 
     def _touch(self) -> None:
@@ -241,7 +243,7 @@ def decode_audio(data: bytes) -> bytes:
             proc = subprocess.run(
                 [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src,
                  "-t", str(MAX_INPUT_SECONDS + 1), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "pipe:1"],
-                capture_output=True, timeout=FFMPEG_TIMEOUT,
+                capture_output=True, timeout=FFMPEG_TIMEOUT, check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise VoiceError("не получилось прочитать голосовое") from exc
@@ -277,10 +279,12 @@ class Transcriber(_Engine):
     module, package, purpose = "faster_whisper", "faster-whisper", "расшифровывать голосовые"
 
     def __init__(self, model_size: str = DEFAULT_WHISPER, models_dir: str = "data/models/whisper", *,
-                 cpu_threads: int = 0, beam_size: int = 1, idle_unload: float = IDLE_UNLOAD):
+                 hotwords: str | None = "Стелла", cpu_threads: int = 0, beam_size: int = 1,
+                 idle_unload: float = IDLE_UNLOAD):
         super().__init__(idle_unload)
         self.model_size = model_size
         self.models_dir = models_dir
+        self.hotwords = hotwords or None  # подсказка: её имя пишется «Стелла», а не «Стела» / «С тела»
         self.cpu_threads = cpu_threads or _threads()
         self.beam_size = max(1, beam_size)  # 1 — быстрее; 5 — чуть точнее и медленнее
         self._model: Any = None
@@ -321,7 +325,8 @@ class Transcriber(_Engine):
         except (ImportError, OSError) as exc:
             raise VoiceUnavailable(self._disable(f"faster-whisper не загружается: {exc}")) from exc
         os.makedirs(self.models_dir, exist_ok=True)
-        opts = dict(device="cpu", compute_type="int8", cpu_threads=self.cpu_threads, download_root=self.models_dir)
+        opts = {"device": "cpu", "compute_type": "int8", "cpu_threads": self.cpu_threads,
+                "download_root": self.models_dir}
         started = time.monotonic()
         try:
             try:  # сначала — уже скачанная модель, без похода в сеть
@@ -330,7 +335,7 @@ class Transcriber(_Engine):
                 log.info("голосовые: качаю модель Whisper «%s» в %s (один раз)…", self.model_size, self.models_dir)
                 model = WhisperModel(self.model_size, **opts)
         except Exception as exc:
-            raise self._failed(f"Whisper «{self.model_size}»", exc) from exc
+            raise self._failed(self.model_size, exc) from exc
         finally:
             trim_memory()  # веса приходят во float16 и пережимаются в int8 — черновики возвращаем системе
         log.info("голосовые: Whisper «%s» загружен за %.1f с", self.model_size, time.monotonic() - started)
@@ -338,9 +343,9 @@ class Transcriber(_Engine):
         return model
 
     def _transcribe_sync(self, pcm: bytes) -> str:
-        import numpy as np
-
         model = self._load()
+        import numpy as np  # приходит вместе с faster-whisper
+
         audio = np.frombuffer(pcm, dtype=np.float32)
         try:
             try:
@@ -351,7 +356,7 @@ class Transcriber(_Engine):
             language = pick_language(list(probs or []))
             segments, _info = model.transcribe(audio, language=language, task="transcribe",
                                                beam_size=self.beam_size, vad_filter=True,
-                                               condition_on_previous_text=False)
+                                               condition_on_previous_text=False, hotwords=self.hotwords)
             parts = [s.text.strip() for s in segments]  # распознавание идёт здесь, по мере чтения
         finally:
             trim_memory()
@@ -401,10 +406,11 @@ _EMOJI_GLUE = {"‍", "︎", "️", "⃣"}
 def clean_for_speech(text: str) -> str:
     """Убрать то, что вслух не читается: эмодзи, ссылки, разметку."""
     text = re.sub(r"https?://\S+|www\.\S+", " ", text or "")
-    text = "".join(ch for ch in text
-                   if ch not in _EMOJI_GLUE and unicodedata.category(ch) not in ("So", "Cs", "Co", "Cn"))
+    text = "".join(ch for ch in text  # So — эмодзи и значки, Sk — в том числе цвет кожи у эмодзи
+                   if ch not in _EMOJI_GLUE and unicodedata.category(ch) not in ("So", "Sk", "Cs", "Co", "Cn"))
     text = re.sub(r"[*_~`#|<>\[\]{}^\\]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text)
+    return re.sub(r" ([.,!?…:;])", r"\1", text).strip()
 
 
 def split_for_speech(text: str, limit: int = PIECE_CHARS) -> list[str]:
@@ -440,8 +446,6 @@ def _open_piper(model: str, config: str, download_dir: str) -> Any:
     from piper import PiperVoice
 
     try:
-        from pathlib import Path
-
         import onnxruntime
         from piper.config import PiperConfig
 
@@ -534,7 +538,7 @@ class Speaker(_Engine):
             model, config = self._files(voice)
             loaded = _open_piper(model, config, self.models_dir)
         except Exception as exc:
-            raise self._failed(f"piper {voice}", exc) from exc
+            raise self._failed(voice, exc) from exc
         log.info("голосовые: голос piper %s загружен за %.1f с", voice, time.monotonic() - started)
         self._voices[voice] = loaded
         return loaded
@@ -580,7 +584,7 @@ def encode_voice_note(pcm: bytes, sample_rate: int) -> bytes:
              "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
              "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", "-application", "voip",
              "-map_metadata", "-1", "-f", "ogg", "pipe:1"],
-            input=pcm, capture_output=True, timeout=FFMPEG_TIMEOUT,
+            input=pcm, capture_output=True, timeout=FFMPEG_TIMEOUT, check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise VoiceError("не получилось собрать голосовое") from exc
@@ -595,7 +599,7 @@ def encode_voice_note(pcm: bytes, sample_rate: int) -> bytes:
 SPEAK_TOOL_WAIT = 90  # инструмент не ждёт очередь дольше полутора минут
 
 
-def build_voice_tools(db: "DB", settings: "Settings", ctx: "ToolContext", *, speaker: Speaker) -> list["ToolSpec"]:
+def build_voice_tools(db: DB, settings: Settings, ctx: ToolContext, *, speaker: Speaker) -> list[ToolSpec]:
     """Инструмент say_voice. Если озвучка на сервере не работает — пустой список (модель о ней не узнает)."""
     from .llm.base import ToolSpec
     from .media_tools import _Budget
