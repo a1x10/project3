@@ -1294,20 +1294,16 @@ def _forest(s: _S) -> list[_Layer]:
             _log(ctx, s, x, s.h * r.uniform(0.8, 0.84), r.uniform(50, 70) * u)
 
     def ground_anim(ctx, s, t, rg):
-        mk = ("ferns", rg)
-        ferns = s.memo.get(mk)
+        x0, _, x1, _ = rg
+        ferns = s.memo.get(("ferns", rg))
         if ferns is None:
-            x0, _, x1, _ = rg
             r = s.r("ferns")
             cnt = int(5 * (x1 - x0) / s.w)
-            ferns = []
-            for i in range(cnt):
-                x = x0 + (i + r.uniform(0.2, 0.8)) * (x1 - x0) / max(1, cnt)
-                ferns.append((x, s.h * r.uniform(0.97, 1.02))
-                             + _plant_sprite(s, ("fern", i, rg), r.uniform(40, 60) * s.u, (0, 0, 0), "fern"))
-            s.memo[mk] = ferns
-        for i, (x, y, sp, px, py) in enumerate(ferns):
-            _blit(ctx, sp, x, y, rot=0.06 * math.sin(t * 1.3 + i * 1.7), px=px, py=py)
+            ferns = s.memo[("ferns", rg)] = [
+                (x0 + (i + r.uniform(0.2, 0.8)) * (x1 - x0) / max(1, cnt), s.h * r.uniform(0.97, 1.02),
+                 r.uniform(40, 60) * s.u) for i in range(cnt)]
+        for i, (x, y, size) in enumerate(ferns):
+            _fern(ctx, s, x, y, size, math.sin(t * 1.3 + i * 1.7))
         if s.dark:
             _fireflies(ctx, s, t, rg, 22 if s.night else 10, s.gy - 160 * s.u, s.h * 0.93)
 
@@ -1526,7 +1522,7 @@ def _beach(s: _S) -> list[_Layer]:
 
 
 def _palm(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int, t: float, key: object = 0) -> None:
-    """Пальма: ствол — неподвижный спрайт, крона — спрайт, который покачивается вокруг макушки."""
+    """Пальма: ствол — неподвижный спрайт, крона рисуется каждый кадр (листья качаются)."""
     tx, ty = x + lean * size * 0.28, gy - size
     pad = size * 0.1
     trunk_w, trunk_h = size * 0.5, size * 1.1
@@ -1535,16 +1531,9 @@ def _palm(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int
     def draw_trunk(c: cairo.Context) -> None:
         _palm_trunk(c, s, tox, toy, size, lean)
 
-    crown_w, crown_h = size * 1.5, size * 0.95
-    cox, coy = crown_w / 2, crown_h * 0.45
-
-    def draw_crown(c: cairo.Context) -> None:
-        _palm_crown(c, s, cox, coy, size)
-
     trunk = _sprite(s, ("palm_trunk", key, round(size, 2), lean), trunk_w, trunk_h, draw_trunk)
-    crown = _sprite(s, ("palm_crown", key, round(size, 2)), crown_w, crown_h, draw_crown)
     _blit(ctx, trunk, x, gy, px=tox, py=toy)
-    _blit(ctx, crown, tx, ty, rot=0.045 * math.sin(t * 1.3) + 0.02 * math.sin(t * 3.1), px=cox, py=coy)
+    _palm_crown(ctx, s, tx, ty, size, t)
 
 
 def _palm_trunk(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lean: int) -> None:
@@ -1563,11 +1552,14 @@ def _palm_trunk(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, lea
         _fill_edge(ctx, trunk if i % 2 else mul(trunk, 0.9), s.edge(trunk), lw * 0.8)
 
 
-def _palm_crown(ctx: cairo.Context, s: _S, tx: float, ty: float, size: float) -> None:
+def _palm_crown(ctx: cairo.Context, s: _S, tx: float, ty: float, size: float, t: float = 0.0) -> None:
+    """Крона пальмы: листья качаются каждый своим темпом (сплошная заливка — дёшево каждый кадр)."""
     lw = 2.2 * s.u
     leaf = s.lit("#3fae55", 0, False)
     trunk = s.lit("#c8925a", 0, False)
-    for j, a in enumerate((-2.9, -2.35, -1.75, -1.2, -0.6, -0.15)):
+    ribs = []
+    for j, base_a in enumerate((-2.9, -2.35, -1.75, -1.2, -0.6, -0.15)):
+        a = base_a + 0.06 * math.sin(t * 1.4 + j * 0.9)
         ln = size * (0.55 + 0.1 * math.sin(j * 2.3))
         droop = size * 0.22
         ex, ey = tx + math.cos(a) * ln, ty + math.sin(a) * ln * 0.55 + droop
@@ -1578,11 +1570,18 @@ def _palm_crown(ctx: cairo.Context, s: _S, tx: float, ty: float, size: float) ->
         ctx.curve_to(mx_ + nx * wd, my_ + ny * wd - wd, ex + nx * wd * 0.3, ey, ex, ey)
         ctx.curve_to(ex - nx * wd * 0.3, ey + wd * 0.4, mx_ - nx * wd, my_ - ny * wd + wd, tx, ty)
         ctx.close_path()
-        _fill_edge(ctx, _grad(ty - wd * 2, ey + wd, (0, lighten(leaf, 0.2)), (1, mul(leaf, 0.8))), s.edge(leaf),
-                   lw)
+        ribs.append((mx_, my_, ex, ey))
+    _fill_edge(ctx, leaf, s.edge(leaf), lw)
+    for mx_, my_, ex, ey in ribs:
+        ctx.move_to(tx, ty)
+        ctx.curve_to(mx_, my_, mx_, my_, ex, ey)
+    ctx.set_source_rgba(*lighten(leaf, 0.35), 0.8)
+    ctx.set_line_width(1.6 * s.u)
+    ctx.stroke()
     for dx in (-0.04, 0.03):
+        ctx.new_sub_path()
         ctx.arc(tx + dx * size, ty + size * 0.03, size * 0.035, 0, 2 * math.pi)
-        _fill_edge(ctx, s.lit("#7a4a2a", 0, False), s.edge(trunk), lw * 0.7)
+    _fill_edge(ctx, s.lit("#7a4a2a", 0, False), s.edge(trunk), lw * 0.7)
 
 
 # ======================= space =======================
@@ -2276,37 +2275,56 @@ def _marquee(ctx: cairo.Context, s: _S, text: str) -> None:
 
 
 # ======================= party =======================
+def _ihash(*k: int) -> float:
+    """Быстрый целочисленный хэш → 0..1 (для того, что считается каждый кадр: плитки, огоньки)."""
+    h = 0x9E3779B9
+    for v in k:
+        h = ((h ^ (v & 0xFFFFFFFF)) * 0x85EBCA6B) & 0xFFFFFFFF
+        h ^= h >> 13
+        h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+        h ^= h >> 16
+    return h / 4294967296.0
+
+
 def _party(s: _S) -> list[_Layer]:
-    wall = _accent(s, "#ffc2df")
-    ball = (s.w * 0.74, s.h * 0.17, 34 * s.u)
+    base_wall = _accent(s, "#ffc2df")
+    dim = {"day": 0.0, "sunset": 0.2, "evening": 0.45, "night": 0.62}[s.time]
+    wall = mix(base_wall, hx("#3a1d5e"), dim)
+    ball = (s.w * 0.76, s.h * 0.21, 44 * s.u)
 
     def wall_layer(ctx, s, rg):
         x0, y0, x1, y1 = rg
         u = s.u
         c = s.lit(wall)
         ctx.rectangle(x0, y0, x1 - x0, s.gy - y0)
-        ctx.set_source(_grad(0, s.gy, (0, lighten(c, 0.06)), (1, mul(c, 0.86))))
+        ctx.set_source(_grad(0, s.gy, (0, lighten(c, 0.06)), (1, mul(c, 0.82))))
         ctx.fill()
-        # обои: ромбики-конфетти
+        # широкие полосы обоев
+        i0 = int(x0 // (90 * u)) - 1
+        for i in range(i0, i0 + int((x1 - x0) / (90 * u)) + 3):
+            ctx.rectangle(i * 90 * u, y0, 45 * u, s.gy - y0)
+        ctx.set_source_rgba(*lighten(c, 0.12), 0.5)
+        ctx.fill()
         r = s.r("partywall")
-        for _ in range(int(55 * (x1 - x0) / s.w)):
+        for _ in range(int(40 * (x1 - x0) / s.w)):
             px, py = r.uniform(x0, x1), r.uniform(y0, s.gy - 20 * u)
             col = s.lit(r.choice(CONFETTI))
             if r.random() < 0.5:
                 ctx.arc(px, py, r.uniform(3, 6) * u, 0, 2 * math.pi)
             else:
                 star(ctx, px, py, r.uniform(5, 8) * u, 5, 0.5, r.uniform(0, 6))
-            ctx.set_source_rgba(*col, 0.35)
+            ctx.set_source_rgba(*col, 0.4)
             ctx.fill()
-        # серпантин свисает
-        for x in _xs(s, rg, "streamers", (120, 200)):
+        # серпантин свисает с потолка
+        for x in _xs(s, rg, "streamers", (110, 190)):
             col = s.lit(r.choice(CONFETTI))
+            ln = r.uniform(0.18, 0.34) * s.h
             ctx.move_to(x, y0)
-            yy = y0
+            yy = 0.0
             k = 0
-            while yy < s.h * 0.4:
-                yy += 18 * u
-                ctx.line_to(x + (8 if k % 2 else -8) * u, yy)
+            while yy < ln:
+                yy += 16 * u
+                ctx.line_to(x + (7 if k % 2 else -7) * u, yy)
                 k += 1
             ctx.set_source_rgb(*col)
             ctx.set_line_width(4 * u)
@@ -2314,7 +2332,6 @@ def _party(s: _S) -> list[_Layer]:
             ctx.stroke()
         ctx.rectangle(x0, s.gy - 14 * u, x1 - x0, 14 * u)
         _fill_edge(ctx, s.lit("#ffffff"), s.edge(c), 1.6 * u)
-        # шнур диско-шара
         bx, by, br = ball
         ctx.move_to(bx, y0)
         ctx.line_to(bx, by - br)
@@ -2325,185 +2342,239 @@ def _party(s: _S) -> list[_Layer]:
     def wall_anim(ctx, s, t, rg):
         u = s.u
         x0, _, x1, _ = rg
-        # пятна света от диско-шара бегут по стене (аддитивно)
+        # пятна света от диско-шара бегут по стене (аддитивно; по одной заливке на цвет)
         ctx.save()
         ctx.set_operator(cairo.OPERATOR_ADD)
-        for i in range(int(16 * (x1 - x0) / s.w)):
-            col = hx(CONFETTI[i % len(CONFETTI)])
-            px = x0 + ((hash01(s.seed, "spot", i) * (x1 - x0) + t * 70 * u) % (x1 - x0))
-            py = s.gy * (0.1 + 0.8 * hash01(s.seed, "spoty", i)) + 10 * u * math.sin(t * 2 + i)
-            ellipse(ctx, px, py, 9 * u, 6 * u)
-            ctx.set_source_rgba(*col, 0.35)
+        n = int(18 * (x1 - x0) / s.w)
+        amp = 0.25 + 0.3 * dim
+        for ci, col in enumerate(CONFETTI):
+            for i in range(ci, n, len(CONFETTI)):
+                px = x0 + ((_ihash(s.seed, i, 1) * (x1 - x0) + t * 70 * u) % (x1 - x0))
+                py = s.gy * (0.1 + 0.8 * _ihash(s.seed, i, 2)) + 10 * u * math.sin(t * 2 + i)
+                ctx.new_sub_path()
+                ellipse(ctx, px, py, 10 * u, 7 * u)
+            ctx.set_source_rgba(*hx(col), amp)
             ctx.fill()
         ctx.restore()
-        # гирлянда флажков с буквами (или цветных)
         text, _ = clean_text(s.text, 24)
-        letters = [ch for ch in text.upper()] if text.strip() else []
-        _bunting(ctx, s, t, rg, letters)
-        # шарики по бокам качаются
-        for side, fx in ((-1, 0.07), (1, 0.93)):
-            for j in range(3):
-                bx = s.w * fx + (j - 1) * 30 * u * side
-                by = s.h * (0.33 + 0.05 * j) + 6 * u * math.sin(t * 1.3 + j + side)
-                col = hx(CONFETTI[(j * 2 + (side > 0)) % len(CONFETTI)])
-                _balloon(ctx, s, bx, by, 30 * u, s.lit(col), s.w * fx, s.gy - 20 * u, t + j)
-        # диско-шар
+        _bunting(ctx, s, t, rg, [ch for ch in text.upper()] if text.strip() else [])
+        _balloon_cluster(ctx, s, t, s.w * 0.08, s.h * 0.38, 1)
+        _balloon_cluster(ctx, s, t, s.w * 0.92, s.h * 0.36, -1)
         bx, by, br = ball
         _disco(ctx, s, bx, by, br, t)
+
+    def floor_tiles(s):
+        tiles = s.memo.get("tiles")
+        if tiles is None:
+            u = s.u
+            vx, vy = s.w * 0.5, s.gy - 400 * u
+            mx = layer_margin(s.w, s.h, 1.0)[0]
+            rows = [s.gy]
+            step = 18 * u
+            while rows[-1] < s.h * 1.3:
+                rows.append(rows[-1] + step)
+                step *= 1.3
+            tiles = []
+            for ri in range(len(rows) - 1):
+                ya, yb = rows[ri], rows[ri + 1]
+                ka, kb = (ya - vy) / (s.h - vy), (yb - vy) / (s.h - vy)
+                for i in range(-24, 25):
+                    xb0, xb1 = s.w * 0.5 + i * 80 * u, s.w * 0.5 + (i + 1) * 80 * u
+                    quad = ((vx + (xb0 - vx) * ka, ya), (vx + (xb1 - vx) * ka, ya), (vx + (xb1 - vx) * kb, yb),
+                            (vx + (xb0 - vx) * kb, yb))
+                    if max(q[0] for q in quad) < -mx or min(q[0] for q in quad) > s.w + mx:
+                        continue
+                    tiles.append((ri, i, quad))
+            s.memo["tiles"] = tiles
+        return tiles
 
     def floor(ctx, s, rg):
         x0, y0, x1, y1 = rg
         u = s.u
-        base = s.lit("#3a2a5e")
+        base = s.lit("#2a1f48")
         _vgrad(ctx, x0, s.gy, x1, y1, ((0, mul(base, 0.8)), (1, base)), ya=s.gy, yb=s.h)
+        for ri, i, quad in floor_tiles(s):
+            col = hx(CONFETTI[(i * 3 + ri * 5) % len(CONFETTI)])
+            ctx.move_to(*quad[0])
+            for q in quad[1:]:
+                ctx.line_to(*q)
+            ctx.close_path()
+            ctx.set_source_rgba(*mul(col, 0.35), 0.55)
+            ctx.fill_preserve()
+            ctx.set_source_rgba(0.06, 0.03, 0.12, 0.7)
+            ctx.set_line_width(1.6 * u)
+            ctx.stroke()
 
     def floor_anim(ctx, s, t, rg):
-        u = s.u
-        x0, _, x1, y1 = rg
-        vx, vy = s.w * 0.5, s.gy - 400 * u
-        rows = [s.gy]
-        step = 18 * u
-        while rows[-1] < y1:
-            rows.append(rows[-1] + step)
-            step *= 1.3
         beat = int(t * 2.5)
-        ctx.set_line_width(1.6 * u)
-        for ri in range(len(rows) - 1):
-            ya, yb = rows[ri], rows[ri + 1]
-            ka, kb = (ya - vy) / (s.h - vy), (yb - vy) / (s.h - vy)
-            for i in range(-24, 25):
-                xb0, xb1 = s.w * 0.5 + i * 80 * u, s.w * 0.5 + (i + 1) * 80 * u
-                if max(vx + (xb1 - vx) * kb, xb1) < x0 or min(vx + (xb0 - vx) * kb, xb0) > x1:
-                    continue
-                lit = hash01(s.seed, "tile", ri, i, beat) < 0.3
-                col = hx(CONFETTI[(i * 3 + ri * 5 + beat) % len(CONFETTI)])
-                ctx.move_to(vx + (xb0 - vx) * ka, ya)
-                ctx.line_to(vx + (xb1 - vx) * ka, ya)
-                ctx.line_to(vx + (xb1 - vx) * kb, yb)
-                ctx.line_to(vx + (xb0 - vx) * kb, yb)
+        x0, _, x1, _ = rg
+        lit: dict[int, list] = {}
+        for ri, i, quad in floor_tiles(s):
+            if _ihash(s.seed, ri, i, beat) < 0.22:
+                lit.setdefault((i * 3 + ri * 5 + beat) % len(CONFETTI), []).append(quad)
+        ctx.save()
+        ctx.set_operator(cairo.OPERATOR_ADD)
+        for ci, quads in lit.items():
+            for quad in quads:
+                ctx.move_to(*quad[0])
+                for q in quad[1:]:
+                    ctx.line_to(*q)
                 ctx.close_path()
-                if lit:
-                    ctx.set_source_rgba(*mix(col, (1, 1, 1), 0.2), 0.85)
-                else:
-                    ctx.set_source_rgba(*mul(col, 0.45), 0.5)
-                ctx.fill_preserve()
-                ctx.set_source_rgba(0.08, 0.04, 0.16, 0.6)
-                ctx.stroke()
+            ctx.set_source_rgba(*hx(CONFETTI[ci]), 0.55)
+            ctx.fill()
+        ctx.restore()
 
     return [_Layer(0.85, wall_layer, wall_anim, -9, HORIZON["party"] + 0.01),
             _Layer(1.0, floor, floor_anim, HORIZON["party"] - 0.02, 9)]
 
 
 def _bunting(ctx: cairo.Context, s: _S, t: float, rg: Region, letters: list[str]) -> None:
+    """Гирлянда флажков: провисает и чуть качается; с буквами background.text, если она есть."""
     u = s.u
     x0, _, x1, _ = rg
-    rows = [(s.h * 0.07, 0.0)] if letters else [(s.h * 0.06, 0.0), (s.h * 0.1, 1.7)]
-    for row, (yb, ph) in enumerate(rows):
-        n_flags = max(len(letters), 1)
-        if letters:
-            fw = min(46 * u, s.w * 0.86 / n_flags)
-            xa = s.w / 2 - fw * n_flags / 2 - fw
-            xb = s.w / 2 + fw * n_flags / 2 + fw
-        else:
-            fw = 40 * u
-            xa, xb = x0, x1
-        sag = 30 * u + 6 * u * math.sin(t * 1.2 + ph)
-        ctx.move_to(xa, yb)
-        ctx.curve_to(xa + (xb - xa) * 0.3, yb + sag * 1.3, xb - (xb - xa) * 0.3, yb + sag * 1.3, xb, yb)
-        ctx.set_source_rgb(*s.edge(s.lit("#ffffff")))
-        ctx.set_line_width(2 * u)
-        ctx.stroke()
-
-        def rope_y(x: float) -> float:
-            f = (x - xa) / max(1.0, xb - xa)
-            return yb + sag * 4 * f * (1 - f) * 1.0
-
-        count = len(letters) if letters else int((xb - xa) / fw)
-        start = (s.w / 2 - fw * count / 2) if letters else xa
-        for i in range(count):
-            fx = start + i * fw + (0 if letters else fw * 0.5)
-            fy = rope_y(fx + fw * 0.5)
-            sway = 0.05 * math.sin(t * 2.0 + i * 0.8 + ph)
-            col = s.lit(CONFETTI[(i + row * 3) % len(CONFETTI)])
-            ctx.save()
-            ctx.translate(fx + fw * 0.5, fy)
-            ctx.rotate(sway)
-            fh = fw * (1.15 if letters else 0.9)
-            ctx.move_to(-fw * 0.46, 0)
-            ctx.line_to(fw * 0.46, 0)
-            ctx.line_to(0, fh)
+    yb = s.h * 0.05
+    if letters:
+        n = len(letters)
+        fw = min(52 * u, s.w * 0.84 / n)
+        xa, xb = s.w / 2 - fw * n / 2 - fw * 1.2, s.w / 2 + fw * n / 2 + fw * 1.2
+        xs = [s.w / 2 - fw * n / 2 + fw * (i + 0.5) for i in range(n)]
+    else:
+        fw = 46 * u
+        xa, xb = x0, x1
+        xs = [xa + fw * (i + 0.5) for i in range(int((xb - xa) / fw))]
+    sag = (34 + 6 * math.sin(t * 1.2)) * u
+    ctx.move_to(xa, yb)
+    ctx.curve_to(xa + (xb - xa) * 0.3, yb + sag * 1.33, xb - (xb - xa) * 0.3, yb + sag * 1.33, xb, yb)
+    ctx.set_source_rgb(*s.edge(s.lit("#ffffff")))
+    ctx.set_line_width(2 * u)
+    ctx.stroke()
+    fh = fw * (1.15 if letters else 0.95)
+    groups: dict[int, list[tuple[float, float, float]]] = {}
+    for i, fx in enumerate(xs):
+        f = (fx - xa) / max(1.0, xb - xa)
+        fy = yb + sag * 4 * f * (1 - f)
+        groups.setdefault(i % len(CONFETTI), []).append((fx, fy, 0.06 * math.sin(t * 2.0 + i * 0.8)))
+    for ci, items in groups.items():
+        col = s.lit(CONFETTI[ci])
+        for fx, fy, a in items:
+            ca, sa = math.cos(a), math.sin(a)
+            for k, (px, py) in enumerate(((-fw * 0.46, 0.0), (fw * 0.46, 0.0), (0.0, fh))):
+                (ctx.move_to if k == 0 else ctx.line_to)(fx + px * ca - py * sa, fy + px * sa + py * ca)
             ctx.close_path()
-            _fill_edge(ctx, col, s.edge(col), 1.6 * u)
-            if letters and letters[i].strip():
-                ctx.new_path()
-                text_path(ctx, letters[i], 0, fh * 0.32, fw * 0.5, True)
-                ctx.set_source_rgb(1, 1, 1)
-                ctx.fill()
+        _fill_edge(ctx, col, s.edge(col), 1.6 * u)
+    if letters:
+        for i, fx in enumerate(xs):
+            if not letters[i].strip():
+                continue
+            f = (fx - xa) / max(1.0, xb - xa)
+            fy = yb + sag * 4 * f * (1 - f)
+            a = 0.06 * math.sin(t * 2.0 + i * 0.8)
+            ctx.save()
+            ctx.translate(fx, fy)
+            ctx.rotate(a)
+            ctx.new_path()
+            text_path(ctx, letters[i], 0, fh * 0.33, fw * 0.5, True)
+            ctx.set_source_rgb(1, 1, 1)
+            ctx.fill_preserve()
+            ctx.set_source_rgba(*INK, 0.5)
+            ctx.set_line_width(1.0 * u)
+            ctx.stroke()
             ctx.restore()
 
 
-def _balloon(ctx: cairo.Context, s: _S, x: float, y: float, r: float, col: RGB, ax: float, ay: float,
-             t: float) -> None:
+def _balloon_sprite(s: _S, key: object, r: float, col: RGB) -> tuple[cairo.ImageSurface, float, float]:
+    w, h = r * 2.2, r * 2.6
+    px, py = w / 2, r * 1.15
+
+    def draw(c: cairo.Context) -> None:
+        x, y = px, py
+        ellipse(c, x, y, r * 0.86, r)
+        g = cairo.RadialGradient(x - r * 0.3, y - r * 0.4, r * 0.1, x, y, r * 1.1)
+        g.add_color_stop_rgb(0, *lighten(col, 0.45))
+        g.add_color_stop_rgb(0.6, *col)
+        g.add_color_stop_rgb(1, *mul(col, 0.7))
+        _fill_edge(c, g, s.edge(col), 2 * s.u)
+        c.move_to(x - r * 0.15, y + r * 1.12)
+        c.line_to(x + r * 0.15, y + r * 1.12)
+        c.line_to(x, y + r * 0.96)
+        c.close_path()
+        _fill_edge(c, col, s.edge(col), 1.4 * s.u)
+        ellipse(c, x - r * 0.35, y - r * 0.4, r * 0.14, r * 0.24, -0.5)
+        c.set_source_rgba(1, 1, 1, 0.7)
+        c.fill()
+
+    return _sprite(s, ("balloon", key), w, h, draw), px, py
+
+
+def _balloon_cluster(ctx: cairo.Context, s: _S, t: float, ax: float, ay: float, side: int) -> None:
+    """Три шарика, привязанные к одной точке у пола, покачиваются."""
     u = s.u
-    ctx.move_to(x, y + r * 1.15)
-    ctx.curve_to(x + 8 * u * math.sin(t * 2), y + r * 2.2, ax - 6 * u, ay - (ay - y) * 0.4, ax, ay)
-    ctx.set_source_rgba(*s.edge(col), 0.8)
+    tie = (ax, s.gy - 16 * u)
+    items = []
+    for j in range(3):
+        bx = ax + (j - 1) * 34 * u * side + 4 * u * math.sin(t * 1.1 + j)
+        by = ay + (abs(j - 1) * 0.05 - 0.02) * s.h + 7 * u * math.sin(t * 1.3 + j * 1.7 + side)
+        col = s.lit(CONFETTI[(j * 2 + (side > 0)) % len(CONFETTI)])
+        items.append((bx, by, col, j))
+    for bx, by, col, j in items:
+        ctx.move_to(bx, by + 46 * u)
+        ctx.curve_to(bx + 6 * u * math.sin(t * 2 + j), by + 90 * u, tie[0], tie[1] - 60 * u, *tie)
+    ctx.set_source_rgba(*s.edge(s.lit("#ffffff")), 0.8)
     ctx.set_line_width(1.4 * u)
     ctx.stroke()
-    ellipse(ctx, x, y, r * 0.86, r)
-    g = cairo.RadialGradient(x - r * 0.3, y - r * 0.4, r * 0.1, x, y, r * 1.1)
-    g.add_color_stop_rgb(0, *lighten(col, 0.45))
-    g.add_color_stop_rgb(0.6, *col)
-    g.add_color_stop_rgb(1, *mul(col, 0.7))
-    _fill_edge(ctx, g, s.edge(col), 2 * u)
-    ctx.move_to(x - r * 0.15, y + r * 1.12)
-    ctx.line_to(x + r * 0.15, y + r * 1.12)
-    ctx.line_to(x, y + r * 0.96)
-    ctx.close_path()
-    _fill_edge(ctx, col, s.edge(col), 1.4 * u)
-    ellipse(ctx, x - r * 0.35, y - r * 0.4, r * 0.14, r * 0.24, -0.5)
-    ctx.set_source_rgba(1, 1, 1, 0.7)
-    ctx.fill()
+    for bx, by, col, j in items:
+        sp, px, py = _balloon_sprite(s, (side, j), 40 * u, col)
+        _blit(ctx, sp, bx, by, px=px, py=py)
 
 
 def _disco(ctx: cairo.Context, s: _S, x: float, y: float, r: float, t: float) -> None:
-    """2D диско-шар: грани-квадратики переливаются при вращении, блики-искры."""
+    """2D диско-шар: грани переливаются при вращении (4 ступени яркости — 4 заливки), блики-искры."""
     u = s.u
-    _glow(ctx, x, y, r * 2.6, (0.8, 0.85, 1.0), 0.25, add=True)
-    ctx.arc(x, y, r, 0, 2 * math.pi)
-    g = cairo.RadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r)
-    g.add_color_stop_rgb(0, 0.95, 0.96, 1.0)
-    g.add_color_stop_rgb(1, 0.45, 0.48, 0.62)
-    _fill_edge(ctx, g, INK, 2.4 * u)
+    glow = _glow_sprite(s, "disco", (0.8, 0.85, 1.0), r * 2.6, 0.3)
     ctx.save()
-    ctx.arc(x, y, r - 1.2 * u, 0, 2 * math.pi)
-    ctx.clip()
-    rows = 7
+    ctx.set_operator(cairo.OPERATOR_ADD)
+    _blit(ctx, glow, x, y, px=r * 2.6, py=r * 2.6)
+    ctx.restore()
+
+    def base(c: cairo.Context) -> None:
+        c.arc(r + 3 * u, r + 3 * u, r, 0, 2 * math.pi)
+        g = cairo.RadialGradient(r * 0.7 + 3 * u, r * 0.65 + 3 * u, r * 0.1, r + 3 * u, r + 3 * u, r)
+        g.add_color_stop_rgb(0, 0.85, 0.87, 0.95)
+        g.add_color_stop_rgb(1, 0.35, 0.37, 0.5)
+        _fill_edge(c, g, INK, 2.4 * u)
+
+    sp = _sprite(s, ("discobase", round(r, 2)), 2 * r + 6 * u, 2 * r + 6 * u, base)
+    _blit(ctx, sp, x, y, px=r + 3 * u, py=r + 3 * u)
+    buckets: list[list[tuple[float, float, float, float]]] = [[], [], [], []]
+    rows = 8
     for j in range(rows):
         lat = -math.pi / 2 + (j + 0.5) * math.pi / rows
-        yy = y + math.sin(lat) * r
-        ring = math.cos(lat) * r
-        n = max(4, int(12 * math.cos(lat)) + 2)
+        yy = y + math.sin(lat) * r * 0.94
+        ring = math.cos(lat) * r * 0.94
+        n = max(4, int(14 * math.cos(lat)) + 2)
+        chh = math.pi * r / rows * 0.4
         for k in range(n):
             lon = (k / n) * 2 * math.pi + t * 1.2
             c = math.cos(lon)
-            if c < 0.05:
+            if c < 0.08:
                 continue
             xx = x + math.sin(lon) * ring
-            cw = (2 * math.pi * ring / n) * c * 0.42
-            chh = math.pi * r / rows * 0.42
-            v = hash01(s.seed, "disco", j, k)
-            bright = 0.35 + 0.65 * max(0.0, math.sin(lon * 2 + v * 6 + t * 3))
-            ctx.rectangle(xx - cw, yy - chh, cw * 2, chh * 2)
-            ctx.set_source_rgba(*mix((0.6, 0.65, 0.85), (1, 1, 1), bright), 0.85)
-            ctx.fill()
-    ctx.restore()
+            cw = (2 * math.pi * ring / n) * c * 0.4
+            v = _ihash(s.seed, j, k)
+            bright = max(0.0, math.sin(lon * 2 + v * 6 + t * 3))
+            buckets[min(3, int(bright * 4))].append((xx - cw, yy - chh, cw * 2, chh * 2))
+    for b, rects in enumerate(buckets):
+        for rx, ry, rw, rh in rects:
+            ctx.rectangle(rx, ry, rw, rh)
+        ctx.set_source_rgba(*mix((0.55, 0.6, 0.82), (1, 1, 1), (b + 0.5) / 4), 0.9)
+        ctx.fill()
     for i in range(3):
         a = t * 2 + i * 2.1
         k = 0.5 + 0.5 * math.sin(t * 5 + i * 1.7)
-        sparkle(ctx, x + math.cos(a) * r * 0.6, y + math.sin(a) * r * 0.5, (6 + 8 * k) * u)
-        ctx.set_source_rgba(1, 1, 1, 0.5 + 0.5 * k)
-        ctx.fill()
+        ctx.new_sub_path()
+        sparkle(ctx, x + math.cos(a) * r * 0.6, y + math.sin(a) * r * 0.5, (7 + 9 * k) * u)
+    ctx.set_source_rgba(1, 1, 1, 0.85)
+    ctx.fill()
 
 
 # ======================= winter =======================
