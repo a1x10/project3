@@ -376,7 +376,7 @@ async def test_strangers_in_telegram_dm_have_a_daily_cap(tbrain, api):
 async def test_html_page_goes_to_telegram_as_file(tbrain, api, monkeypatch):
     from bot import html_studio, weblibs
 
-    async def run(settings, brief, title, image=None):
+    async def run(settings, brief, title, image=None, build=None):
         return html_studio.StudioResult("<h1>С днём рождения!</h1>", 0.4, 1.0)
 
     async def no_download(*a, **kw):

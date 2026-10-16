@@ -71,12 +71,16 @@ class Settings:
     anim_enabled: bool = field(default_factory=lambda: _bool("ANIM_ENABLED", True))
     anim_per_day: int = field(default_factory=lambda: _int("ANIM_PER_DAY", 8))  # на чат в сутки (владельцу — без лимита)
     # HTML-страницы (make_html): игры, открытки, викторины, сайты. Пишет их отдельный вызов модели («студия»)
-    # с дизайн-промптом и долгим обдумыванием — несколько минут и ~0.3–1 $ за страницу на Opus
+    # с дизайн-промптом и максимальным обдумыванием, потом доводит по скриншотам из браузера («арт-директор»):
+    # ~5–15 минут и ~1–3 $ за страницу на Opus 5.5 (effort max). Быстрее и дешевле: HTML_EFFORT=high
     html_enabled: bool = field(default_factory=lambda: _bool("HTML_ENABLED", True))
     html_model: str = field(default_factory=lambda: _str("HTML_MODEL", "claude-opus-5-5"))
-    html_effort: str = field(default_factory=lambda: _str("HTML_EFFORT", "high"))
-    html_max_tokens: int = field(default_factory=lambda: _int("HTML_MAX_TOKENS", 64000))
-    html_timeout: float = field(default_factory=lambda: _float("HTML_TIMEOUT", 900))
+    html_effort: str = field(default_factory=lambda: _str("HTML_EFFORT", "max"))
+    html_max_tokens: int = field(default_factory=lambda: _int("HTML_MAX_TOKENS", 128000))
+    html_timeout: float = field(default_factory=lambda: _float("HTML_TIMEOUT", 1500))  # на один вызов, с
+    # доводка по скриншотам (нужен браузер в образе: WITH_BROWSER=true) и с каким усилием
+    html_polish: bool = field(default_factory=lambda: _bool("HTML_POLISH", True))
+    html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "high"))
     html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 4))  # на чат в сутки (админам — без лимита)
     html_per_day_total: int = field(default_factory=lambda: _int("HTML_PER_DAY_TOTAL", 20))  # на всех (кроме владельца)
     html_concurrency: int = field(default_factory=lambda: _int("HTML_CONCURRENCY", 2))

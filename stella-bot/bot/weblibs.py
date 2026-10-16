@@ -168,8 +168,7 @@ def resolve(src: str) -> tuple[Asset, ...] | None:
     low = s.lower()
     if low.startswith(("lib/", "./lib/", "/lib/")):
         name = posixpath.basename(low)
-        name = name[:-3] if name.endswith(".js") else name
-        name = name[:-4] if name.endswith(".min") else name
+        name = name.removesuffix(".js").removesuffix(".min")
         if name in LIBS:
             return LIBS[name]
         return next((a for (_, file), a in _ALIASES.items() if file in (name + ".js", name + ".min.js")), None)

@@ -169,7 +169,7 @@ async def test_generate_asks_the_strong_model_with_design_prompt(settings, monke
     call = fake.calls[0]
     assert res.html == PAGE and res.cost_usd > 0.3
     assert call["model"] == "claude-opus-5-5" and call["thinking"] == {"type": "adaptive"}
-    assert call["output_config"] == {"effort": "high"} and call["max_tokens"] == 64000
+    assert call["output_config"] == {"effort": "max"} and call["max_tokens"] == 128000
     assert "lib/three.js" in call["system"] and "Unbounded" in call["system"]
     image, text = call["messages"][0]["content"]
     assert image["type"] == "image" and "__PHOTO__" in text["text"] and BRIEF in text["text"]
@@ -185,18 +185,117 @@ async def test_generate_errors_keep_the_cost(settings, monkeypatch):
         await html_studio.generate(settings, BRIEF, "x")
 
 
+async def test_polish_call_sees_draft_screenshots_and_errors(settings, monkeypatch):
+    from bot.page_shots import Shots
+
+    fake = FakeClient(PAGE)
+    monkeypatch.setattr(html_studio, "_client", fake)
+    shots = Shots([("сразу после открытия (1.5 с)", b"jpeg1"), ("после прокрутки", b"jpeg2")],
+                  ["ошибка JS: TypeError: x is null"], overflow=True)
+    await html_studio.generate(settings, BRIEF, "x", draft="<h1>черновик</h1>", shots=shots)
+    call = fake.calls[0]
+    assert call["output_config"] == {"effort": "high"}  # доводка — со своим усилием
+    blocks = call["messages"][0]["content"]
+    texts = "\n".join(b["text"] for b in blocks if b["type"] == "text")
+    assert "<h1>черновик</h1>" in texts and "TypeError: x is null" in texts and "горизонтальная прокрутка" in texts
+    assert "арт-директора" in texts and "Скриншот — после прокрутки" in texts
+    assert [b["source"]["data"] for b in blocks if b["type"] == "image"] == ["anBlZzE=", "anBlZzI="]
+
+
+@pytest.fixture
+def polish_env(monkeypatch):
+    from bot import page_shots
+
+    calls = {"gen": [], "shots": [], "after_errors": 0, "polish_fail": False, "shots_fail": False}
+
+    async def gen(settings, brief, title, image=None, *, draft=None, shots=None):
+        calls["gen"].append(draft)
+        if draft is not None and calls["polish_fail"]:
+            raise html_studio.StudioError("слишком большой", 0.7)
+        return html_studio.StudioResult("<h1>v2</h1>" if draft else "<h1>v1</h1>", 1.0 if draft else 2.0, 1.0)
+
+    async def shoot(page, timeout=0):
+        calls["shots"].append(page)
+        if calls["shots_fail"]:
+            raise page_shots.ShotsError("браузер упал")
+        n = 0 if len(calls["shots"]) == 1 else calls["after_errors"]
+        return page_shots.Shots([("кадр", b"j")], ["ошибка JS: boom"] * n)
+
+    async def no_download(*a, **kw):
+        return []
+
+    monkeypatch.setattr(html_studio, "generate", gen)
+    monkeypatch.setattr(page_shots, "shoot", shoot)
+    monkeypatch.setattr(page_shots, "available", lambda: True)
+    monkeypatch.setattr(weblibs, "ensure", no_download)
+    monkeypatch.setattr(weblibs, "missing", lambda folder=None: [])
+    return calls
+
+
+async def test_make_polishes_by_screenshots(settings, polish_env):
+    res = await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode())
+    assert res.html == "<h1>v2</h1>" and res.cost_usd == 3.0
+    assert polish_env["gen"] == [None, "<h1>v1</h1>"] and polish_env["shots"] == [b"<h1>v1</h1>", b"<h1>v2</h1>"]
+
+
+async def test_make_keeps_draft_when_polish_breaks_or_fails(settings, polish_env):
+    polish_env["after_errors"] = 2  # доводка добавила ошибок JS
+    assert (await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode())).html == "<h1>v1</h1>"
+    polish_env.update(after_errors=0, polish_fail=True, shots=[])
+    res = await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode())
+    assert res.html == "<h1>v1</h1>" and res.cost_usd == pytest.approx(2.7)  # и потраченное на доводку учтено
+    polish_env.update(polish_fail=False, shots_fail=True, gen=[])
+    assert (await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode())).html == "<h1>v1</h1>"
+    assert polish_env["gen"] == [None]  # без скриншотов доводку не зовём
+    settings.html_polish = False
+    polish_env.update(shots_fail=False, shots=[], gen=[])
+    await html_studio.make(settings, BRIEF, "x", None, build=lambda h: h.encode())
+    assert polish_env["gen"] == [None] and polish_env["shots"] == []
+
+
+def _browser_ready():
+    from bot import page_shots
+
+    if not page_shots.available():
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            import os
+
+            return os.path.exists(p.chromium.executable_path)
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_real_screenshots_errors_and_no_network():
+    from bot import page_shots
+
+    page = media.html_page("t", '<div style="width:900px;height:50px;background:red"></div><button '
+                                'onclick="document.body.style.background=\'blue\'">Играть</button>'
+                                '<script>fetch("https://example.com").catch(()=>{}); null.x</script>').data
+    shots = await page_shots.shoot(page)
+    assert len(shots.images) == 4 and all(img[:2] == b"\xff\xd8" for _, img in shots.images)
+    assert shots.overflow and shots.page_errors() == 1
+    assert "после нажатия на первую кнопку" in [label for label, _ in shots.images]
+
+
 # ---------- в чате: задание → «делаю, минуты через 3» → файл ----------
 @pytest.fixture
 def studio(monkeypatch):
     calls = {"n": 0, "delay": 0.0, "fail": None, "args": []}
 
-    async def run(settings, brief, title, image=None):
+    async def run(settings, brief, title, image=None, build=None):
         calls["n"] += 1
         calls["args"].append((brief, title, image))
         await asyncio.sleep(calls["delay"])
         if calls["fail"]:
             raise html_studio.StudioError(calls["fail"], 0.25)
-        return html_studio.StudioResult(PAGE.replace("Привет", "<img src='__PHOTO__'>Привет"), 0.5, 1.0)
+        html = PAGE.replace("Привет", "<img src='__PHOTO__'>Привет")
+        calls["built"] = build(html)  # то же, что увидит браузер для скриншотов
+        return html_studio.StudioResult(html, 0.5, 1.0)
 
     async def no_download(*a, **kw):
         return []
@@ -336,6 +435,7 @@ async def test_page_with_photo_from_chat(brain, studio):
              "quotedMessage": {"imageMessage": {"url": "x", "mimetype": "image/jpeg"}}}
     await feed(brain, upsert("стелла сделай открытку с этой фоткой", quoted=photo))
     assert studio["args"][0][2][0] == "image/jpeg"  # студия видит фото
+    assert b"data:image/jpeg;base64," in studio["built"]  # и в браузер для скриншотов идёт страница с фото
     assert brain.evo.sent[-1]["type"] == "media" and brain.evo.sent[-1]["size"] > 1000  # фото внутри файла
 
 

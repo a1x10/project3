@@ -80,6 +80,7 @@ services:
       context: .
       args:
         WITH_VOICE: ${WITH_VOICE:-true}
+        WITH_BROWSER: ${WITH_BROWSER:-true}
     restart: unless-stopped
     init: true  # собирает завершившиеся процессы рендера мультиков (иначе копятся «зомби»)
     depends_on:
