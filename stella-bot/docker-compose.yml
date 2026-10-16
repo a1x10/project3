@@ -76,7 +76,10 @@ services:
       - evolution_instances:/evolution/instances
 
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_VOICE: ${WITH_VOICE:-true}
     restart: unless-stopped
     depends_on:
       - evolution

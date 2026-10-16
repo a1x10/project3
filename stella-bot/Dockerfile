@@ -10,8 +10,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# WITH_VOICE=false — собрать без голосовых (образ меньше на ~480 МБ)
+ARG WITH_VOICE=true
+COPY requirements.txt requirements-voice.txt ./
+RUN pip install -r requirements.txt \
+    && if [ "$WITH_VOICE" = "true" ]; then pip install -r requirements-voice.txt; fi
+# меньше «пустой» памяти у моделей голоса
+ENV MALLOC_ARENA_MAX=2
 
 COPY bot ./bot
 COPY panel ./panel

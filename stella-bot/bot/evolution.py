@@ -207,6 +207,15 @@ class Evolution:
         data = await self._call("POST", f"/message/sendMedia/{self.instance}", json=body, timeout=delay_ms / 1000 + 180)
         return ((data or {}).get("key") or {}).get("id")
 
+    async def send_voice(self, number: str, audio_b64: str, *, delay_ms: int = 0) -> str | None:
+        """Голосовое сообщение (OGG/Opus). encoding=false — у нас уже нужный формат, Evolution не перекодирует."""
+        body: dict[str, Any] = {"number": number, "audio": audio_b64, "encoding": False}
+        if delay_ms:
+            body["delay"] = int(delay_ms)
+        data = await self._call("POST", f"/message/sendWhatsAppAudio/{self.instance}", json=body,
+                                timeout=delay_ms / 1000 + 120)
+        return ((data or {}).get("key") or {}).get("id")
+
     async def send_poll(self, number: str, question: str, options: list[str], *, multiple: bool = False,
                         delay_ms: int = 0) -> str | None:
         options = list(dict.fromkeys(o.strip() for o in options if o and o.strip()))[:POLL_MAX_OPTIONS]

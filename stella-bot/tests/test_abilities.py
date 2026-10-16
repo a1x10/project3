@@ -103,3 +103,55 @@ async def test_reply_to_a_document_and_bad_file(brain):
     await feed(brain, upsert("стелла прочитай", quoted={"stanzaId": "DOC1", "participant": PETYA, "quotedMessage": {
         "documentMessage": {"fileName": "x.pdf", "mimetype": "application/pdf"}}}))
     assert "[файл «x.pdf»:" in brain.llm.calls[0]["prompt"]
+
+
+class FakeTranscriber:
+    available = True
+    model_size = "base"
+
+    def __init__(self, text):
+        self.text = text
+
+    async def transcribe(self, data, **kw):
+        return self.text
+
+
+class FakeSpeaker:
+    available = True
+    voice = "ru_RU-irina-medium"
+
+    async def speak(self, text, **kw):
+        from bot.media import MediaFile
+
+        return MediaFile("audio", b"OggS" + text.encode(), "audio/ogg; codecs=opus", "voice.ogg")
+
+
+async def test_she_hears_voice_messages(brain):
+    brain.transcriber = FakeTranscriber("стелла а сколько будет два плюс два")
+    brain.evo.media = b"OggS-fake"
+    brain.llm.queue = ["четыре"]
+    await feed(brain, upsert(message={"audioMessage": {"seconds": 4, "ptt": True}}, message_type="audioMessage"))
+    assert "[голосовое] стелла а сколько будет два плюс два" in brain.llm.calls[0]["prompt"]
+    assert brain.evo.texts() == ["четыре"]
+
+
+async def test_voice_in_group_not_to_her_is_just_heard(brain):
+    brain.transcriber = FakeTranscriber("пацаны го гулять")
+    brain.evo.media = b"OggS-fake"
+    await feed(brain, upsert(message={"audioMessage": {"seconds": 3}}, message_type="audioMessage"))
+    assert brain.llm.calls == [] and brain.evo.sent == []
+    chat = await brain.db.get_chat_by_jid("stella", "120363000000000001@g.us")
+    rows = await brain.db.recent_messages(chat["id"], 3)
+    assert rows[-1]["text"] == "пацаны го гулять"  # в истории — что сказали
+
+
+async def test_she_answers_with_a_voice_note(brain):
+    brain.speaker = FakeSpeaker()
+
+    async def talk(tools, prompt):
+        await tools["say_voice"].handler({"text": "привет, это я"})
+        return "лови"
+
+    brain.llm.queue = [talk]
+    await feed(brain, upsert("стелла скажи голосом привет"))
+    assert [m["type"] for m in brain.evo.sent] == ["text", "voice"]
