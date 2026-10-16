@@ -863,11 +863,14 @@ h1{font-size:80px;margin:0;position:absolute;left:120px;top:150px;width:1500px}
 .under{position:absolute;left:900px;top:430px;font-size:40px}
 .foot{position:absolute;bottom:40px;left:120px;font-size:18px}.empty{position:absolute;inset:300px 200px}
 </style></head><body>
+<svg width="0" height="0" style="position:absolute"><symbol id="logo" viewBox="-50 -50 100 100">
+  <text x="-49" y="10">Go</text></symbol></svg>
 <section class="slide"><h1>Чистый слайд — в 2021 году было 6 779 км</h1>
   <div class="foot" data-chrome>Марс · 01 / 03</div><div class="empty"></div>
   <svg style="position:absolute;left:0;top:0" width="1920" height="1080"><circle cx="1500" cy="700" r="200"
     fill="none" stroke="#fff" stroke-width="4"/></svg>
-  <p style="position:absolute;left:1420px;top:680px;font-size:40px;margin:0">в круге</p></section>
+  <p style="position:absolute;left:1420px;top:680px;font-size:40px;margin:0">в круге</p>
+  <svg style="position:absolute;left:300px;top:600px" width="100" height="100"><use href="#logo"/></svg></section>
 <section class="slide"><h1>Дефекты</h1>
   <div class="card">Этот длинный текст в карточке обрезается снизу и справа точно</div>
   <div class="a">Наложение</div><div class="b">другой текст</div>
@@ -876,13 +879,35 @@ h1{font-size:80px;margin:0;position:absolute;left:120px;top:150px;width:1500px}
     stroke="#fff" stroke-width="3"/></svg>
   <p style="position:absolute;left:300px;top:860px;font-size:40px;z-index:2;margin:0">линия под текстом</p>
   <p style="position:absolute;left:1700px;top:250px;font-size:40px;white-space:nowrap">уезжает за край</p>
-  <p style="position:absolute;left:120px;top:1000px;font-size:14px">крошечная сноска</p>
-</section></body></html>"""
+  <p style="position:absolute;left:120px;top:1000px;font-size:14px">крошечная сноска</p></section>
+<section class="slide"><p class="logo" style="position:absolute;left:600px;top:400px;font-size:120px;margin:0">ШаурмаGo</p>
+  <svg style="position:absolute;left:0;top:0;z-index:3" width="1920" height="1080"><circle cx="1180" cy="470" r="120"
+    fill="none" stroke="#f80" stroke-width="34"/></svg>
+  <svg style="position:absolute;left:1500px;top:300px" width="380" height="380"><rect width="380" height="380"
+    fill="#0af"/></svg></section>
+</body></html>"""
     shots = await page_shots.shoot_deck(media.html_page("t", deck).data)
     text = "\n".join(shots.problems)
-    assert not any(p.startswith("слайд 1") for p in shots.problems), text  # чистый слайд — без ложных тревог
-    for expected in ("текст вылезает за край слайда («уезжает за край»)", "обрезан рамкой карточки",
-                     "«Наложение» и «другой текст»", "перекрыт рисунком или декором («текст под блобом»)",
-                     "линия или кольцо проходит под текстом («линия под текстом»)", "мелкий текст"):
+    assert not any(p.startswith("слайд 1") for p in shots.problems), text  # без ложных тревог (и текст в <symbol>)
+    for expected in ("слайд 2: текст вылезает за край слайда («уезжает за край» в <p>)", "обрезан рамкой карточки",
+                     "«Наложение» в <div.a> и «другой текст» в <div.b>", "перекрыт рисунком или декором («текст под "
+                     "блобом» в <div.under>)", "линия или кольцо проходит под текстом («линия под текстом» в <p>)",
+                     "мелкий текст", "слайд 3: текст перекрыт рисунком или декором («ШаурмаGo» в <p.logo>)",
+                     "слайд 3: рисунок почти у края слайда (<svg> 40 px)"):
         assert expected in text, (expected, text)
-    assert shots.geometry == 4
+    assert shots.geometry == 5
+
+
+def test_ruble_sign_brings_the_latin_ext_font_subset(tmp_path, monkeypatch):
+    cyr = _asset(tmp_path, "inter-cyrillic.woff2", "x@1/c.woff2", b"cyr")
+    lat = _asset(tmp_path, "inter-latin.woff2", "x@1/l.woff2", b"lat")
+    ext = _asset(tmp_path, "inter-latin-ext.woff2", "x@1/e.woff2", b"ext-with-ruble")
+    monkeypatch.setitem(weblibs.FONTS, "Inter", ("100 900", (cyr, lat, ext)))
+    import base64
+
+    marker = base64.b64encode(b"ext-with-ruble").decode()
+    with_rub = media.html_page("t", "<p style='font-family:Inter'>Средний чек 450 ₽</p>", libs_dir=str(tmp_path))
+    plain = media.html_page("t", "<p style='font-family:Inter'>Средний чек 450 рублей</p>", libs_dir=str(tmp_path))
+    assert marker in with_rub.data.decode() and "U+20AD-20C0" in with_rub.data.decode()
+    assert marker not in plain.data.decode()
+    assert all(len(assets) == 3 for _, assets in weblibs.FONTS.values())
