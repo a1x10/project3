@@ -476,6 +476,9 @@
       "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(pct)),
     }, fill);
     setKids($("ov-body"),
+      st.weak_passwords
+        ? h("div", { class: "notice", role: "note", text: "Пароли панели короткие или только из цифр — смените их в .env на длинные (держится только на блокировке подбора)" })
+        : null,
       st.own_lid_known === false
         ? h("div", { class: "notice", role: "note", text: "Стелла пока не знает свой LID — @упоминания в некоторых группах может не видеть" })
         : null,

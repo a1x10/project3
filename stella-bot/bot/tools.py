@@ -221,6 +221,26 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         return f"простила {person.name}" if await db.clear_grudge(ctx.chat_id, person.id) else "обиды и не было"
 
     person_hint = "кто: p12 из контекста, имя/ник или «я» (автор сообщения)"
+    async def read_chat_history(args: dict[str, Any]) -> str:
+        """Переписка дальше, чем видно в контексте: за последние N часов и/или со словом."""
+        from .persona import format_transcript
+
+        hours = args.get("hours")
+        query = str(args.get("query") or "").strip()[:60] or None
+        limit = max(10, min(int(args.get("limit") or 150), 400))
+        since = utcnow() - timedelta(hours=min(float(hours), 24 * 30)) if hours else None
+        rows = await db.search_messages(ctx.chat_id, since=since, query=query, limit=limit)
+        if not rows:
+            return "ничего не нашла"
+        people = {}
+        for pid in {r["person_id"] for r in rows if r.get("person_id")}:
+            p = await db.get_person(pid)
+            if p:
+                people[pid] = p
+        lines = format_transcript(rows, people, settings.bot_name, settings.timezone, set(), {})
+        text = "\n".join(lines)
+        return text[-30000:]
+
     specs = [
         ToolSpec(
             "remember",
@@ -308,6 +328,15 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
                 "required": ["action"],
             },
             casino_tool,
+        ),
+        ToolSpec(
+            "read_chat_history",
+            "Прочитать переписку этого чата дальше, чем видно в контексте: «что я пропустил?», «перескажи, "
+            "что было вчера», «кто что говорил про поездку». hours — за сколько последних часов, query — слово "
+            "или кусок фразы для поиска, limit — сколько сообщений (до 400).",
+            {"type": "object", "properties": {"hours": {"type": "number"}, "query": {"type": "string"},
+                                              "limit": {"type": "integer"}}},
+            read_chat_history,
         ),
         ToolSpec(
             "create_poll",

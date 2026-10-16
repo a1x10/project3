@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any, Sequence
 
-from .base import LLMError, LLMRefusal, LLMReply, ToolSpec
+from .base import Image, LLMError, LLMRefusal, LLMReply, ToolSpec
 
 log = logging.getLogger("stella.llm.agent_sdk")
 
@@ -22,6 +22,16 @@ BUILTIN_TOOLS = [
     "Glob", "Grep", "LS", "WebFetch", "WebSearch", "Task", "Agent", "TodoWrite", "ExitPlanMode",
     "SlashCommand", "Skill", "ListMcpResourcesTool", "ReadMcpResourceTool", "Monitor", "CronCreate",
 ]
+
+
+async def _with_images(prompt: str, images: Sequence[Image]):
+    """Картинки передаются в «потоковом» режиме SDK: одно сообщение пользователя с блоками image + text."""
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": [*(img.block() for img in images), {"type": "text", "text": prompt}]},
+        "parent_tool_use_id": None,
+    }
 
 
 class AgentSdkLLM:
@@ -78,7 +88,7 @@ class AgentSdkLLM:
         )
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, query
 
         model = model or self.default_model
@@ -89,7 +99,7 @@ class AgentSdkLLM:
 
         async def run() -> None:
             nonlocal result, last_text, refused
-            async for msg in query(prompt=prompt, options=options):
+            async for msg in query(prompt=_with_images(prompt, images) if images else prompt, options=options):
                 if isinstance(msg, AssistantMessage):
                     refused = refused or getattr(msg, "stop_reason", None) == "refusal"
                     texts = [b.text for b in msg.content if isinstance(b, TextBlock)]

@@ -16,6 +16,16 @@ class ToolSpec:
     handler: ToolHandler
 
 
+@dataclass(frozen=True)
+class Image:
+    """Картинка для модели (фото, стикер, скриншот): тип и данные в base64."""
+    media_type: str
+    data_b64: str
+
+    def block(self) -> dict[str, Any]:
+        return {"type": "image", "source": {"type": "base64", "media_type": self.media_type, "data": self.data_b64}}
+
+
 @dataclass
 class LLMReply:
     text: str
@@ -42,6 +52,8 @@ class LLM(Protocol):
         tools: Sequence[ToolSpec] = (),
         model: str | None = None,
         max_turns: int = 5,
+        images: Sequence[Image] = (),
     ) -> LLMReply:
-        """Один ответ модели (с вызовами наших инструментов внутри). Возвращает итоговый текст."""
+        """Один ответ модели (с вызовами наших инструментов внутри). Возвращает итоговый текст.
+        images — фото/стикеры, которые модель должна увидеть вместе с текстом."""
         ...

@@ -695,6 +695,20 @@ class DB:
             ).mappings().all()
         return [dict(r) for r in reversed(rows)]
 
+    async def search_messages(self, chat_id: int, *, since: datetime | None = None, query: str | None = None,
+                              limit: int = 200) -> list[dict[str, Any]]:
+        """Старая переписка чата (для «что я пропустил?» и «кто что говорил про …»), по порядку."""
+        cond = [messages.c.chat_id == chat_id]
+        if since is not None:
+            cond.append(messages.c.created_at >= since)
+        if query:
+            cond.append(func.lower(messages.c.text).contains(query.lower()))
+        async with self.engine.connect() as conn:
+            rows = (
+                await conn.execute(select(messages).where(*cond).order_by(messages.c.id.desc()).limit(limit))
+            ).mappings().all()
+        return [dict(r) for r in reversed(rows)]
+
     async def messages_after(self, chat_id: int, after_id: int, limit: int) -> list[dict[str, Any]]:
         async with self.engine.connect() as conn:
             rows = (

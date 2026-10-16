@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import random
@@ -21,7 +22,8 @@ from .config import Settings
 from .db import DB, OWNER_SENDER, Person, chat_paused
 from .evolution import MSG_CALL, Evolution, EvolutionError
 from .humanize import Segment, parse_reply
-from .llm.base import LLM, LLMError, LLMRefusal
+from .llm.base import LLM, Image, LLMError, LLMRefusal
+from .media import image_for_model
 from .memory import Memory
 from .outbox import Outbox
 from .parser import Incoming, event_name, parse_upsert
@@ -273,9 +275,10 @@ class Brain:
         if url != self.tunnel_url:
             self.tunnel_url = url
             log.info("панель доступна через туннель: %s", url)
-            link = f"{self.s.panel_public_url}#server={url}" if self.s.panel_public_url else f"{url}/panel/"
-            if self.connection_state == "open":
-                await self.notify_owner("panel_url", f"🔗 Панель Стеллы: {link}")
+            text = f"🔗 Панель Стеллы: {url}/panel/"
+            if self.s.panel_public_url:
+                text += f"\nили через GitHub: {self.s.panel_public_url}#server={url}"
+            await self.tell_owner(text)
         return url
 
     async def ensure_instance(self) -> None:
@@ -675,9 +678,12 @@ class Brain:
                                quoted_media=self._media_source(target))
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
 
+        images = await self._images_for(starred, target) if mode != AMBIENT else []
+        if images:
+            prompt += f"\n\n(К сообщениям с ★ приложены фото/стикеры — {len(images)} шт., ты их видишь.)"
         started = time.monotonic()
         llm_task = asyncio.create_task(
-            self.ask_llm(prompt=prompt, tools=tools, ctx=tool_ctx, retries=0 if mode == AMBIENT else 1)
+            self.ask_llm(prompt=prompt, tools=tools, ctx=tool_ctx, retries=0 if mode == AMBIENT else 1, images=images)
         )
         typing_task = None
         if mode in (DIRECT, CONTINUE):
@@ -735,6 +741,31 @@ class Brain:
         elif segments:
             log.warning("%s: ответ не ушёл (WhatsApp/Evolution не приняли сообщение)", mask_phone(chat_jid))
 
+    async def _images_for(self, starred: list[Incoming], target: Incoming) -> list[Image]:
+        """Фото и стикеры, которые ей прислали (или на которые ответили), — чтобы модель их видела."""
+        if not self.s.vision_enabled:
+            return []
+        sources: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+        seen: set[str] = set()
+        for inc in starred:
+            src = self._media_source(inc)
+            if src and src[0].get("id") not in seen:
+                seen.add(src[0].get("id"))
+                sources.append(src)
+        images: list[Image] = []
+        for key, message in sources[-self.s.vision_max_images:]:
+            try:
+                data = await self.evo.media_base64(key, message)
+            except EvolutionError:
+                log.info("не удалось скачать фото для модели", exc_info=True)
+                continue
+            if not data:
+                continue
+            prepared = await asyncio.to_thread(image_for_model, data)
+            if prepared:
+                images.append(Image(prepared[0], base64.b64encode(prepared[1]).decode()))
+        return images
+
     def _media_source(self, inc: Incoming) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
         """Из какого фото/стикера можно сделать мем: присланного с подписью или того, на которое ответили."""
         if inc.kind in ("image", "sticker"):
@@ -765,14 +796,16 @@ class Brain:
         ctx.after.clear()
         return sent
 
-    async def ask_llm(self, *, prompt: str, tools: list, ctx: ToolContext | None = None, retries: int = 0):
+    async def ask_llm(self, *, prompt: str, tools: list, ctx: ToolContext | None = None, retries: int = 0,
+                      images: list[Image] | None = None):
         """Вызов модели: не больше LLM_CONCURRENCY одновременно; при сбое — ещё попытка (если ничего не успело уйти)."""
         attempt = 0
+        extra = {"images": images} if images else {}
         while True:
             try:
                 async with self.llm_slots:
                     return await self.llm.ask(system=self.system, prompt=prompt, tools=tools,
-                                              max_turns=self.s.llm_max_turns)
+                                              max_turns=self.s.llm_max_turns, **extra)
             except LLMRefusal:
                 raise
             except LLMError as exc:

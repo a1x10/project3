@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any, Sequence
 
-from .base import LLMError, LLMRefusal, LLMReply, ToolSpec
+from .base import Image, LLMError, LLMRefusal, LLMReply, ToolSpec
 
 log = logging.getLogger("stella.llm.messages_api")
 
@@ -53,13 +53,14 @@ class MessagesApiLLM:
         return await self.client.messages.create(model=model, **kwargs)
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
         import anthropic
 
         model = model or self.default_model
         by_name = {t.name: t for t in tools}
         tool_defs = [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
-        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        content: Any = [*(img.block() for img in images), {"type": "text", "text": prompt}] if images else prompt
+        messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
         # Персона и инструменты не меняются между запросами -> кешируются
         system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         cost = 0.0
