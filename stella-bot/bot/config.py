@@ -78,6 +78,9 @@ class Settings:
     html_effort: str = field(default_factory=lambda: _str("HTML_EFFORT", "max"))
     html_max_tokens: int = field(default_factory=lambda: _int("HTML_MAX_TOKENS", 128000))
     html_timeout: float = field(default_factory=lambda: _float("HTML_TIMEOUT", 1500))  # на один вызов, с
+    # сколько токенов модель видит на всю работу (обдумывание + код) и под это распределяет силы — чтобы на
+    # effort max не упереться в HTML_MAX_TOKENS; 0 — без бюджета
+    html_task_budget: int = field(default_factory=lambda: _int("HTML_TASK_BUDGET", 100000))
     # доводка по скриншотам (нужен браузер в образе: WITH_BROWSER=true) и с каким усилием
     html_polish: bool = field(default_factory=lambda: _bool("HTML_POLISH", True))
     html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "high"))
