@@ -622,9 +622,10 @@ def _pine(ctx: cairo.Context, s: _S, x: float, gy: float, size: float, color: RG
           snow: bool = False, lw: float | None = None, sway: float = 0.0) -> None:
     lw = (2.2 * s.u) if lw is None else lw
     c = s.lit(color, depth)
-    trunk = s.lit((0.45, 0.28, 0.18), depth)
-    ctx.rectangle(x - size * 0.05, gy - size * 0.18, size * 0.1, size * 0.18)
-    _fill_edge(ctx, trunk, s.edge(trunk) if lw else None, lw)
+    if lw:  # у далёких силуэтов ствол не нужен
+        trunk = s.lit((0.45, 0.28, 0.18), depth)
+        ctx.rectangle(x - size * 0.05, gy - size * 0.18, size * 0.1, size * 0.18)
+        _fill_edge(ctx, trunk, s.edge(trunk), lw)
     tiers = 4
     for i in range(tiers):
         f = i / (tiers - 1)
@@ -2290,7 +2291,7 @@ def _party(s: _S) -> list[_Layer]:
     base_wall = _accent(s, "#ffc2df")
     dim = {"day": 0.0, "sunset": 0.2, "evening": 0.45, "night": 0.62}[s.time]
     wall = mix(base_wall, hx("#3a1d5e"), dim)
-    ball = (s.w * 0.76, s.h * 0.21, 44 * s.u)
+    ball = (s.w * 0.78, s.h * 0.27, 44 * s.u)
 
     def wall_layer(ctx, s, rg):
         x0, y0, x1, y1 = rg
@@ -2308,7 +2309,7 @@ def _party(s: _S) -> list[_Layer]:
         r = s.r("partywall")
         for _ in range(int(40 * (x1 - x0) / s.w)):
             px, py = r.uniform(x0, x1), r.uniform(y0, s.gy - 20 * u)
-            col = s.lit(r.choice(CONFETTI))
+            col = mul(hx(r.choice(CONFETTI)), 1 - 0.3 * dim)
             if r.random() < 0.5:
                 ctx.arc(px, py, r.uniform(3, 6) * u, 0, 2 * math.pi)
             else:
@@ -2317,7 +2318,7 @@ def _party(s: _S) -> list[_Layer]:
             ctx.fill()
         # серпантин свисает с потолка
         for x in _xs(s, rg, "streamers", (110, 190)):
-            col = s.lit(r.choice(CONFETTI))
+            col = mul(hx(r.choice(CONFETTI)), 1 - 0.2 * dim)
             ln = r.uniform(0.18, 0.34) * s.h
             ctx.move_to(x, y0)
             yy = 0.0
@@ -2399,9 +2400,9 @@ def _party(s: _S) -> list[_Layer]:
             for q in quad[1:]:
                 ctx.line_to(*q)
             ctx.close_path()
-            ctx.set_source_rgba(*mul(col, 0.35), 0.55)
+            ctx.set_source_rgba(*mix(mul(col, 0.3), base, 0.5), 0.6)
             ctx.fill_preserve()
-            ctx.set_source_rgba(0.06, 0.03, 0.12, 0.7)
+            ctx.set_source_rgba(0.06, 0.03, 0.12, 0.8)
             ctx.set_line_width(1.6 * u)
             ctx.stroke()
 
@@ -2410,7 +2411,7 @@ def _party(s: _S) -> list[_Layer]:
         x0, _, x1, _ = rg
         lit: dict[int, list] = {}
         for ri, i, quad in floor_tiles(s):
-            if _ihash(s.seed, ri, i, beat) < 0.22:
+            if _ihash(s.seed, ri, i, beat) < 0.16:
                 lit.setdefault((i * 3 + ri * 5 + beat) % len(CONFETTI), []).append(quad)
         ctx.save()
         ctx.set_operator(cairo.OPERATOR_ADD)
@@ -2420,7 +2421,7 @@ def _party(s: _S) -> list[_Layer]:
                 for q in quad[1:]:
                     ctx.line_to(*q)
                 ctx.close_path()
-            ctx.set_source_rgba(*hx(CONFETTI[ci]), 0.55)
+            ctx.set_source_rgba(*hx(CONFETTI[ci]), 0.5)
             ctx.fill()
         ctx.restore()
 
@@ -2455,7 +2456,7 @@ def _bunting(ctx: cairo.Context, s: _S, t: float, rg: Region, letters: list[str]
         fy = yb + sag * 4 * f * (1 - f)
         groups.setdefault(i % len(CONFETTI), []).append((fx, fy, 0.06 * math.sin(t * 2.0 + i * 0.8)))
     for ci, items in groups.items():
-        col = s.lit(CONFETTI[ci])
+        col = mul(hx(CONFETTI[ci]), 0.92 if s.dark else 1.0)
         for fx, fy, a in items:
             ca, sa = math.cos(a), math.sin(a)
             for k, (px, py) in enumerate(((-fw * 0.46, 0.0), (fw * 0.46, 0.0), (0.0, fh))):
@@ -2514,7 +2515,7 @@ def _balloon_cluster(ctx: cairo.Context, s: _S, t: float, ax: float, ay: float, 
     for j in range(3):
         bx = ax + (j - 1) * 34 * u * side + 4 * u * math.sin(t * 1.1 + j)
         by = ay + (abs(j - 1) * 0.05 - 0.02) * s.h + 7 * u * math.sin(t * 1.3 + j * 1.7 + side)
-        col = s.lit(CONFETTI[(j * 2 + (side > 0)) % len(CONFETTI)])
+        col = mul(hx(CONFETTI[(j * 2 + (side > 0)) % len(CONFETTI)]), 0.92 if s.dark else 1.0)
         items.append((bx, by, col, j))
     for bx, by, col, j in items:
         ctx.move_to(bx, by + 46 * u)
@@ -2783,12 +2784,21 @@ def _underwater(s: _S) -> list[_Layer]:
         ctx.set_source_rgba(0.7, 1.0, 1.0, 0.25)
         ctx.fill()
         # лучи света качаются (сплошные полупрозрачные конусы — градиент на всю высоту слишком дорог)
-        ld = 0.06 if not s.dark else 0.03
-        for i in range(5):
-            bx = x0 + (x1 - x0) * (i + 0.5) / 5 + 40 * u * math.sin(t * 0.3 + i)
-            a = ld * (0.6 + 0.4 * math.sin(t * 0.8 + i * 1.7))
-            _beam(ctx, bx, -10 * u, -0.22 + 0.05 * math.sin(t * 0.4 + i), s.gy * 1.1, 22 * u, 70 * u,
-                  (0.8, 1.0, 1.0), a)
+        ld = 0.07 if not s.dark else 0.035
+        for i in range(4):
+            bx = x0 + (x1 - x0) * (i + 0.5) / 4 + 40 * u * math.sin(t * 0.3 + i)
+            a = -0.22 + 0.05 * math.sin(t * 0.4 + i)
+            ctx.save()
+            ctx.translate(bx, -10 * u)
+            ctx.rotate(a)
+            ctx.move_to(-22 * u, 0)
+            ctx.line_to(22 * u, 0)
+            ctx.line_to(80 * u, s.gy * 1.1)
+            ctx.line_to(-80 * u, s.gy * 1.1)
+            ctx.close_path()
+            ctx.set_source_rgba(0.8, 1.0, 1.0, ld * (0.6 + 0.4 * math.sin(t * 0.8 + i * 1.7)))
+            ctx.fill()
+            ctx.restore()
         ctx.restore()
         # стайка рыбок-силуэтов
         span = x1 - x0 + 300 * u
@@ -2828,7 +2838,7 @@ def _underwater(s: _S) -> list[_Layer]:
     def mid_anim(ctx, s, t, rg):
         u = s.u
         r = s.r("seaweed")
-        for x in _xs(s, rg, "sw", (90, 170)):
+        for x in _xs(s, rg, "sw", (120, 220)):
             hgt = r.uniform(150, 260) * u
             _seaweed(ctx, s, x, s.gy + 16 * u, hgt, t, r.random() * 6)
         # рыбки
