@@ -371,3 +371,16 @@ async def test_strangers_in_telegram_dm_have_a_daily_cap(tbrain, api):
     assert len(api.sent()) == 2
     await feed_tg(tbrain, tg_update("привет", chat_id=OWNER_TG, chat_type="private", user_id=OWNER_TG, first="Я"))
     assert len(api.sent()) == 3  # владельцу — без лимита
+
+
+async def test_html_page_goes_to_telegram_as_file(tbrain, api):
+    async def make(tools, prompt):
+        await tools["make_html"].handler({"title": "Открытка", "html": "<h1>С днём рождения!</h1>"})
+        return "лови открытку"
+
+    tbrain.llm.queue = [make]
+    await feed_tg(tbrain, tg_update("стелла сделай открытку", chat_id=VASYA_TG, chat_type="private"))
+    assert [b["text"] for b in api.sent()] == ["лови открытку"]
+    doc = api.sent("sendDocument")
+    assert len(doc) == 1 and b'filename="' in doc[0]["_raw"] and b"text/html" in doc[0]["_raw"]
+    assert tbrain.wa.sent == []
