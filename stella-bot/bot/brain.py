@@ -273,16 +273,16 @@ class Brain:
         saved = await self.db.kv_get("bot_jids")
         if saved and saved[0]:
             self.bot.jids |= set(json.loads(saved[0]))
+        tg = getattr(self.evo, "tg", None)
+        if tg is not None:  # та же Стелла в Telegram: забираем сообщения long polling'ом (не ждёт WhatsApp)
+            from .telegram import poll_forever
+
+            self._background.append(asyncio.create_task(poll_forever(self, tg)))
         if self.s.evolution_auto_setup:
             await self.ensure_instance()
         # всегда: «сама пишет» можно включить в панели без перезапуска (тик сам смотрит INITIATIVE_PER_WEEK)
         self._background.append(asyncio.create_task(self._initiative_loop()))
         self._background.append(asyncio.create_task(reminder_loop(self)))
-        tg = getattr(self.evo, "tg", None)
-        if tg is not None:  # та же Стелла в Telegram: забираем сообщения long polling'ом
-            from .telegram import poll_forever
-
-            self._background.append(asyncio.create_task(poll_forever(self, tg)))
         if self.admin.enabled() and self.s.tunnel_metrics_url:
             self._background.append(asyncio.create_task(self._tunnel_loop()))
 
@@ -440,11 +440,14 @@ class Brain:
         return False
 
     def _allowed(self, inc: Incoming) -> bool:
-        if inc.is_group and inc.chat_jid.endswith("@tg.chat"):  # группы Telegram — свой список (пусто — любые)
+        return self._chat_allowed(inc.chat_jid, inc.is_group)
+
+    def _chat_allowed(self, jid: str, is_group: bool) -> bool:
+        if is_group and jid.endswith("@tg.chat"):  # группы Telegram — свой список (пусто — любые)
             allowed = self.s.telegram_allowed_chats
-            return not allowed or inc.chat_jid.split("@", 1)[0] in allowed or inc.chat_jid in allowed
-        if inc.is_group:
-            return not self.s.allowed_groups or inc.chat_jid in self.s.allowed_groups
+            return not allowed or jid.split("@", 1)[0] in allowed or jid in allowed
+        if is_group:
+            return not self.s.allowed_groups or jid in self.s.allowed_groups
         return self.s.allow_dms
 
     async def on_message(self, inc: Incoming) -> None:
@@ -469,6 +472,13 @@ class Brain:
         if not self._allowed(inc):
             self._decision(inc, "чат не разрешён (ALLOWED_GROUPS / ALLOW_DMS)")
             return
+        if inc.is_dm and inc.chat_jid.endswith("@tg.chat") and not self.s.is_owner(phone_of(inc.sender_jid)):
+            key = f"tgdm:{inc.sender_jid}:{date.today().isoformat()}"
+            used = await self.db.kv_get(key)
+            if used and used[1] >= self.s.telegram_dm_per_day:
+                self._decision(inc, "личка Telegram: дневной лимит сообщений этого человека исчерпан")
+                return
+            await self.db.kv_add(key, 1)
         if inc.from_me:
             if inc.is_group:  # в LID-группах так узнаём собственный LID бота (для @упоминаний)
                 for k in ("participant", "participantAlt"):
@@ -494,7 +504,7 @@ class Brain:
             if quoted_is_bot and inc.quoted_sender:
                 await self.add_bot_jid(inc.quoted_sender)  # так узнаём LID самого бота
             elif inc.quoted_sender and inc.quoted_sender not in self.bot.jids:
-                qp = await self.db.upsert_person(inc.quoted_sender, "", phone_of(inc.quoted_sender))
+                qp = await self.db.upsert_person(inc.quoted_sender, inc.quoted_name or "", phone_of(inc.quoted_sender))
                 await self.db.touch_member(chat["id"], qp.id)
         msg_id = await self.db.add_message(chat["id"], "user", text, wa_message_id=inc.msg_id, person_id=sender.id,
                                            sender_name=sender.name, kind=inc.kind, quoted_wa_id=inc.quoted_id)
@@ -506,8 +516,8 @@ class Brain:
             if heard:
                 inc.text = text = heard
                 await self.db.update_message_text(msg_id, text)
-        if inc.kind == "sticker" and self.s.sticker_collect and not (inc.raw_message.get("stickerMessage") or {}).get(
-                "isAnimated"):  # анимированные (Telegram) — только превью, в коллекцию не берём
+        if inc.kind == "sticker" and self.s.sticker_collect and not (inc.raw_message.get("tg") or {}).get(
+                "animated"):  # анимированные из Telegram — только превью, в коллекцию не берём
             self.spawn(self._collect_sticker(inc))
         if not self.over_budget():
             await self.memory.note_message(chat["id"])
@@ -907,6 +917,13 @@ class Brain:
                             mode: str, *, mark_read: bool = True, several: bool = False) -> None:
         chat_jid = chat["jid"]
         target = starred[-1]
+        tg = getattr(self.evo, "tg", None)
+        if tg is not None and chat_jid.endswith("@tg.chat"):  # темы форума: отвечаем туда, где спросили
+            tg_chat = int(chat_jid.split("@", 1)[0])
+            if target.raw_key.get("thread"):
+                tg.threads[tg_chat] = target.raw_key["thread"]
+            else:
+                tg.threads.pop(tg_chat, None)
         sender = await self.db.find_person_by_jid(target.sender_jid)
         if sender is None and target.sender_alt:
             sender = await self.db.find_person_by_jid(target.sender_alt)
@@ -1294,7 +1311,7 @@ class Brain:
         p = self.initiative_probability()
         started = []
         for chat in await self.db.group_chats(self.s.evolution_instance):
-            if self.s.allowed_groups and chat["jid"] not in self.s.allowed_groups:
+            if not self._chat_allowed(chat["jid"], True):
                 continue
             if chat_paused(chat, now):
                 continue

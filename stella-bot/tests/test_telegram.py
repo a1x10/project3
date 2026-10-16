@@ -298,4 +298,76 @@ async def test_polling_feeds_messages(tbrain, api, tg):
         if any(b.get("text") == "слышу" for b in api.sent()):
             break
     assert any(b.get("text") == "слышу" for b in api.sent())
-    assert (await tbrain.db.kv_get("tg:offset"))[0] == "778"
+    offsets = [b.get("offset") for m, b in api.calls if m == "getUpdates"]
+    assert 778 in offsets  # подтвердили полученное (номер — только в памяти, не в базе)
+
+
+# ---------- после ревью ----------
+async def test_typing_does_not_flood(tg, api):
+    import time
+
+    started = time.monotonic()
+    await tg.send_presence(f"{GROUP_ID}@tg.chat", "composing", 1000)
+    assert time.monotonic() - started >= 0.9  # как Evolution: «печатает» длится, а не долбит API в цикле
+    assert len([m for m, _ in api.calls if m == "sendChatAction"]) == 1
+
+
+async def test_flood_wait_then_retry(tg, api, monkeypatch):
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr(tgm.asyncio, "sleep", fake_sleep)
+    api.fail["sendMessage"] = (429, {"ok": False, "description": "Too Many Requests", "parameters": {"retry_after": 3}})
+    orig = api.handler
+    calls = {"n": 0}
+
+    async def handler(request):
+        if request.url.path.endswith("/sendMessage"):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                api.fail.pop("sendMessage", None)
+        return await orig(request)
+
+    tg._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await tg.send_text(f"{GROUP_ID}@tg.chat", "дошло") is not None
+    assert sleeps == [3]
+
+
+async def test_long_text_is_split_not_cut(tg, api):
+    text = ("очень длинная строка. " * 400).strip()
+    await tg.send_text(f"{GROUP_ID}@tg.chat", text, quoted={"key": {"id": f"tg{GROUP_ID}_9"}})
+    parts = api.sent()
+    assert len(parts) == 3 and all(len(p["text"]) <= 4096 for p in parts)
+    assert "".join(p["text"].replace(" ", "") for p in parts) == text.replace(" ", "")
+    assert "reply_parameters" in parts[0] and "reply_parameters" not in parts[1]
+
+
+def test_empty_messages_are_dropped():
+    p = dict(bot_id=BOT_ID, bot_username="stella_test_bot", bot_name="Стелла")
+    assert parse_update(tg_update(dice={"emoji": "🎲", "value": 4}), **p) is None
+    assert parse_update(tg_update(migrate_to_chat_id=-100555), **p) is None
+    reply = parse_update(tg_update("стелла кто это?", reply_to_message={
+        "message_id": 3, "from": {"id": 777, "is_bot": False, "first_name": "Петя"},
+        "chat": {"id": GROUP_ID, "type": "supergroup"}, "text": "я"}), **p)
+    assert reply.quoted_name == "Петя"
+
+
+async def test_reply_goes_to_the_topic_where_she_was_asked(tbrain, api):
+    tbrain.llm.queue = ["привет\nкак ты"]
+    await feed_tg(tbrain, tg_update("стелла привет", message_thread_id=7, is_topic_message=True,
+                                    reply_to_message={"message_id": 7, "chat": {"id": GROUP_ID, "type": "supergroup"},
+                                                      "forum_topic_created": {"name": "флуд"}}))
+    sent = api.sent()
+    assert len(sent) == 2 and all(b.get("message_thread_id") == 7 for b in sent)
+
+
+async def test_strangers_in_telegram_dm_have_a_daily_cap(tbrain, api):
+    tbrain.s.telegram_dm_per_day = 2
+    tbrain.llm.queue = ["1", "2", "3", "4"]
+    for i in range(3):
+        await feed_tg(tbrain, tg_update(f"привет {i}", chat_id=VASYA_TG, chat_type="private"))
+    assert len(api.sent()) == 2
+    await feed_tg(tbrain, tg_update("привет", chat_id=OWNER_TG, chat_type="private", user_id=OWNER_TG, first="Я"))
+    assert len(api.sent()) == 3  # владельцу — без лимита

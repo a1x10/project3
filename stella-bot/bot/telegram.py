@@ -72,6 +72,12 @@ class TelegramError(EvolutionError):
     """Ошибка Bot API (наследник EvolutionError — существующие обработчики ошибок отправки ловят и её)."""
 
 
+class _Flood(Exception):
+    def __init__(self, message: str, wait: int):
+        super().__init__(message)
+        self.wait = wait
+
+
 # ---------- входящие ----------
 def _kind_of(m: dict[str, Any]) -> str:
     if m.get("photo"):
@@ -180,6 +186,8 @@ def parse_update(update: dict[str, Any], *, bot_id: int, bot_username: str, bot_
     if text.strip().lower() in ("/start", "/help"):
         text = f"{bot_name}, привет!"  # первое сообщение боту в личке — пусть поздоровается
     kind = _kind_of(m)
+    if kind == "text" and not text.strip():
+        return None  # 🎲, игры, сторис, служебные (смена фото, перенос группы) — не сообщения для неё
     sender = user_jid(user["id"])
     inc = Incoming(
         instance="",
@@ -211,6 +219,7 @@ def parse_update(update: dict[str, Any], *, bot_id: int, bot_username: str, bot_
         inc.quoted_text = _text_of(reply)
         inc.quoted_kind = _kind_of(reply)
         inc.quoted_message = _raw_message(reply)
+        inc.quoted_name = _name(r_user) if r_user else None
     if m.get("message_thread_id") and m.get("is_topic_message"):
         inc.raw_key["thread"] = m["message_thread_id"]  # темы (форумы): отвечать в ту же тему
     return inc
@@ -239,6 +248,19 @@ class Telegram:
 
     async def call(self, method: str, *, data: dict[str, Any] | None = None, files: dict[str, Any] | None = None,
                    timeout: float = 60) -> Any:
+        try:
+            return await self._call(method, data=data, files=files, timeout=timeout)
+        except _Flood as exc:  # Telegram просит подождать — ждём (не дольше 30 с) и пробуем ещё раз
+            if method == "sendChatAction" or exc.wait > 30:
+                raise TelegramError(str(exc)) from None
+            await asyncio.sleep(exc.wait)
+            try:
+                return await self._call(method, data=data, files=files, timeout=timeout)
+            except _Flood as again:
+                raise TelegramError(str(again)) from None
+
+    async def _call(self, method: str, *, data: dict[str, Any] | None = None, files: dict[str, Any] | None = None,
+                    timeout: float = 60) -> Any:
         url = f"{API}/bot{self.token}/{method}"
         try:
             if files:
@@ -255,7 +277,7 @@ class Telegram:
             body = {}
         if resp.status_code == 429:
             wait = int(((body.get("parameters") or {}).get("retry_after")) or 1)
-            raise TelegramError(f"Telegram {method}: слишком часто, подождать {wait} с")
+            raise _Flood(f"Telegram {method}: слишком часто, подождать {wait} с", wait)
         if not body.get("ok"):
             # описание ошибки без токена (он в URL, а не в теле — но на всякий случай вычищаем)
             desc = str(body.get("description") or resp.status_code).replace(self.token, "***")
@@ -304,12 +326,14 @@ class Telegram:
         chat_id = _chat_id(number)
         if delay_ms:
             await self._typing(chat_id, "typing", delay_ms)
-        data = self._base(number, quoted)
-        entities = _mention_entities(text[:TEXT_LIMIT], mentioned or [])
-        data.update(text=text[:TEXT_LIMIT] or "…", link_preview_options={"is_disabled": True},
-                    entities=entities or None)
-        result = await self.call("sendMessage", data=data)
-        return msg_id(chat_id, result["message_id"])
+        last = None
+        for i, part in enumerate(_split_text(text or "…", TEXT_LIMIT)):  # длинное — несколькими сообщениями
+            data = self._base(number, quoted if i == 0 else None)
+            entities = _mention_entities(part, mentioned or [])
+            data.update(text=part, link_preview_options={"is_disabled": True}, entities=entities or None)
+            result = await self.call("sendMessage", data=data)
+            last = msg_id(chat_id, result["message_id"])
+        return last
 
     async def send_media(self, number: str, mediatype: str, media_b64: str, mimetype: str, filename: str,
                          caption: str = "", *, delay_ms: int = 0, quoted: dict[str, Any] | None = None) -> str | None:
@@ -370,7 +394,11 @@ class Telegram:
                                                     "reaction": [{"type": "emoji", "emoji": emoji}]})
 
     async def send_presence(self, number: str, presence: str = "composing", delay_ms: int = 3000) -> None:
-        await self.call("sendChatAction", data={"chat_id": _chat_id(number), "action": "typing"}, timeout=10)
+        """«печатает…» и ждать delay_ms (как Evolution: мозг зовёт это в цикле, пока модель думает)."""
+        chat_id = _chat_id(number)
+        await self.call("sendChatAction", data={"chat_id": chat_id, "action": "typing",
+                                                "message_thread_id": self.threads.get(chat_id)}, timeout=10)
+        await asyncio.sleep(min(max(delay_ms, 1000), 4500) / 1000)
 
     async def mark_read(self, keys: list[dict[str, Any]]) -> None:
         return None  # у ботов в Telegram нет «прочитано»
@@ -412,6 +440,19 @@ class Telegram:
     async def updates(self, offset: int, timeout: int = 50) -> list[dict[str, Any]]:
         return await self.call("getUpdates", data={"offset": offset, "timeout": timeout,
                                                    "allowed_updates": ["message"]}, timeout=timeout + 15) or []
+
+
+def _split_text(text: str, limit: int) -> list[str]:
+    """Разрезать текст на куски ≤ limit (по строкам, потом по предложениям/словам)."""
+    parts: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        cut = max(rest.rfind("\n", 0, limit), rest.rfind(". ", 0, limit) + 1, rest.rfind(" ", 0, limit))
+        cut = cut if cut > limit // 2 else limit
+        parts.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    parts.append(rest)
+    return [p for p in parts if p] or ["…"]
 
 
 def _form(v: Any) -> str:
@@ -508,15 +549,18 @@ class Messenger:
 async def poll_forever(brain: Any, tg: Telegram) -> None:
     """Забирать сообщения из Telegram и отдавать мозгу. Работает, пока бот жив; сбои сети — пауза и снова."""
     backoff = 2.0
+    offset = 0  # только в памяти: подтверждённые обновления Telegram и так больше не отдаёт
+    ready = False
+    seen_groups: set[int] = set()
     while True:
         try:
-            if not tg.bot_id:
+            if not ready:
                 me = await tg.get_me()
                 await brain.add_bot_jid(user_jid(tg.bot_id))
                 await tg.call("deleteWebhook", data={"drop_pending_updates": False})
+                ready = True
                 log.info("Telegram: бот @%s на связи", me.get("username"))
                 backoff = 2.0
-            offset = int((await brain.db.kv_get("tg:offset") or ("0", 0))[0] or 0)
             updates = await tg.updates(offset)
             for upd in updates:
                 offset = max(offset, int(upd.get("update_id", 0)) + 1)
@@ -525,16 +569,14 @@ async def poll_forever(brain: Any, tg: Telegram) -> None:
                 except Exception:
                     log.exception("Telegram: не разобрала обновление")
                     continue
-                if inc is not None:
-                    thread = inc.raw_key.get("thread")
-                    chat_id = _chat_id(inc.chat_jid)
-                    if thread:
-                        tg.threads[chat_id] = thread
-                    else:
-                        tg.threads.pop(chat_id, None)
-                    brain.spawn(brain.on_message(inc))
-            if updates:
-                await brain.db.kv_set("tg:offset", str(offset))
+                if inc is None:
+                    continue
+                chat_id = _chat_id(inc.chat_jid)
+                if inc.is_group and chat_id not in seen_groups:  # id группы — для TELEGRAM_ALLOWED_CHATS
+                    seen_groups.add(chat_id)
+                    title = ((upd.get("message") or {}).get("chat") or {}).get("title") or ""
+                    log.info("Telegram: группа «%s», id %s", title[:60], chat_id)
+                brain.spawn(brain.on_message(inc))
             backoff = 2.0
         except asyncio.CancelledError:
             raise
@@ -544,7 +586,9 @@ async def poll_forever(brain: Any, tg: Telegram) -> None:
                 log.error("Telegram: токен не подходит (TELEGRAM_BOT_TOKEN) — проверь в @BotFather; жду 10 мин")
                 await asyncio.sleep(600)
                 continue
-            if "Conflict" in text:
+            if "webhook is active" in text:
+                ready = False  # кто-то поставил вебхук — снимем и продолжим
+            elif "Conflict" in text:
                 log.warning("Telegram: этим ботом уже кто-то забирает сообщения (второй сервер?) — жду")
             else:
                 log.warning("%s", text)
