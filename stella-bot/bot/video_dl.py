@@ -24,14 +24,15 @@ log = logging.getLogger("stella.video")
 # только ролики: ютуб (обычные, shorts, youtu.be, мобильный) и тикток (полные и короткие ссылки)
 LINK_RE = re.compile(
     r"https?://(?:"
-    r"(?:www\.|m\.)?youtube\.com/(?:watch\?(?:[^\s]*&)?v=[\w-]{11}|shorts/[\w-]{11}|live/[\w-]{11})"
-    r"|youtu\.be/[\w-]{11}"
-    r"|(?:www\.|m\.)?tiktok\.com/@[\w.-]+/(?:video|photo)/\d+"
-    r"|(?:vm|vt)\.tiktok\.com/[\w-]+"
-    r"|(?:www\.)?tiktok\.com/t/[\w-]+"
-    r")[^\s<>\"']*",
+    r"(?:www\.|m\.)?youtube\.com/(?:watch\?(?:[^\s&#]{0,200}&){0,20}v=([\w-]{11})|shorts/([\w-]{11})|live/([\w-]{11}))"
+    r"|youtu\.be/([\w-]{11})"
+    r"|(?:www\.|m\.)?tiktok\.com/@[\w.-]{1,64}/video/(\d{5,25})"
+    r"|(?:vm|vt)\.tiktok\.com/([\w-]{1,32})"
+    r"|(?:www\.)?tiktok\.com/t/([\w-]{1,32})"
+    r")[^\s<>\"']{0,300}",
     re.IGNORECASE,
 )
+MAX_SCAN = 4000  # дальше в длинном сообщении ссылки не ищем (и регулярка не тормозит бота)
 EXTRACTORS = "youtube,YoutubeYtBe,TikTok,vm.tiktok"
 DL_TIMEOUT = 150  # скачивание целиком
 FIX_TIMEOUT = 180  # перекодирование, если формат не подходит WhatsApp
@@ -58,13 +59,28 @@ class Video:
 def find_links(text: str, limit: int = 1) -> list[str]:
     """Ссылки на ролики в сообщении (по порядку, без повторов)."""
     out: list[str] = []
-    for m in LINK_RE.finditer(text or ""):
+    for m in LINK_RE.finditer((text or "")[:MAX_SCAN]):
         url = m.group(0).rstrip(".,!?;:)»")
         if url not in out:
             out.append(url)
         if len(out) >= limit:
             break
     return out
+
+
+def video_key(url: str) -> str:
+    """Один и тот же ролик по разным ссылкам (?si=…, ?is_from_webapp=…) — один ключ: сайт + ID."""
+    m = LINK_RE.search(url)
+    if m:
+        ident = next((g for g in m.groups() if g), "")
+        if ident:
+            return f"{site_of(url)}:{ident}"
+    return url
+
+
+def canonical(url: str) -> str:
+    """tiktok.com/@… и m.tiktok.com/@… yt-dlp понимает только с www — переписываем."""
+    return re.sub(r"^https?://(?:m\.)?tiktok\.com/", "https://www.tiktok.com/", url, flags=re.IGNORECASE)
 
 
 def site_of(url: str) -> str:
@@ -106,23 +122,27 @@ def _classify(err: str) -> VideoError:
     low = err.lower()
     if "confirm your age" in low or "age-restricted" in low or "age restricted" in low:
         return VideoError("unavailable", "видео 18+ — без входа в аккаунт не скачать")
-    if "sign in to confirm" in low or "ip address is blocked" in low or "http error 429" in low or "403" in low:
-        return VideoError("blocked", "сайт не пускает сервер (нужен вход или блок по IP)")
-    if "does not pass filter" in low or "duration" in low and "filter" in low:
-        return VideoError("too_long", "видео слишком длинное")
-    if "file is larger than max-filesize" in low or "max-filesize" in low:
-        return VideoError("too_big", "видео слишком большое")
+    if "cookies" in low and ("netscape" in low or "invalid" in low or "load" in low or "format" in low):
+        return VideoError("cookies", "файл cookies не подходит")
     if any(s in low for s in ("private video", "video is private", "video unavailable", "been removed",
-                              "is not available", "not available in your country", "no video formats",
-                              "confirm your age", "age-restricted", "age restricted", "members-only")):
+                              "not available", "no video formats",
+                              "members-only")):
         return VideoError("unavailable", "видео недоступно (удалено, приватное или с ограничением)")
+    if any(s in low for s in ("sign in to confirm", "ip address is blocked", "http error 429", "http error 403",
+                              "403: forbidden")):
+        return VideoError("blocked", "сайт не пускает сервер (нужен вход или блок по IP)")
+    if "does not pass filter" in low:
+        return VideoError("too_long", "видео слишком длинное")
+    if "max-filesize" in low:
+        return VideoError("too_big", "видео слишком большое")
     return VideoError("failed", "не получилось скачать")
 
 
-async def download(url: str, *, max_seconds: int = 300, max_mb: int = 45, cookies: str = "") -> Video:
+async def download(url: str, *, max_seconds: int = 300, max_mb: int = 30, cookies: str = "") -> Video:
     """Скачать ролик и привести к H.264/AAC MP4 ≤ 720p и ≤ max_mb. VideoError — если не вышло."""
-    if not LINK_RE.fullmatch(url) and not LINK_RE.match(url):
+    if not LINK_RE.match(url):
         raise VideoError("failed", "это не ссылка на TikTok или YouTube")
+    url = canonical(url)
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise VideoError("failed", "на сервере нет ffmpeg")
@@ -135,25 +155,36 @@ async def download(url: str, *, max_seconds: int = 300, max_mb: int = 45, cookie
                "-S", "res:720,vcodec:h264,acodec:aac,ext:mp4:m4a", "--merge-output-format", "mp4",
                "--ffmpeg-location", ffmpeg, "-o", os.path.join(tmp, "v.%(ext)s"),
                "--socket-timeout", "20", "--retries", "2", "--no-progress", "--no-warnings",
-               "--print", "after_move:%(.{filepath,title,vcodec,acodec,height,duration})j"]
-        if cookies and os.path.isfile(cookies):  # YouTube на серверах часто просит вход — cookies владельца
+               # P — до фильтра по длине (чтобы понять, почему не скачалось), A — готовый файл
+               "--print", "pre_process:P%(.{duration,is_live})j",
+               "--print", "after_move:A%(.{filepath,title,vcodec,acodec,height,duration})j"]
+        if cookies and site_of(url) == "youtube" and os.path.isfile(cookies):  # YouTube на серверах просит вход
             cookie_copy = os.path.join(tmp, "cookies.txt")
-            shutil.copyfile(cookies, cookie_copy)  # yt-dlp дописывает файл — портим копию, не оригинал
-            cmd += ["--cookies", cookie_copy]
+            try:
+                shutil.copyfile(cookies, cookie_copy)  # yt-dlp дописывает файл — портим копию, не оригинал
+                cmd += ["--cookies", cookie_copy]
+            except OSError as exc:
+                log.warning("cookies для YouTube не читаются (%s) — качаю без них", exc)
         cmd += ["--", url]
         code, out, err = await _run(cmd, timeout=DL_TIMEOUT, env=env, cwd=tmp)
+        pre: dict = {}
         info: dict = {}
-        for line in out.decode(errors="replace").splitlines()[::-1]:
+        for line in out.decode(errors="replace").splitlines():
             try:
-                info = json.loads(line)
-                break
+                if line.startswith("P"):
+                    pre = json.loads(line[1:])
+                elif line.startswith("A"):
+                    info = json.loads(line[1:])
             except ValueError:
                 continue
         path = info.get("filepath") or ""
         if code != 0 or not path or not os.path.isfile(path) or not path.startswith(tmp):
-            # «не прошло фильтр по длине» и «больше max-filesize» yt-dlp пишет в stdout, ошибки — в stderr
-            text = err.decode(errors="replace") + "\n" + out.decode(errors="replace")
+            text = err.decode(errors="replace")
             log.info("видео не скачалось (%s): %s", site_of(url), text.strip().splitlines()[-1:] or code)
+            if code == 0 and pre:  # yt-dlp сам отказался: длинное/эфир или файл больше лимита
+                if pre.get("is_live") or float(pre.get("duration") or 0) > max_seconds:
+                    raise VideoError("too_long", f"видео длиннее {max_seconds // 60} мин — такие не качаю")
+                raise VideoError("too_big", "видео слишком большое для WhatsApp")
             raise _classify(text)
         path = await _fix_for_whatsapp(path, info, tmp, ffmpeg, env, max_mb)
         with open(path, "rb") as f:
@@ -192,16 +223,21 @@ async def _fix_for_whatsapp(path: str, info: dict, tmp: str, ffmpeg: str, env: d
 
 
 class Downloader:
-    """Очередь скачиваний на весь бот: по одному за раз, не больше QUEUE_MAX ждущих."""
+    """Очередь скачиваний на весь бот: качает по одному; у каждого чата и человека — свои места и лимиты."""
 
-    QUEUE_MAX = 4
+    QUEUE_MAX = 12  # всего ждущих
+    PER_CHAT_WAITING = 3
+    PER_SENDER_DAY = 10  # попыток с одного человека в сутки (во всех чатах)
+    GLOBAL_DAY = 300  # попыток на весь бот в сутки
 
     def __init__(self) -> None:
         self._lock: asyncio.Lock | None = None
+        self._limit_lock: asyncio.Lock | None = None
         self._loop = None
-        self.waiting = 0
-        self.recent: dict[tuple[int, str], float] = {}  # (чат, ссылка) -> когда уже скачивали
-        self.blocked_note_at: float = -1e9  # когда последний раз говорили владельцу про блокировку
+        self.waiting: dict[int, int] = {}  # чат -> сколько ждут
+        self.in_flight: set[tuple[int, str]] = set()  # (чат, ролик) — качается или ждёт
+        self.sent: dict[tuple[int, str], float] = {}  # (чат, ролик) -> когда прислали
+        self.note_at: dict[str, float] = {}  # сайт -> когда последний раз писали владельцу
 
     def lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -211,27 +247,46 @@ class Downloader:
 
     def limit_lock(self) -> asyncio.Lock:
         self.lock()
+        assert self._limit_lock is not None
         return self._limit_lock
 
-    def seen_recently(self, chat_id: int, url: str, window: float = 600) -> bool:
+    def duplicate(self, chat_id: int, key: str, window: float = 600) -> bool:
+        """Этот ролик в этом чате уже качается или его только что прислали."""
         now = time.monotonic()
-        self.recent = {k: v for k, v in self.recent.items() if now - v < window}
-        key = (chat_id, url)
-        if key in self.recent:
-            return True
-        self.recent[key] = now
-        return False
+        self.sent = {k: v for k, v in self.sent.items() if now - v < window}
+        return (chat_id, key) in self.in_flight or (chat_id, key) in self.sent
 
-    async def fetch(self, url: str, **kw) -> Video:
-        if self.waiting >= self.QUEUE_MAX:
-            raise VideoError("failed", "сейчас много видео в очереди, скинь чуть позже")
-        self.waiting += 1
+    def claim(self, chat_id: int, key: str) -> bool:
+        """Занять ролик для этого чата (без await — две одинаковые ссылки подряд не проскочат). False — дубль."""
+        if self.duplicate(chat_id, key):
+            return False
+        self.in_flight.add((chat_id, key))
+        return True
+
+    def release(self, chat_id: int, key: str) -> None:
+        self.in_flight.discard((chat_id, key))
+
+    def queue_full(self, chat_id: int) -> bool:
+        return (sum(self.waiting.values()) >= self.QUEUE_MAX
+                or self.waiting.get(chat_id, 0) >= self.PER_CHAT_WAITING)
+
+    async def run(self, chat_id: int, key: str, job):
+        """Выполнить job() в очереди (скачать и отправить — целиком, чтобы два больших видео не висели
+        в памяти одновременно). VideoError «queue» — если мест нет."""
+        if self.queue_full(chat_id):
+            raise VideoError("queue", "сейчас много видео в очереди — скинь чуть позже")
+        self.waiting[chat_id] = self.waiting.get(chat_id, 0) + 1
         waiting = True
         try:
             async with self.lock():
-                self.waiting -= 1
+                self.waiting[chat_id] -= 1
                 waiting = False
-                return await download(url, **kw)
+                result = await job()
+                if result == "sent":
+                    self.sent[(chat_id, key)] = time.monotonic()
+                return result
         finally:
             if waiting:
-                self.waiting -= 1
+                self.waiting[chat_id] -= 1
+            if not self.waiting.get(chat_id):
+                self.waiting.pop(chat_id, None)

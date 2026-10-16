@@ -74,7 +74,7 @@ class Settings:
     video_dl_enabled: bool = field(default_factory=lambda: _bool("VIDEO_DL_ENABLED", True))
     video_dl_per_day: int = field(default_factory=lambda: _int("VIDEO_DL_PER_DAY", 30))  # на чат в сутки
     video_dl_max_seconds: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_SECONDS", 300))  # длиннее — не качает
-    video_dl_max_mb: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_MB", 45))
+    video_dl_max_mb: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_MB", 30))
     # cookies.txt (формат Netscape) от аккаунта YouTube — если ютуб на сервере просит «войти»; пусто — data/cookies.txt
     video_dl_cookies: str = field(default_factory=lambda: _str("VIDEO_DL_COOKIES", ""))
     # она «видит» фото и стикеры, которые ей присылают (и на которые отвечают с вопросом к ней)
