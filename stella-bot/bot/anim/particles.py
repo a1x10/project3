@@ -744,11 +744,10 @@ def _bubbles(ctx: cairo.Context, e: _E) -> int:
         wob = 1.0 + 0.06 * math.sin(age * 9 + i)
         items.append((x, y, r * wob, r / wob))
     for x, y, rx, ry in items:
-        ellipse(ctx, x, y, rx, ry)
+        ctx.new_sub_path()
+        ctx.arc(x, y, (rx + ry) * 0.5, 0, 2 * math.pi)
     ctx.set_source_rgba(0.75, 0.95, 1.0, 0.2 * e.alpha)
-    ctx.fill()
-    for x, y, rx, ry in items:
-        ellipse(ctx, x, y, rx, ry)
+    ctx.fill_preserve()
     ctx.set_source_rgba(1, 1, 1, 0.85 * e.alpha)
     ctx.set_line_width(1.6 * u)
     ctx.stroke()
