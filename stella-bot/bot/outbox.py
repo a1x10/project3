@@ -138,7 +138,7 @@ class Outbox:
         return True
 
     async def send_media(self, chat: dict[str, Any], file: Any, caption: str = "",
-                         quoted: Incoming | None = None) -> str | None:
+                         quoted: Incoming | None = None, history: str | None = None) -> str | None:
         """Файл (MediaFile): стикер, картинка, видео, документ. quoted — ответом на это сообщение."""
         if not await self.limiter.acquire(chat["jid"], max_wait=120.0):
             log.warning("rate limit: пропускаю файл в %s", mask_phone(chat["jid"]))
@@ -161,9 +161,11 @@ class Outbox:
                                               delay_ms=delay, **extra)
             label = f"[{ {'image': 'картинка', 'video': 'видео'}.get(file.kind, 'файл') }: {file.filename}]"
         self.remember_sent(wa_id)
-        await self.db.add_message(chat["id"], "assistant", f"{label} {caption}".strip(), wa_message_id=wa_id,
+        # history — как записать в историю (например, «видео по ссылке»), чтобы чужой текст не стал её словами
+        await self.db.add_message(chat["id"], "assistant", history or f"{label} {caption}".strip(), wa_message_id=wa_id,
                                   sender_name=self.s.bot_name,
-                                  kind={"sticker": "sticker", "audio": "audio"}.get(file.kind, file.kind))
+                                  kind={"sticker": "sticker", "audio": "audio"}.get(file.kind, file.kind),
+                                  quoted_wa_id=quoted.msg_id if quoted is not None else None)
         return wa_id
 
     async def send_poll(self, chat: dict[str, Any], question: str, options: list[str], multiple: bool) -> str | None:
