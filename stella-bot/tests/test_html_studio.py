@@ -513,7 +513,7 @@ async def test_real_deck_slides_notes_and_problems():
     shots = await page_shots.shoot_deck(media.html_page("Марс", DECK).data)
     assert len(shots.slides) == 3 and shots.slides[0].notes == "Начните с вопроса залу."
     assert Image.open(io.BytesIO(shots.slides[1].jpeg)).size == (1920, 1080)
-    assert Image.open(io.BytesIO(shots.images[0][1])).size == (1280, 720) and shots.images[2][0] == "слайд 3"
+    assert Image.open(io.BytesIO(shots.images[0][1])).size == (1600, 900) and shots.images[2][0] == "слайд 3"
     assert any(p.startswith("слайд 2: текст вылезает") for p in shots.problems)
     assert any(p.startswith("слайд 3: мелкий текст") for p in shots.problems)
     assert not any(p.startswith("слайд 1") for p in shots.problems) and shots.page_errors() == 0
@@ -777,7 +777,7 @@ def test_resource_hints_are_stripped_and_dns_prefetch_off(tmp_path):
     text = media.html_page("t", '<link rel="dns-prefetch" href="//evil.example"><link rel=preconnect href="https://x">'
                                 '<link rel="icon" href="data:,"><h1>x</h1>', libs_dir=str(tmp_path)).data.decode()
     assert "evil.example" not in text and "preconnect" not in text and 'rel="icon"' in text
-    assert 'http-equiv="x-dns-prefetch-control" content="off"' in text and "webrtc 'block'" in text
+    assert 'http-equiv="x-dns-prefetch-control" content="off"' in text and "webrtc" not in text
 
 
 def test_adaptive_thinking_only_for_models_that_take_it():
@@ -834,3 +834,41 @@ async def test_budget_counts_pages_still_in_progress(brain, studio, monkeypatch)
     brain.llm.queue = [grab]
     await feed(brain, upsert("стелла сайт"))
     assert errors and "бюджет" in errors[0] and studio["n"] == 0
+
+
+@pytest.mark.skipif(not _browser_ready(), reason="нет Playwright с Chromium")
+async def test_deck_checks_find_what_the_eye_sees():
+    from bot import page_shots
+
+    deck = """<!doctype html><html><head><style>
+body{margin:0} .slide{width:1920px;height:1080px;position:relative;overflow:hidden;background:#141428;color:#fff}
+h1{font-size:80px;margin:0;position:absolute;left:120px;top:150px;width:1500px}
+.card{position:absolute;left:120px;top:420px;width:300px;height:80px;overflow:hidden;background:#223;font-size:40px}
+.a{position:absolute;left:120px;top:700px;font-size:48px}.b{position:absolute;left:180px;top:705px;font-size:48px}
+.blob{position:absolute;left:900px;top:380px;width:400px;height:200px;background:#e55}
+.under{position:absolute;left:900px;top:430px;font-size:40px}
+.foot{position:absolute;bottom:40px;left:120px;font-size:18px}.empty{position:absolute;inset:300px 200px}
+</style></head><body>
+<section class="slide"><h1>Чистый слайд — в 2021 году было 6 779 км</h1>
+  <div class="foot" data-chrome>Марс · 01 / 03</div><div class="empty"></div>
+  <svg style="position:absolute;left:0;top:0" width="1920" height="1080"><circle cx="1500" cy="700" r="200"
+    fill="none" stroke="#fff" stroke-width="4"/></svg>
+  <p style="position:absolute;left:1420px;top:680px;font-size:40px;margin:0">в круге</p></section>
+<section class="slide"><h1>Дефекты</h1>
+  <div class="card">Этот длинный текст в карточке обрезается снизу и справа точно</div>
+  <div class="a">Наложение</div><div class="b">другой текст</div>
+  <div class="under">текст под блобом</div><div class="blob"></div>
+  <svg style="position:absolute;left:0;top:0" width="1920" height="1080"><line x1="100" y1="884" x2="1800" y2="884"
+    stroke="#fff" stroke-width="3"/></svg>
+  <p style="position:absolute;left:300px;top:860px;font-size:40px;z-index:2;margin:0">линия под текстом</p>
+  <p style="position:absolute;left:1700px;top:250px;font-size:40px;white-space:nowrap">уезжает за край</p>
+  <p style="position:absolute;left:120px;top:1000px;font-size:14px">крошечная сноска</p>
+</section></body></html>"""
+    shots = await page_shots.shoot_deck(media.html_page("t", deck).data)
+    text = "\n".join(shots.problems)
+    assert not any(p.startswith("слайд 1") for p in shots.problems), text  # чистый слайд — без ложных тревог
+    for expected in ("текст вылезает за край слайда («уезжает за край»)", "обрезан рамкой карточки",
+                     "«Наложение» и «другой текст»", "перекрыт рисунком или декором («текст под блобом»)",
+                     "линия или кольцо проходит под текстом («линия под текстом»)", "мелкий текст"):
+        assert expected in text, (expected, text)
+    assert shots.geometry == 4

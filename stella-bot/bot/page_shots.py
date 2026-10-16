@@ -22,7 +22,7 @@ log = logging.getLogger("stella.shots")
 
 SHOTS_TIMEOUT = 120.0
 MAX_SLIDES = 25
-DECK_PREVIEW = (1280, 720)  # столько видит модель при доводке слайдов — меньше токенов, детали различимы
+DECK_PREVIEW = (1600, 900)  # столько видит модель при доводке слайдов: касания и обрезки ещё различимы
 
 # Общее начало процессов-фотографов: браузер без сети (прокси в никуда + только локальные адреса).
 _BOOT = r"""
@@ -105,45 +105,49 @@ async def main():
 asyncio.run(main())
 """
 
-# Презентация: окно 1920×1080, каждый <section class="slide"> снимается отдельно (JPEG), заметки выступающего
-# (<aside class="notes">) забираются текстом, проверяются вылезающий за край, мелкий и слишком длинный текст.
+# Презентация: окно 1920×1080. Перед съёмкой — русская типографика (неразрывные пробелы перед тире, после
+# коротких предлогов, между числом и словом), затем каждый <section class="slide"> снимается отдельно (JPEG),
+# заметки выступающего (<aside class="notes">) забираются текстом, геометрия проверяется: текст за краем слайда
+# или обрезан блоком, текст на тексте, текст под рисунком, линия под текстом, мелкий текст, много слов.
+# JS и CSS приходят файлом (argv[4]) — без строк внутри строк.
 _DECK_WORKER = _BOOT + r"""
-page_path, out_dir, max_slides = sys.argv[1], sys.argv[2], int(sys.argv[3])
-FIX = (".slide{width:1920px!important;height:1080px!important;overflow:hidden!important;margin:0!important;"
-       "box-sizing:border-box!important;flex:none!important}"
-       "html,body{margin:0!important;padding:0!important}.slide .notes{display:none!important}")
-CHECK = r'''(slide) => {
-  const box = slide.getBoundingClientRect(), out = new Set();
-  let small = 0, outside = 0, words = 0;
-  const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    const node = walker.currentNode, el = node.parentElement, text = node.textContent.trim();
-    if (!text || !el || el.closest('.notes')) continue;
-    const st = getComputedStyle(el);
-    if (st.visibility === 'hidden' || st.display === 'none' || +st.opacity === 0) continue;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const r = range.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
-    words += text.split(/\s+/).length;
-    if (parseFloat(st.fontSize) < 20) small++;
-    if (r.left < box.left - 2 || r.right > box.right + 2 || r.top < box.top - 2 || r.bottom > box.bottom + 2) {
-      outside++;
-      out.add(text.slice(0, 40));
-    }
-  }
-  const notes = slide.querySelector('.notes');
-  return {notes: notes ? notes.textContent.trim() : '', small, outside, words, out: [...out].slice(0, 3)};
-}'''
+page_path, out_dir, max_slides, assets = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+A = json.load(open(assets, encoding="utf-8"))
+
+
+def say(i, info):
+    out = []
+    def snip(items):
+        return "; ".join("«" + s + "»" for s in items[:3])
+    if info["outside"]:
+        out.append(f"слайд {i}: текст вылезает за край слайда ({snip(info['outside'])})")
+    if info["clipped"]:
+        out.append(f"слайд {i}: текст обрезан рамкой карточки или блока ({snip(info['clipped'])})")
+    if info["overlaps"]:
+        out.append(f"слайд {i}: текст наезжает на другой текст ({snip(info['overlaps'])})")
+    if info["covered"]:
+        out.append(f"слайд {i}: текст перекрыт рисунком или декором ({snip(info['covered'])})")
+    if info["lines"]:
+        out.append(f"слайд {i}: линия или кольцо проходит под текстом ({snip(info['lines'])})")
+    if info["small"]:
+        out.append(f"слайд {i}: мелкий текст (меньше 20 px) — {info['small']} шт.")
+    if info["words"] > 50:
+        out.append(f"слайд {i}: {info['words']} слов содержания при норме ≤ 40 — вычеркни второстепенное "
+                   "(подробности — в заметки), кегль не уменьшай")
+    if info["svg_words"] > 30:
+        out.append(f"слайд {i}: много подписей на схеме ({info['svg_words']} слов)")
+    geometry = sum(len(info[k]) for k in ("outside", "clipped", "overlaps", "covered"))
+    return out, geometry
 
 
 async def main():
-    errors, slides, problems = [], [], []
+    errors, slides, problems, geometry = [], [], [], 0
     async with async_playwright() as p:
         browser, page = await open_page(p, errors, viewport={"width": 1920, "height": 1080}, device_scale_factor=1,
                                         reduced_motion="reduce")
         await page.goto("file://" + page_path, wait_until="load", timeout=30000)
-        await page.add_style_tag(content=FIX)
+        await page.add_style_tag(content=A["fix_css"])
+        await page.evaluate(A["typo_js"])
         await page.evaluate("document.fonts.ready.then(() => true)")
         await page.wait_for_timeout(1500)
         found = await page.query_selector_all(".slide")
@@ -151,22 +155,161 @@ async def main():
             problems.append(f"слайдов {len(found)} — в презентацию попадут первые {max_slides}")
         for i, el in enumerate(found[:max_slides], 1):
             await el.scroll_into_view_if_needed()
-            await page.wait_for_timeout(200)
+            await page.evaluate(A["settle_js"])  # два кадра отрисовки: без случайных недорисованных полос
+            await page.wait_for_timeout(300)
             path = f"{out_dir}/{i}.jpg"
-            await el.screenshot(path=path, type="jpeg", quality=92)
-            info = await el.evaluate(CHECK)
-            if info["outside"]:
-                problems.append(f"слайд {i}: текст вылезает за край или обрезан ({'; '.join(info['out'])})")
-            if info["small"]:
-                problems.append(f"слайд {i}: мелкий текст (меньше 20 px) — {info['small']} шт.")
-            if info["words"] > 70:
-                problems.append(f"слайд {i}: много текста ({info['words']} слов)")
+            await el.screenshot(path=path, type="jpeg", quality=92, animations="disabled")
+            info = await el.evaluate(A["check_js"])
+            said, geo = say(i, info)
+            problems += said
+            geometry += geo
             slides.append([path, info["notes"][:3000]])
         await browser.close()
-    print(json.dumps({"slides": slides, "errors": errors[:30], "problems": problems[:40]}))
+    print(json.dumps({"slides": slides, "errors": errors[:30], "problems": problems[:60], "geometry": geometry}))
 
 asyncio.run(main())
 """
+
+# Что подменяется на время съёмки слайдов: размер слайда, заметки скрыты, переносы заголовков ровные.
+DECK_FIX_CSS = (
+    ".slide{width:1920px!important;height:1080px!important;overflow:hidden!important;margin:0!important;"
+    "box-sizing:border-box!important;flex:none!important}"
+    "html,body{margin:0!important;padding:0!important}.slide .notes{display:none!important}"
+    ".slide h1,.slide h2,.slide h3{text-wrap:balance}.slide p,.slide li,.slide figcaption{text-wrap:pretty}")
+
+# Русская типографика в тексте слайдов (до съёмки — PowerPoint и PDF собираются из снимков).
+DECK_TYPO_JS = r"""() => {
+  const NB = ' ';
+  const SHORT = /(^|[\s («„"])(в|к|с|у|о|а|и|я|на|не|по|за|до|из|от|об|во|со|но|ко|для|при|без|над|под|про|и|или)\s+(?=\S)/gi;
+  const fix = (t) => {
+    t = t.replace(/\s+([—–])/g, NB + '$1');
+    for (let k = 0; k < 2; k++) t = t.replace(SHORT, (m, a, w) => a + w + NB);
+    t = t.replace(/\s+(же|ли|бы)(?=[\s.,!?…»]|$)/g, NB + '$1');
+    t = t.replace(/(\d)[  ](?=\d{3}(?!\d))/g, '$1 ');
+    t = t.replace(/(\d)\s+(?=[^\s\d])/g, '$1' + NB);
+    return t;
+  };
+  for (const slide of document.querySelectorAll('.slide')) {
+    const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const el = node.parentElement;
+      if (!el || el.closest('script,style,.notes')) continue;
+      const before = node.textContent, after = fix(before);
+      if (after !== before) node.textContent = after;
+    }
+  }
+  return true;
+}"""
+
+DECK_SETTLE_JS = "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))"
+
+# Проверка одного слайда: что видно глазом, но не видно по коду.
+DECK_CHECK_JS = r"""(slide) => {
+  const box = slide.getBoundingClientRect();
+  const area = box.width * box.height;
+  const CHROME = '.notes,[data-chrome],footer,.foot,.footer,.kicker,[aria-hidden="true"]';
+  const GEOM = new Set(['line', 'path', 'polyline', 'polygon', 'circle', 'ellipse', 'rect']);
+  const res = {notes: '', small: 0, words: 0, svg_words: 0, outside: [], clipped: [], overlaps: [], covered: [], lines: []};
+  const notes = slide.querySelector('.notes');
+  res.notes = notes ? notes.textContent.trim() : '';
+  const items = [];
+  const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode, el = node.parentElement, text = node.textContent.replace(/\s+/g, ' ').trim();
+    if (!text || !el || el.closest('.notes,script,style')) continue;
+    const st = getComputedStyle(el);
+    if (st.visibility === 'hidden' || st.display === 'none' || +st.opacity < 0.2) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rects = [...range.getClientRects()].filter(r => r.width > 1 && r.height > 1);
+    if (!rects.length) continue;
+    const chrome = !!el.closest(CHROME);
+    const words = (text.match(/[\p{L}\p{N}]+/gu) || []).length;
+    const inSvg = !!el.closest('svg');
+    if (!chrome) {
+      if (inSvg) res.svg_words += words; else res.words += words;
+      if (parseFloat(st.fontSize) < 20) res.small++;
+    }
+    items.push({el, text: text.slice(0, 40), rects, shown: []});
+  }
+  const add = (list, s) => { if (list.length < 5 && !list.includes(s)) list.push(s); };
+  const PAINT = new Set(['IMG', 'CANVAS', 'VIDEO', 'image', 'text', 'use', ...GEOM]);
+  const paints = (e) => {  // рисует ли элемент сам (а не пустая обёртка или корневой <svg>)
+    if (PAINT.has(e.tagName)) return true;
+    const es = getComputedStyle(e);
+    const bg = es.backgroundColor.match(/[\d.]+/g);
+    return (bg && (bg.length < 4 || +bg[3] > 0.05)) || es.backgroundImage !== 'none' ||
+      (parseFloat(es.borderTopWidth) > 0 && es.borderTopStyle !== 'none');
+  };
+  const related = (a, b) => a === b || a.contains(b) || b.contains(a);
+  const outOf = (r, b) => r.left < b.left - 2 || r.right > b.right + 2 || r.top < b.top - 2 || r.bottom > b.bottom + 2;
+  for (const it of items) {
+    for (const r of it.rects) {
+      if (outOf(r, box)) { add(res.outside, it.text); continue; }
+      let clipped = false;
+      for (let p = it.el; p && p !== slide; p = p.parentElement) {  // обрезать может и сам блок с текстом
+        const ps = getComputedStyle(p);
+        if (/(hidden|clip)/.test(ps.overflowX + ps.overflowY) && p.namespaceURI === 'http://www.w3.org/1999/xhtml') {
+          if (outOf(r, p.getBoundingClientRect())) clipped = true;
+          break;
+        }
+      }
+      if (clipped) add(res.clipped, it.text); else it.shown.push(r);  // дальше проверяем только видимые строки
+    }
+  }
+  for (let a = 0; a < items.length; a++) {
+    for (let b = a + 1; b < items.length; b++) {
+      if (related(items[a].el, items[b].el)) continue;
+      let hit = false;
+      for (const r1 of items[a].shown) {
+        for (const r2 of items[b].shown) {
+          const w = Math.min(r1.right, r2.right) - Math.max(r1.left, r2.left) - 4;
+          const h = Math.min(r1.bottom, r2.bottom) - Math.max(r1.top, r2.top) - 4;
+          if (w > 0 && h > 0) { hit = true; break; }
+        }
+        if (hit) break;
+      }
+      if (hit) add(res.overlaps, items[a].text + '» и «' + items[b].text);
+    }
+  }
+  const style = document.createElement('style');
+  style.textContent = '.slide *{pointer-events:auto!important}';
+  document.head.appendChild(style);
+  for (const it of items) {
+    let covered = false, under = false;
+    for (const r of it.shown) {
+      for (const [x, y] of [0.2, 0.5, 0.8].flatMap(fx => [0.3, 0.5, 0.7].map(fy =>
+          [r.left + r.width * fx, r.top + r.height * fy]))) {
+        const stack = document.elementsFromPoint(x, y);
+        const own = stack.findIndex(e => e === it.el || it.el.contains(e));
+        if (own < 0) continue;
+        for (const e of stack.slice(0, own)) {
+          if (related(e, it.el) || !slide.contains(e)) continue;
+          const er = e.getBoundingClientRect();
+          if (er.width * er.height > area * 0.8 || !paints(e)) continue;
+          const es = getComputedStyle(e);
+          if (+es.opacity < 0.35 || es.visibility === 'hidden') continue;
+          covered = true;
+        }
+        for (const e of stack.slice(own + 1)) {
+          if (!GEOM.has(e.tagName) || related(e, it.el)) continue;
+          const es = getComputedStyle(e);
+          if (es.stroke === 'none' || +es.strokeOpacity < 0.25 || parseFloat(es.strokeWidth) < 1) continue;
+          const filled = e.tagName !== 'line' && es.fill !== 'none' && !/rgba\(.*,\s*0\)$/.test(es.fill) &&
+            +es.fillOpacity > 0.1;
+          if (filled) continue;  // залитая фигура под текстом — это фон, а не линия
+          under = true;
+        }
+      }
+    }
+    if (covered) add(res.covered, it.text);
+    if (under) add(res.lines, it.text);
+  }
+  style.remove();
+  return res;
+}"""
 
 
 @dataclass
@@ -192,6 +335,7 @@ class DeckShots:
     images: list[tuple[str, bytes]] = field(default_factory=list)  # уменьшенные — для модели
     errors: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    geometry: int = 0  # сколько найдено текста за краем, обрезанного, наложенного или перекрытого
 
     def page_errors(self) -> int:
         return sum(1 for e in self.errors if e.startswith("ошибка JS"))
@@ -244,12 +388,18 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-async def _run_worker(code: str, page: bytes, args: list[str], timeout: float) -> tuple[dict, str]:
-    """Запустить процесс-фотограф над страницей; вернуть его JSON и папку со снимками (её удаляет вызывающий)."""
+async def _run_worker(code: str, page: bytes, args: list[str], timeout: float,
+                      extra: tuple[str, str] | None = None) -> tuple[dict, str]:
+    """Запустить процесс-фотограф над страницей; вернуть его JSON и папку со снимками (её удаляет вызывающий).
+    extra — (имя, текст) файла рядом со страницей; его путь уходит последним аргументом."""
     tmp = tempfile.mkdtemp(prefix="stella-shots-")
     try:
         path = os.path.join(tmp, "page.html")
         await asyncio.to_thread(_write, path, page)
+        if extra is not None:
+            extra_path = os.path.join(tmp, extra[0])
+            await asyncio.to_thread(_write, extra_path, extra[1].encode("utf-8"))
+            args = [*args, extra_path]
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-I", "-c", code, path, tmp, *args, cwd=tmp, env=_env(tmp),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -285,7 +435,9 @@ async def shoot(page: bytes, timeout: float = SHOTS_TIMEOUT) -> Shots:
 
 async def shoot_deck(page: bytes, timeout: float = SHOTS_TIMEOUT * 2) -> DeckShots:
     """Снять каждый слайд презентации 1920×1080 + заметки выступающего + найденные проблемы."""
-    data, tmp = await _run_worker(_DECK_WORKER, page, [str(MAX_SLIDES)], timeout)
+    assets = json.dumps({"fix_css": DECK_FIX_CSS, "typo_js": DECK_TYPO_JS, "settle_js": DECK_SETTLE_JS,
+                         "check_js": DECK_CHECK_JS}, ensure_ascii=False)
+    data, tmp = await _run_worker(_DECK_WORKER, page, [str(MAX_SLIDES)], timeout, extra=("assets.json", assets))
     try:
         slides = [Slide(await asyncio.to_thread(_read, img), notes) for img, notes in data["slides"]]
     finally:
@@ -294,7 +446,7 @@ async def shoot_deck(page: bytes, timeout: float = SHOTS_TIMEOUT * 2) -> DeckSho
     problems = list(data.get("problems") or [])
     if not slides:
         problems.insert(0, 'не найдено ни одного <section class="slide">')
-    return DeckShots(slides, previews, list(data.get("errors") or []), problems)
+    return DeckShots(slides, previews, list(data.get("errors") or []), problems, int(data.get("geometry") or 0))
 
 
 def _preview(jpeg: bytes) -> bytes:

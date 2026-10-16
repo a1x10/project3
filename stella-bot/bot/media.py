@@ -477,14 +477,14 @@ def html_csp(script_src: list[str] = (), font_src: list[str] = ()) -> str:
     """Страница работает сама по себе (CSS, JS, анимации, 3D, кнопки), но ничего не грузит из интернета: ни
     запросов, ни отправки форм, ни внешних картинок/шрифтов/скриптов — кроме библиотек, которые не удалось
     встроить (точные адреса на CDN с проверкой хеша). Что CSP в <meta> закрыть не может (принято сознательно):
-    переход по ссылке или location= из скрипта — как обычная ссылка в сообщении; WebRTC (webrtc 'block'
-    понимают не все браузеры). dns-prefetch/preconnect вырезаются отдельно. eval разрешён: выхода в сеть он не
-    даёт, а калькуляторы им пользуются."""
+    переход по ссылке или location= из скрипта — как обычная ссылка в сообщении; WebRTC (директиву webrtc
+    Chromium не знает и пишет ошибку в консоль — её не ставим). dns-prefetch/preconnect вырезаются отдельно.
+    eval разрешён: выхода в сеть он не даёт, а калькуляторы им пользуются."""
     scripts = " ".join(["'unsafe-inline'", "'unsafe-eval'", *script_src])
     fonts = " ".join(["data:", *font_src])
     return (f"default-src 'none'; script-src {scripts}; style-src 'unsafe-inline'; img-src data: blob:; "
             f"font-src {fonts}; media-src data: blob:; worker-src blob:; connect-src 'none'; form-action 'none'; "
-            "frame-src 'none'; base-uri 'none'; webrtc 'block'")
+            "frame-src 'none'; base-uri 'none'")
 
 
 HTML_CSP = html_csp()
