@@ -155,6 +155,10 @@ class _ChatActions:
         except Exception:
             log.warning("не удалось сохранить свой стикер", exc_info=True)
 
+    def spawn(self, coro: Awaitable[Any]) -> None:
+        """Фоновая работа (мультик рисуется) — не задерживает очередь ответов чата."""
+        self.brain.spawn(coro)
+
     async def say(self, text: str) -> None:
         from .casino import CasinoResult
 
@@ -834,6 +838,7 @@ class Brain:
         elif not tool_ctx.after:
             log.info("%s: молчит (%s)", mask_phone(chat_jid), mode)
             return
+        tool_ctx.replied = sent
         for action in tool_ctx.after:  # опрос — после её сообщения
             await action()
             sent += 1

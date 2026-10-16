@@ -67,6 +67,9 @@ class Settings:
     # --- что она делает сама: стикеры, картинки, документы, презентации, таблицы, видео ---
     media_enabled: bool = field(default_factory=lambda: _bool("MEDIA_ENABLED", True))
     media_per_day: int = field(default_factory=lambda: _int("MEDIA_PER_DAY", 40))  # на чат в сутки
+    # мультики с движением (make_cartoon): рисуются на сервере в отдельном процессе, по одному за раз
+    anim_enabled: bool = field(default_factory=lambda: _bool("ANIM_ENABLED", True))
+    anim_per_day: int = field(default_factory=lambda: _int("ANIM_PER_DAY", 8))  # на чат в сутки (владельцу — без лимита)
     # она «видит» фото и стикеры, которые ей присылают (и на которые отвечают с вопросом к ней)
     vision_enabled: bool = field(default_factory=lambda: _bool("VISION_ENABLED", True))
     vision_max_images: int = field(default_factory=lambda: _int("VISION_MAX_IMAGES", 3))
