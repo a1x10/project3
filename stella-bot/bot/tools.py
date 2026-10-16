@@ -402,7 +402,9 @@ def build_tools(db: DB, casino: Casino, settings: Settings, ctx: ToolContext) ->
         from .media_tools import build_media_tools
 
         specs += build_media_tools(db, settings, ctx)
+    from .reader import build_reader_tools
     from .reminders import build_reminder_tools
 
     specs += build_reminder_tools(db, settings, ctx)
+    specs += build_reader_tools(db, settings, ctx)  # read_link: только публичные сайты
     return specs

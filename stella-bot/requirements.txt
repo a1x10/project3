@@ -13,4 +13,6 @@ python-docx==1.2.0
 python-pptx==1.0.2
 openpyxl==3.1.5
 fpdf2==2.8.9
+# чтение присланных PDF
+pypdf==6.19.0
 tzdata>=2024.1
