@@ -52,7 +52,7 @@ h3{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:600;font-size:
 .slot{min-height:92px;display:grid;place-items:center;background:var(--bg2);border:1px dashed var(--line);border-radius:14px;margin:12px 0;
   font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:800;font-size:28px;text-align:center;padding:8px 10px;line-height:1.2;overflow-wrap:anywhere}
 .slot.win{font-size:clamp(18px,6vw,28px)}
-.slot.spin{color:var(--muted)}
+.slot.spin{color:var(--muted);display:block;height:92px;line-height:74px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slot.win{color:var(--gold);border-style:solid;border-color:var(--gold);background:rgba(255,207,74,.07)}
 .winbox{display:none;border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
 .winbox dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:14px;margin-bottom:12px}
@@ -152,7 +152,7 @@ dialog textarea{min-height:190px;resize:vertical}
       <div class="row" style="gap:16px">
         <label class="chk"><input type="checkbox" id="onlyMail"> Только с почтой</label>
         <label class="chk"><input type="checkbox" id="exclWin" checked> Без прошлых победителей</label>
-        <label class="chk" title="Только те, кто пришёл по своей кнопке из рассылки в Telegram: их не накрутить скриптом"><input type="checkbox" id="onlyInv"> Только из рассылки</label>
+        <label class="chk" title="Только те, кто пришёл по своей кнопке из рассылки в Telegram: их не накрутить скриптом"><input type="checkbox" id="onlyInv"> Только из рассылки <span id="invCnt" style="color:var(--dim)"></span></label>
       </div>
       <div class="slot" id="slot">?</div>
       <button class="btn vio" id="draw" style="width:100%;justify-content:center;padding:13px">🎲 Выбрать победителя</button>
@@ -196,7 +196,7 @@ dialog textarea{min-height:190px;resize:vertical}
 
 <script>
 const $ = id => document.getElementById(id);
-let D = {entries:[]}, BC = null, curMail = null, invSet = false, bcPrefilled = false;
+let D = {entries:[]}, BC = null, curMail = null, bcPrefilled = false;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const toast = t => { $('toast').textContent=t; $('toast').classList.add('on'); setTimeout(()=>$('toast').classList.remove('on'),2600) };
 async function api(path, method='GET', body){
@@ -219,8 +219,11 @@ async function load(){
   $('sMail').textContent = E.filter(e=>e.email).length;
   $('sWin').textContent = E.filter(e=>e.is_winner).length;
   $('sNew').textContent = E.filter(e=>Date.now()-new Date(e.created_at) < 600000).length;
-  $('closed').checked = D.closed;
-  if(!invSet && E.length){ invSet = true; $('onlyInv').checked = E.some(e=>e.tg_chat_id) }  // есть пришедшие по кнопке — по умолчанию только они
+  $('closed').checked = D.closed; timerChk();
+  // сколько пришло по своей кнопке из рассылки (их не накрутить); галочку ставит сам админ — по ссылке со страницы
+  // тоже честные участники
+  const inv = E.filter(e=>e.tg_chat_id).length;
+  $('invCnt').textContent = E.length ? '(' + inv + ' из ' + E.length + ')' : '';
   render();
 }
 function render(){
@@ -274,6 +277,7 @@ async function loadBc(){
   if(!BC.telegram) info = '<span class="warn">Telegram не подключён (TELEGRAM_BOT_TOKEN в .env)</span>';
   else if(!BC.url) info = '<span class="warn">Нет внешней ссылки на страницу: включи туннель (COMPOSE_PROFILES=panel в .env) или задай GIVEAWAY_PUBLIC_URL</span>';
   else info = `Получат: <b>${BC.recipients}</b> · уже получили: ${BC.already}` + (BC.blocked ? ` · заблокировали бота: ${BC.blocked}` : '') +
+    (BC.unknown ? ` · неизвестно, дошло ли (бот перезапускался): ${BC.unknown}` : '') +
     ` · отписались: ${BC.optout}<br>Кнопка ведёт на <b>${esc(BC.url)}</b> (у каждого — своя ссылка)`;
   $('bcInfo').innerHTML = info;
   if(running) $('bcProg').textContent = `Идёт рассылка: ${p.sent} из ${p.total}…` + (p.waiting ? ` Telegram попросил паузу на ${p.waiting} с` : '');
@@ -281,9 +285,15 @@ async function loadBc(){
     (p.blocked ? `, заблокировали бота ${p.blocked}` : '') + (p.failed ? `, не ушло ${p.failed}` : '');
   else $('bcProg').textContent = '';
   $('bcSend').disabled = !BC.telegram || !BC.url || !BC.recipients || running;
-  $('bcTimer').disabled = BC.timer_running;
-  $('bcTimerT').textContent = BC.timer_running ? 'Таймер уже идёт — повторная рассылка его не тронет' : 'Запустить таймер на 30 минут';
+  timerChk();
   $('bcTest').disabled = !BC.telegram || !BC.url;
+}
+function timerChk(){
+  if(!BC) return;
+  const closed = $('closed').checked;
+  $('bcTimer').disabled = BC.timer_running || closed;
+  $('bcTimerT').textContent = BC.timer_running ? 'Таймер уже идёт — повторная рассылка его не тронет'
+    : closed ? 'Регистрация закрыта — таймер не запустится' : 'Запустить таймер на 30 минут';
 }
 $('bcTest').onclick = async () => {
   $('bcTest').disabled = true;
@@ -292,7 +302,7 @@ $('bcTest').onclick = async () => {
 };
 $('bcSend').onclick = async () => {
   if(!BC) return;
-  const timer = $('bcTimer').checked && !BC.timer_running;
+  const timer = $('bcTimer').checked && !BC.timer_running && !$('closed').checked;
   if(!confirm(`Отправить сообщение ${BC.recipients} людям в Telegram?` + (timer ? '\nТаймер на 30 минут запустится сразу.' : ''))) return;
   $('bcSend').disabled = true;
   try{
@@ -317,8 +327,9 @@ document.querySelector('[data-add]').onclick = async () => {
 };
 $('clearT').onclick = async () => { try{ await api('settings','POST',{clear_timer:true}); await load() }catch(e){ toast(e.message) } };
 $('closed').onchange = async e => {
+  timerChk();
   try{ await api('settings','POST',{closed:e.target.checked}); toast(e.target.checked?'Регистрация закрыта':'Регистрация открыта') }
-  catch(err){ toast(err.message); e.target.checked = !e.target.checked }
+  catch(err){ toast(err.message); e.target.checked = !e.target.checked; timerChk() }
 };
 
 /* ---------- новый розыгрыш ---------- */
@@ -352,7 +363,7 @@ function reveal(res){
     <dt>Номер</dt><dd>#${w.id}</dd>
     <dt>Контакт</dt><dd>${esc(w.contact)}${w.tg_chat_id?' <span style="color:var(--ok)">· по кнопке из рассылки</span>':''}</dd>
     <dt>Почта</dt><dd>${esc(w.email)||'—'}</dd>
-    <dt>Участников</dt><dd>${res.pool}</dd>`;
+    <dt>Участников</dt><dd>${res.pool}${res.total && res.total !== res.pool ? ' из ' + res.total : ''}</dd>`;
   $('winActs').innerHTML = `
     <a class="btn acc" href="${esc(tgLink(w))}" target="_blank" rel="noopener">${w.contact_type==='telegram'?'Написать в Telegram':'Позвонить'}</a>
     <button class="btn" id="wCopy">Скопировать контакт</button>

@@ -190,8 +190,14 @@ const store = {
   set(k,v){ mem[k] = String(v); try{ localStorage.setItem(k, String(v)) }catch(e){} },
   clear(){ KEYS.forEach(k=>{ delete mem[k]; try{ localStorage.removeItem(k) }catch(e){} }) }
 };
-// личная ссылка из рассылки (?t=…): заявка по ней привяжется к своему Telegram
-const invite = (new URLSearchParams(location.search).get('t') || '').slice(0, 64);
+// личная ссылка из рассылки (?t=…): заявка по ней привяжется к своему Telegram. Из адресной строки убираем —
+// чтобы, поделившись страницей, не раздать свою привязку; на перезагрузку помним в этой вкладке
+const invite = (() => {
+  let t = (new URLSearchParams(location.search).get('t') || '').slice(0, 64);
+  try{ if(t) sessionStorage.setItem('gw_invite', t); else t = sessionStorage.getItem('gw_invite') || '' }catch(e){}
+  if(location.search) history.replaceState(null, '', location.pathname);
+  return t;
+})();
 async function api(path, body){
   let r;
   try{ r = await fetch('/giveaway/api/' + path, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {}) }
@@ -217,7 +223,9 @@ function restoreStep(){
   if(no && (store.get('gw_done') === '1' || closed)) show('s4');   // заявка есть — билет (почта уже не важна)
   else if(no && store.get('gw_token')) show('s3');
   else if(closed) show('s0');
-  else if(current === 's0') show('s1');
+  else if(['s0','s3','s4'].includes(current)){   // билета нет (начался новый розыгрыш) — снова к форме
+    $('ticketNo').textContent = '#—'; $('m3').textContent = ''; $('em').value = ''; show('s1');
+  }
 }
 async function loadState(){
   let s;
@@ -252,7 +260,8 @@ loadState(); setInterval(tick,1000); setInterval(loadState,20000);
 
 /* ---------- шаг 1 ---------- */
 const phoneOrTg = v => {
-  const s = v.replace(/\s/g,' ').trim().replace(/^https?:\/\/t\.me\//,'').replace(/^t\.me\//,'');
+  const s = v.replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g,'').replace(/\s/g,' ').trim()
+             .replace(/^https?:\/\/t\.me\//,'').replace(/^t\.me\//,'');
   if(/^[+0-9 \-()]{10,22}$/.test(s)){
     let digits = s.replace(/[^0-9]/g,'');
     if(digits.startsWith('00')) digits = digits.slice(2);
@@ -315,6 +324,7 @@ $('confirm').onclick = async () => {
     clearInterval(timer);
     if(/уже участвует/.test(e.message)) contactError(e.message + ' Если ник или номер введён с ошибкой — исправьте.');
     else if(/ник в Telegram|номер телефона/.test(e.message)) contactError(e.message);
+    else if(/попыток/.test(e.message)){ $('m2').textContent = e.message }
     else if(/закрыта/.test(e.message)){ $('m2').textContent = e.message; closed = true; setTimeout(restoreStep, 1800) }
     else { $('m2').textContent = e.message; setTimeout(()=>loadCaptcha(true), 1400) }
   }finally{ $('confirm').textContent='Подтвердить участие' }

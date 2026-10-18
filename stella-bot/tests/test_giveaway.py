@@ -93,6 +93,8 @@ def test_contact_and_csv_rules():
     assert normalize_contact("007 701 123 45 67")[1] == "phone:77011234567"
     assert normalize_contact("+7\u00a0701\u2009123\u202f45 67")[1] == "phone:77011234567"  # пробелы из копирования
     assert normalize_contact("https://t.me/abcdefghijklmnopqrstuvwxyz_") is None  # ссылку обрезало при вставке
+    for raw in ("\u202a+7 701 123 45 67\u202c", "\u2068+7 (701) 123-45-67\u2069", "\u200e+7 701 123 45 67"):
+        assert normalize_contact(raw)[1] == "phone:77011234567"  # невидимые знаки из контактов телефона
     assert csv_safe("=HYPERLINK(\"x\")") == "'=HYPERLINK(\"x\")" and csv_safe("Вася") == "Вася"
 
 
@@ -387,17 +389,17 @@ async def test_invited_entry_is_bound_to_its_telegram(web, brain):
             "captcha_answer": g.captchas[cap["id"]][0], "invite": invite})
 
     assert (await reg("@vasya_one", good)).status_code == 200
-    again = await reg("@vasya_two", good)  # тот же человек по своей кнопке, другой контакт
-    assert again.status_code == 409 and "уже участвуете" in again.json()["error"]
+    # ссылкой поделились — второй человек тоже участвует, но без привязки (никто не заперт)
+    assert (await reg("@vasya_two", good)).status_code == 200
     assert (await reg("@someone_else", forged)).status_code == 200  # подделка — заявка есть, но без привязки
     assert (await reg("@no_button", "")).status_code == 200
 
     await login(web, brain)
     entries = (await web.get("/giveaway/api/admin/entries")).json()["entries"]
     bound = {e["contact"]: e["tg_chat_id"] for e in entries}
-    assert bound == {"@vasya_one": 111, "@someone_else": None, "@no_button": None}
+    assert bound == {"@vasya_one": 111, "@vasya_two": None, "@someone_else": None, "@no_button": None}
     win = (await web.post("/giveaway/api/admin/draw", json={"only_invited": True})).json()
-    assert win["pool"] == 1 and win["winner"]["contact"] == "@vasya_one"
+    assert win["pool"] == 1 and win["total"] == 4 and win["winner"]["contact"] == "@vasya_one"
     r = await web.post("/giveaway/api/admin/draw", json={"only_invited": True})
     assert r.status_code == 400 and "Только из рассылки" in r.json()["error"]
     csv = (await web.get("/giveaway/api/admin/export.csv")).text
@@ -414,8 +416,8 @@ async def test_new_round_invites_are_new(brain):
 def test_spike_of_registrations_is_reported(brain):
     g = brain.giveaway
     g.clock = Clock()
-    texts = [g.note_registration() for _ in range(45)]
-    assert texts.count(None) == 44 and "накрутку" in next(t for t in texts if t)
+    texts = [g.note_registration() for _ in range(65)]
+    assert texts.count(None) == 64 and "накрутку" in next(t for t in texts if t)
 
 
 def test_old_database_is_upgraded(settings, tmp_path):
@@ -442,3 +444,13 @@ def test_old_database_is_upgraded(settings, tmp_path):
         cols = {r["name"] for r in c.execute("PRAGMA table_info(entries)")}
         outcome = c.execute("SELECT outcome FROM sent").fetchone()["outcome"]
     assert "tg_chat_id" in cols and outcome == "sent"
+
+
+async def test_register_limit_counts_only_real_attempts(web, brain):
+    for _ in range(12):  # неверные ответы лимит заявок не тратят
+        r = await register(web, brain, answer="неверно")
+        assert r.status_code == 400
+    for i in range(10):
+        assert (await register(web, brain, contact=f"@user_number{i}")).status_code == 200
+    r = await register(web, brain, contact="@user_number_x")
+    assert r.status_code == 429 and "мин" in r.json()["error"]
