@@ -229,8 +229,11 @@ class Brain:
         self.sandbox = CodeSandbox(model=settings.sandbox_model, effort=settings.sandbox_effort,
                                    timeout=settings.sandbox_project_timeout, max_run_usd=settings.sandbox_max_run_usd)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
+        from .giveaway import Giveaway
+
+        self.giveaway = Giveaway(settings, self)  # розыгрыш: страница /giveaway/ и рассылка в Telegram
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
-                                 panel_unlock=self.unlock_panel)
+                                 panel_unlock=self.unlock_panel, giveaway_links=self.giveaway_links)
         self.system = system_prompt(settings)
         self.stems = name_stems(settings.bot_name)
         self.bot = BotIdentity(set())
@@ -1558,6 +1561,17 @@ class Brain:
         except EvolutionError:
             log.warning("не смогла написать владельцу в Telegram", exc_info=True)
             return False
+
+    async def giveaway_links(self) -> list[str] | None:
+        """«/розыгрыш» от владельца: ссылка на страницу и одноразовая — в админку. None — розыгрыш выключен."""
+        if not self.s.giveaway_enabled:
+            return None
+        if self.tunnel_url is None and not self.s.giveaway_public_url:
+            try:
+                await self.check_tunnel()  # туннель могли только что поднять — не ждём минуту до проверки
+            except Exception:
+                log.debug("туннель недоступен", exc_info=True)
+        return self.giveaway.owner_text()
 
     async def unlock_panel(self) -> None:
         """«стелла разблокируй панель» от владельца: снять блокировки подбора паролей."""

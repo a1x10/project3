@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Розыгрыш безлимита</title>
+<meta name="description" content="Оставьте заявку и участвуйте в розыгрыше безлимитного ИИ на 35 дней">
+<meta property="og:title" content="Розыгрыш: безлимитный ИИ на 35 дней">
+<meta property="og:description" content="Регистрация занимает меньше минуты. Победителя выберем сегодня.">
+<meta name="theme-color" content="#0d0e13">
+<link rel="icon" href="/giveaway/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0d0e13; --bg2:#14161d; --card:#171922; --line:#272a36;
+  --ink:#f3f1ea; --muted:#9a9cab; --dim:#686b7a;
+  --acc:#d4ff3a; --acc-ink:#11140a; --acc2:#7b6cff; --bad:#ff6b6b; --ok:#47e6a0;
+  --r:22px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink)}
+body{font-family:Manrope,system-ui,sans-serif;font-size:16px;line-height:1.45;min-height:100vh;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:-20% -20% auto -20%;height:70vh;pointer-events:none;
+  background:radial-gradient(60% 60% at 30% 30%,rgba(123,108,255,.28),transparent 70%),
+             radial-gradient(40% 50% at 80% 10%,rgba(212,255,58,.14),transparent 70%);filter:blur(10px);z-index:0}
+.wrap{position:relative;z-index:1;max-width:460px;margin:0 auto;padding:22px 16px 40px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px}
+.brand{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.live{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink);
+  background:var(--bg2);border:1px solid var(--line);padding:7px 12px;border-radius:999px}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 0 rgba(212,255,58,.6);animation:pulse 1.6s infinite}
+.live.off i{background:var(--dim);animation:none}
+@keyframes pulse{70%{box-shadow:0 0 0 9px rgba(212,255,58,0)}100%{box-shadow:0 0 0 0 rgba(212,255,58,0)}}
+
+h1{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:800;font-size:clamp(30px,8.6vw,40px);line-height:1.04;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--acc)}
+.lead{color:var(--muted);margin:14px 0 22px;font-size:16px}
+
+.timer{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r);padding:14px 16px;margin-bottom:14px}
+.timer small{display:block;color:var(--muted);font-size:13px}
+.timer b{font-family:Unbounded,Manrope,system-ui,sans-serif;font-size:26px;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.timer .cnt{text-align:right;font-size:13px;color:var(--muted)}
+.timer .cnt b{display:block;font-size:20px;color:var(--ink)}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px 18px}
+.steps{display:flex;gap:6px;margin-bottom:18px}
+.steps span{flex:1;height:4px;border-radius:4px;background:var(--line);transition:background .3s}
+.steps span.on{background:var(--acc)}
+.st{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:700;margin-bottom:6px}
+h2{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:700;font-size:21px;line-height:1.2;margin-bottom:16px}
+
+label{display:block;font-size:14px;font-weight:600;margin:0 0 7px}
+label .opt{color:var(--dim);font-weight:500}
+.f{margin-bottom:15px}
+input[type=text],input[type=email],input[type=tel]{width:100%;font:inherit;font-size:17px;color:var(--ink);background:var(--bg2);
+  border:1.5px solid var(--line);border-radius:14px;padding:14px 15px;outline:none;transition:border-color .2s}
+input:focus{border-color:var(--acc2)}
+input.err{border-color:var(--bad)}
+.hint{font-size:13px;color:var(--dim);margin-top:6px}
+.check{display:flex;gap:11px;align-items:flex-start;font-size:13px;color:var(--muted);margin:4px 0 18px;cursor:pointer;font-weight:500}
+.check input{width:20px;height:20px;accent-color:var(--acc);flex:none;margin-top:1px}
+.hp{position:absolute;left:-9999px;opacity:0;height:0;width:0}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;font:inherit;font-weight:700;font-size:17px;
+  border:0;border-radius:16px;padding:17px;cursor:pointer;background:var(--acc);color:var(--acc-ink);transition:transform .1s,opacity .2s}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--muted);border:1.5px solid var(--line);margin-top:10px;font-weight:600}
+.msg{font-size:14px;color:var(--bad);min-height:20px;margin:10px 0 0;text-align:center}
+
+.q{font-size:18px;font-weight:600;line-height:1.35;margin:4px 0 16px}
+.bar{height:8px;border-radius:8px;background:var(--bg2);overflow:hidden;margin-bottom:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#9bff6a);transform-origin:left;transition:transform 1s linear}
+.bar.low i{background:var(--bad)}
+.tleft{font-size:13px;color:var(--muted);margin-bottom:16px;font-variant-numeric:tabular-nums}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
+.opts button{font:inherit;font-size:16px;font-weight:600;color:var(--ink);background:var(--bg2);border:1.5px solid var(--line);
+  border-radius:14px;padding:15px 8px;cursor:pointer;transition:all .15s}
+.opts button.sel{border-color:var(--acc);background:rgba(212,255,58,.1);color:var(--acc)}
+.expired{display:none;text-align:center;padding:10px 0 4px}
+.expired p{color:var(--muted);margin-bottom:14px}
+
+.ticket{position:relative;background:linear-gradient(135deg,#1d2030,#171922);border:1px solid var(--line);border-radius:var(--r);padding:24px 20px;text-align:center;overflow:hidden}
+.ticket::before,.ticket::after{content:"";position:absolute;top:50%;width:26px;height:26px;border-radius:50%;background:var(--bg);transform:translateY(-50%)}
+.ticket::before{left:-13px}.ticket::after{right:-13px}
+.ticket .no{font-family:Unbounded,Manrope,system-ui,sans-serif;font-size:52px;font-weight:800;color:var(--acc);line-height:1;margin:10px 0}
+.ticket .dash{border-top:2px dashed var(--line);margin:18px -20px}
+.ticket p{color:var(--muted);font-size:15px}
+.ok{width:56px;height:56px;border-radius:50%;background:rgba(71,230,160,.12);display:grid;place-items:center;margin:0 auto 6px}
+.closed{text-align:center;color:var(--muted)}
+
+.foot{margin-top:22px;font-size:12px;color:var(--dim);text-align:center;line-height:1.5}
+.hide{display:none!important}
+.fade{animation:fade .35s ease}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand" id="brand">Розыгрыш</div>
+    <div class="live" id="live"><i></i><span id="liveT">Идёт регистрация</span></div>
+  </div>
+
+  <h1 id="prizeH">Безлимитный <em>ИИ</em><br>на 35 дней</h1>
+  <p class="lead">Оставьте заявку — и вы в розыгрыше. Победителя выберем случайно среди всех участников и сразу выдадим безлимит.</p>
+
+  <div class="timer" id="timerBox">
+    <div><small id="tLabel">До выбора победителя</small><b id="tVal">--:--</b></div>
+    <div class="cnt">участников<b id="count">—</b></div>
+  </div>
+
+  <!-- регистрация закрыта -->
+  <section class="card closed hide" id="s0">
+    <h2>Регистрация закрыта</h2>
+    <p>Итоги подводятся — победителю напишем сами.</p>
+  </section>
+
+  <!-- STEP 1 -->
+  <section class="card fade" id="s1">
+    <div class="steps"><span class="on"></span><span></span><span></span></div>
+    <div class="st">Шаг 1 из 3</div>
+    <h2>Ваши данные</h2>
+    <div class="f"><label for="fn">Имя</label><input type="text" id="fn" autocomplete="given-name" maxlength="60" placeholder="Как вас зовут"></div>
+    <div class="f"><label for="ln">Фамилия <span class="opt">— необязательно</span></label><input type="text" id="ln" autocomplete="family-name" maxlength="60"></div>
+    <div class="f"><label for="ct">Ник в Telegram или телефон</label><input type="text" id="ct" inputmode="text" autocomplete="tel" maxlength="40" placeholder="@username или +7 700 000 00 00">
+      <div class="hint">По этому контакту свяжемся с победителем</div></div>
+    <input class="hp" type="text" id="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <label class="check"><input type="checkbox" id="consent"> Согласен(на) на обработку моих данных для проведения розыгрыша и связи со мной</label>
+    <button class="btn" id="next1">Дальше</button>
+    <p class="msg" id="m1"></p>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="card hide" id="s2">
+    <div class="steps"><span class="on"></span><span class="on"></span><span></span></div>
+    <div class="st">Шаг 2 из 3 · Проверка, что вы человек</div>
+    <div id="capBox">
+      <p class="q" id="q">Загружаем вопрос…</p>
+      <div class="bar" id="bar"><i id="barI"></i></div>
+      <div class="tleft" id="tleft">&nbsp;</div>
+      <div class="opts" id="opts"></div>
+      <button class="btn" id="confirm" disabled>Подтвердить участие</button>
+    </div>
+    <div class="expired" id="expired">
+      <p>Время на ответ вышло</p>
+      <button class="btn" id="retry">Новый вопрос</button>
+    </div>
+    <p class="msg" id="m2"></p>
+    <button class="btn ghost" id="back2">Назад</button>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="card hide" id="s3">
+    <div class="steps"><span class="on"></span><span class="on"></span><span class="on"></span></div>
+    <div class="st">Шаг 3 из 3</div>
+    <h2>Куда прислать письмо, если вы победите?</h2>
+    <div class="f"><label for="em">Почта <span class="opt">— необязательно</span></label><input type="email" id="em" autocomplete="email" inputmode="email" placeholder="you@mail.com"></div>
+    <button class="btn" id="saveEm">Сохранить</button>
+    <button class="btn ghost" id="skip">Пропустить</button>
+    <p class="msg" id="m3"></p>
+  </section>
+
+  <!-- DONE -->
+  <section class="hide" id="s4">
+    <div class="ticket fade">
+      <div class="ok"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#47e6a0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <h2 style="margin:6px 0 0">Вы участвуете!</h2>
+      <div class="no" id="ticketNo">#—</div>
+      <p>Ваш номер участника</p>
+      <div class="dash"></div>
+      <p id="doneText">Итоги подведём по таймеру. Победителю напишем в Telegram или по телефону.</p>
+    </div>
+  </section>
+
+  <div class="foot">Победитель выбирается случайно среди всех зарегистрированных участников. Одна заявка на один контакт.<br>Данные нужны только для связи с победителем и никому не передаются.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k) }catch(e){ return null } },
+  set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} },
+  clear(){ try{ ['gw_token','gw_no','gw_done','gw_round'].forEach(k=>localStorage.removeItem(k)) }catch(e){} }
+};
+async function api(path, body){
+  const r = await fetch('/giveaway/api/' + path, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {});
+  let j = {}; try{ j = await r.json() }catch(e){}
+  if(!r.ok) throw new Error(j.error || 'Ошибка сети, попробуйте ещё раз');
+  return j;
+}
+const STEPS = ['s0','s1','s2','s3','s4'];
+let current = 's1';
+function show(id){
+  current = id;
+  STEPS.forEach(s=>$(s).classList.add('hide')); $(id).classList.remove('hide'); $(id).classList.add('fade');
+  window.scrollTo({top:$('timerBox').offsetTop-10,behavior:'smooth'});
+}
+
+/* ---------- состояние и таймер ---------- */
+let drawAt = null, closed = false, firstLoad = true;
+async function loadState(){
+  try{
+    const s = await api('state');
+    $('count').textContent = s.count;
+    if(s.project) $('brand').textContent = s.project;
+    if(s.prize && s.prize !== 'Безлимитный ИИ на 35 дней') $('prizeH').textContent = s.prize;  // приз поменяли в админке
+    drawAt = s.draw_at ? new Date(s.draw_at) : null;
+    closed = !!s.closed;
+    // новый розыгрыш — прошлая заявка с этого телефона больше не считается
+    if(store.get('gw_round') && store.get('gw_round') !== String(s.round)){ store.clear(); if(current!=='s1' && !closed) show('s1') }
+    $('live').classList.toggle('off', closed);
+    $('liveT').textContent = closed ? 'Регистрация закрыта' : 'Идёт регистрация';
+    if(closed){ $('tLabel').textContent='Регистрация закрыта'; if(['s1','s2','s3'].includes(current) && !store.get('gw_no')) show('s0') }
+    if(firstLoad){
+      firstLoad = false;
+      if(store.get('gw_done')==='1' && store.get('gw_no')){ $('ticketNo').textContent='#'+store.get('gw_no'); show('s4') }
+      else if(store.get('gw_token') && store.get('gw_no') && !closed){ $('ticketNo').textContent='#'+store.get('gw_no'); show('s3') }
+      else if(closed) show('s0');
+      store.set('gw_round', String(s.round));
+    }
+  }catch(e){}
+}
+function tick(){
+  if(closed && !drawAt){ $('tVal').textContent = '—'; return }
+  if(!drawAt){ $('tVal').textContent = 'скоро'; return }
+  let d = Math.max(0, Math.floor((drawAt - Date.now())/1000));
+  if(d===0){ $('tLabel').textContent='Выбираем победителя'; $('tVal').textContent='00:00'; return }
+  if(!closed) $('tLabel').textContent='До выбора победителя';
+  const m = Math.floor(d/60), s = d%60;
+  $('tVal').textContent = String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+loadState(); setInterval(tick,1000); setInterval(loadState,20000);
+
+/* ---------- шаг 1 ---------- */
+const phoneOrTg = v => {
+  const s = v.trim().replace(/^https?:\/\/t\.me\//,'').replace(/^t\.me\//,'');
+  const digits = s.replace(/\D/g,'');
+  if(/^[+\d\s\-()]{10,20}$/.test(s) && digits.length>=10 && digits.length<=15) return true;
+  return /^@?[A-Za-z][A-Za-z0-9_]{4,31}$/.test(s);
+};
+$('next1').onclick = () => {
+  $('m1').textContent=''; ['fn','ct'].forEach(i=>$(i).classList.remove('err'));
+  if($('fn').value.trim().length<2){ $('fn').classList.add('err'); $('m1').textContent='Укажите имя'; return }
+  if(!phoneOrTg($('ct').value)){ $('ct').classList.add('err'); $('m1').textContent='Укажите ник (@username, от 5 символов) или номер телефона'; return }
+  if(!$('consent').checked){ $('m1').textContent='Отметьте согласие на обработку данных'; return }
+  show('s2'); loadCaptcha();
+};
+
+/* ---------- шаг 2: вопрос на время ---------- */
+let cap = null, chosen = null, timer = null;
+async function loadCaptcha(keepMsg){
+  clearInterval(timer); chosen=null; $('confirm').disabled=true; if(keepMsg!==true) $('m2').textContent='';
+  $('expired').style.display='none'; $('capBox').style.display='block';
+  $('q').textContent='Загружаем вопрос…'; $('opts').innerHTML='';
+  try{ cap = await api('captcha') }catch(e){ $('m2').textContent=e.message; return }
+  $('q').textContent = cap.question;
+  cap.options.forEach(o=>{
+    const b=document.createElement('button'); b.type='button'; b.textContent=o;
+    b.onclick=()=>{ chosen=o; [...$('opts').children].forEach(x=>x.classList.toggle('sel',x===b)); $('confirm').disabled=false };
+    $('opts').appendChild(b);
+  });
+  const total = cap.seconds, start = Date.now();
+  const bar = $('barI'); bar.style.transition='none'; bar.style.transform='scaleX(1)'; $('bar').classList.remove('low');
+  requestAnimationFrame(()=>{ bar.style.transition='transform 1s linear' });
+  const upd = () => {
+    const left = Math.max(0, total - (Date.now()-start)/1000);
+    bar.style.transform = `scaleX(${left/total})`;
+    $('bar').classList.toggle('low', left < 7);
+    $('tleft').textContent = `Осталось ${Math.ceil(left)} сек`;
+    if(left<=0){ clearInterval(timer); $('capBox').style.display='none'; $('expired').style.display='block' }
+  };
+  upd(); timer = setInterval(upd, 250);
+}
+$('retry').onclick = () => loadCaptcha();
+$('back2').onclick = () => { clearInterval(timer); show('s1') };
+$('confirm').onclick = async () => {
+  if(!chosen) return;
+  $('confirm').disabled=true; $('confirm').textContent='Проверяем…';
+  try{
+    const r = await api('register',{
+      first_name:$('fn').value, last_name:$('ln').value, contact:$('ct').value,
+      consent:$('consent').checked, captcha_id:cap.id, captcha_answer:chosen, website:$('website').value
+    });
+    clearInterval(timer);
+    store.set('gw_token', r.token); store.set('gw_no', r.number);
+    $('ticketNo').textContent = '#'+r.number;
+    show('s3'); loadState();
+  }catch(e){
+    $('m2').textContent = e.message;
+    if(/уже участвует/.test(e.message)){ setTimeout(()=>show('s1'),1800) }
+    else if(/закрыта/.test(e.message)){ closed = true; setTimeout(()=>show('s0'),1800) }
+    else setTimeout(()=>loadCaptcha(true), 1400);
+  }finally{ $('confirm').textContent='Подтвердить участие' }
+};
+
+/* ---------- шаг 3 ---------- */
+$('saveEm').onclick = async () => {
+  const v=$('em').value.trim(); $('m3').textContent='';
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ $('em').classList.add('err'); $('m3').textContent='Проверьте адрес почты'; return }
+  $('saveEm').disabled=true;
+  try{ await api('email',{token:store.get('gw_token'),email:v}); done(true) }
+  catch(e){ $('m3').textContent=e.message } finally{ $('saveEm').disabled=false }
+};
+$('skip').onclick = () => done(false);
+function done(withMail){
+  $('doneText').textContent = withMail
+    ? 'Итоги подведём по таймеру. Если победите — пришлём письмо на почту и напишем в Telegram.'
+    : 'Итоги подведём по таймеру. Если победите — свяжемся с вами в Telegram или по телефону.';
+  store.set('gw_done','1'); show('s4');
+}
+</script>
+</body>
+</html>

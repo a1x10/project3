@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Вход в админку</title>
+<link rel="icon" href="/giveaway/favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0d0e13;--card:#171922;--line:#272a36;--ink:#f3f1ea;--muted:#9a9cab;--acc:#d4ff3a;--bad:#ff6b6b}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;display:grid;place-items:center;padding:16px}
+.card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px 20px;text-align:center}
+h1{font-size:20px;margin-bottom:10px}
+p{color:var(--muted);font-size:15px;line-height:1.45}
+code{color:var(--acc);font-size:15px}
+.m{color:var(--bad);font-size:14px;margin-top:12px;min-height:18px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1 id="h">Админка розыгрыша</h1>
+  <p id="p">Напиши Стелле в личку <code>/розыгрыш</code> — она пришлёт ссылку для входа. Ссылка одноразовая и действует 15 минут.</p>
+  <div class="m" id="m"></div>
+</div>
+<script>
+(async () => {
+  const m = /[#&]t=([A-Za-z0-9_-]{16,})/.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname);  // токен больше не нужен в адресной строке
+  document.getElementById('h').textContent = 'Входим…';
+  try {
+    const r = await fetch('/giveaway/api/admin/enter', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                        body: JSON.stringify({token: m[1]})});
+    if (r.ok) { location.replace('/giveaway/admin'); return; }
+    let j = {}; try { j = await r.json() } catch (e) {}
+    document.getElementById('h').textContent = 'Не получилось войти';
+    document.getElementById('m').textContent = j.error || 'Ошибка входа';
+  } catch (e) {
+    document.getElementById('h').textContent = 'Нет связи';
+    document.getElementById('m').textContent = 'Проверь интернет и открой ссылку ещё раз';
+  }
+})();
+</script>
+</body>
+</html>

@@ -448,8 +448,10 @@ class Telegram:
 
     # --- приём сообщений ---
     async def updates(self, offset: int, timeout: int = 50) -> list[dict[str, Any]]:
+        # callback_query — нажатия кнопок под сообщениями (рассылка розыгрыша: «Не присылать такое»)
         return await self.call("getUpdates", data={"offset": offset, "timeout": timeout,
-                                                   "allowed_updates": ["message"]}, timeout=timeout + 15) or []
+                                                   "allowed_updates": ["message", "callback_query"]},
+                               timeout=timeout + 15) or []
 
 
 def _split_text(text: str, limit: int) -> list[str]:
@@ -574,6 +576,11 @@ async def poll_forever(brain: Any, tg: Telegram) -> None:
             updates = await tg.updates(offset)
             for upd in updates:
                 offset = max(offset, int(upd.get("update_id", 0)) + 1)
+                if isinstance(upd.get("callback_query"), dict):
+                    giveaway = getattr(brain, "giveaway", None)
+                    if giveaway is not None:
+                        brain.spawn(giveaway.on_callback(tg, upd["callback_query"]))
+                    continue
                 gone = left_member(upd)
                 if gone:
                     brain.spawn(brain.member_left(*gone))
