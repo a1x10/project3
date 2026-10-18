@@ -100,10 +100,19 @@ class Commands:
             await self.panel_unlock()
             return CasinoResult(["готово, вход в панель снова открыт"])
 
-        # --- розыгрыш: ссылка на страницу и одноразовая — в админку (только владелец/админы из .env, только в личке) ---
+        # --- розыгрыш: ссылка на страницу и одноразовая — в админку (владелец/админы из .env, только в личке) ---
         if re.fullmatch(r"/?(розыгрыш|giveaway)( админка| ссылка)?", t) and self.giveaway_links is not None:
-            if not admin or chat["is_group"]:
+            if chat["is_group"]:
                 return None
+            if not admin:
+                if not t.startswith("/"):
+                    return None  # «розыгрыш» словом — обычный разговор
+                # команду набрали, но владельцем бот этого человека не считает — подскажем, что вписать в .env
+                me = phone_of(sender.jid) or sender.phone or ""
+                hint = f"TELEGRAM_OWNER_ID={me[2:]}" if me.startswith("tg") else f"OWNER_PHONE={me} (или ADMIN_PHONES)"
+                log.info("«/розыгрыш» не от владельца/админа (%s)", me)
+                return CasinoResult(["это команда владельца бота",
+                                     f"если владелец — ты, впиши на сервере в .env {hint} и перезапусти бота"])
             lines = await self.giveaway_links()
             if lines is None:
                 return CasinoResult(["розыгрыш выключен (GIVEAWAY_ENABLED=false)"])

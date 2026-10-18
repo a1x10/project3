@@ -69,7 +69,12 @@ def _utf16_len(s: str) -> int:
 
 
 class TelegramError(EvolutionError):
-    """Ошибка Bot API (наследник EvolutionError — существующие обработчики ошибок отправки ловят и её)."""
+    """Ошибка Bot API (наследник EvolutionError — существующие обработчики ошибок отправки ловят и её).
+    retry_after — Telegram просит подождать столько секунд (слишком часто)."""
+
+    def __init__(self, message: str, status: int | None = None, retry_after: int = 0):
+        super().__init__(message, status)
+        self.retry_after = retry_after
 
 
 class _Flood(Exception):
@@ -262,12 +267,12 @@ class Telegram:
             return await self._call(method, data=data, files=files, timeout=timeout)
         except _Flood as exc:  # Telegram просит подождать — ждём (не дольше 30 с) и пробуем ещё раз
             if method == "sendChatAction" or exc.wait > 30:
-                raise TelegramError(str(exc)) from None
+                raise TelegramError(str(exc), retry_after=exc.wait) from None
             await asyncio.sleep(exc.wait)
             try:
                 return await self._call(method, data=data, files=files, timeout=timeout)
             except _Flood as again:
-                raise TelegramError(str(again)) from None
+                raise TelegramError(str(again), retry_after=again.wait) from None
 
     async def _call(self, method: str, *, data: dict[str, Any] | None = None, files: dict[str, Any] | None = None,
                     timeout: float = 60) -> Any:

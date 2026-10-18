@@ -362,6 +362,8 @@ class Brain:
             resp = await client.get(self.s.tunnel_metrics_url.rstrip("/") + "/quicktunnel")
         host = str((resp.json() or {}).get("hostname") or "").strip() if resp.status_code == 200 else ""
         if not host:
+            if resp.status_code == 200:
+                self.tunnel_url = None  # туннель ответил, что адреса нет
             return None
         url = host if host.startswith("https://") else f"https://{host}"
         if url != self.tunnel_url:
@@ -1562,15 +1564,24 @@ class Brain:
             log.warning("не смогла написать владельцу в Telegram", exc_info=True)
             return False
 
+    async def refresh_tunnel(self) -> str | None:
+        """Свежий адрес туннеля прямо сейчас: после перезапуска cloudflared он другой, а старый уже не открывается.
+        Туннель не отвечает — адреса нет (лучше «нет ссылки», чем разослать мёртвую)."""
+        if not self.s.tunnel_metrics_url:
+            return self.tunnel_url
+        try:
+            await self.check_tunnel()
+        except Exception:
+            log.debug("туннель недоступен", exc_info=True)
+            self.tunnel_url = None
+        return self.tunnel_url
+
     async def giveaway_links(self) -> list[str] | None:
         """«/розыгрыш» от владельца: ссылка на страницу и одноразовая — в админку. None — розыгрыш выключен."""
         if not self.s.giveaway_enabled:
             return None
-        if self.tunnel_url is None and not self.s.giveaway_public_url:
-            try:
-                await self.check_tunnel()  # туннель могли только что поднять — не ждём минуту до проверки
-            except Exception:
-                log.debug("туннель недоступен", exc_info=True)
+        if not self.s.giveaway_public_url:
+            await self.refresh_tunnel()
         return self.giveaway.owner_text()
 
     async def unlock_panel(self) -> None:

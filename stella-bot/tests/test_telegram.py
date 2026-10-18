@@ -396,3 +396,14 @@ async def test_html_page_goes_to_telegram_as_file(tbrain, api, monkeypatch):
     assert len(doc) == 1 and b'filename="' in doc[0]["_raw"] and b"text/html" in doc[0]["_raw"]
     assert b'"message_id": 77' in doc[0]["_raw"] or b'"message_id":77' in doc[0]["_raw"]  # ответом на просьбу
     assert tbrain.wa.sent == []
+
+
+async def test_giveaway_command_in_telegram_dm(tbrain, api):
+    tbrain.tunnel_url = "https://x.trycloudflare.com"
+    await feed_tg(tbrain, tg_update("/розыгрыш", chat_id=OWNER_TG, chat_type="private", user_id=OWNER_TG, first="Я"))
+    assert any("#t=" in (b.get("text") or "") for b in api.sent())  # владельцу — ссылки
+    api.calls.clear()
+    # не владелец (или в .env не тот TELEGRAM_OWNER_ID) — подсказка, какой id вписать
+    await feed_tg(tbrain, tg_update("/розыгрыш", chat_id=VASYA_TG, chat_type="private", user_id=VASYA_TG))
+    texts = " ".join(b.get("text") or "" for b in api.sent())
+    assert f"TELEGRAM_OWNER_ID={VASYA_TG}" in texts and "#t=" not in texts

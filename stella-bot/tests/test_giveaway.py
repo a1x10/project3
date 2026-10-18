@@ -24,11 +24,13 @@ class Clock:
 
 
 class FakeTg:
-    """Telegram Bot API: запоминает вызовы; чатам из blocked — «бот заблокирован»."""
+    """Telegram Bot API: запоминает вызовы; чатам из blocked — «бот заблокирован»; flood — сколько раз подряд
+    ответить «слишком часто»."""
 
-    def __init__(self, blocked=()):
+    def __init__(self, blocked=(), flood=0):
         self.calls = []
         self.blocked = set(blocked)
+        self.flood = flood
         self.n = 100
 
     async def call(self, method, *, data=None, files=None, timeout=60):
@@ -36,6 +38,9 @@ class FakeTg:
         if method == "sendMessage":
             if data["chat_id"] in self.blocked:
                 raise TelegramError("Telegram sendMessage: Forbidden: bot was blocked by the user")
+            if self.flood:
+                self.flood -= 1
+                raise TelegramError("Telegram sendMessage: слишком часто, подождать 35 с", retry_after=35)
             self.n += 1
             return {"message_id": self.n}
         return True
@@ -83,6 +88,9 @@ def test_contact_and_csv_rules():
     assert normalize_contact("8 (701) 123-45-67") == ("+77011234567", "phone:77011234567", "phone")
     assert normalize_contact("https://t.me/Vasya_P") == ("@Vasya_P", "tg:vasya_p", "telegram")
     assert normalize_contact("@ab") is None and normalize_contact("привет") is None
+    # тот же номер другими цифрами или через 00 — тот же ключ (одна заявка на контакт)
+    assert normalize_contact("+７ ７０１ １２３ ４５ ６７") is None
+    assert normalize_contact("007 701 123 45 67")[1] == "phone:77011234567"
     assert csv_safe("=HYPERLINK(\"x\")") == "'=HYPERLINK(\"x\")" and csv_safe("Вася") == "Вася"
 
 
@@ -144,6 +152,17 @@ async def test_admin_only_by_one_time_link_from_stella(web, brain):
     assert (await web.post("/giveaway/api/admin/enter", json={"token": token})).status_code == 401  # одноразовая
 
 
+async def test_logout_closes_every_session_and_bad_cookies_are_just_401(web, brain):
+    await login(web, brain)
+    stolen = web.cookies.get("gw_admin")
+    assert (await web.post("/giveaway/api/admin/logout", json={})).status_code == 200
+    web.cookies.set("gw_admin", stolen, domain="bot", path="/giveaway")
+    assert (await web.get("/giveaway/api/admin/entries")).status_code == 401  # «Выйти» — везде
+    for bad in ("1.é", "9999999999.zz", "1.1." + "0" * 64):
+        web.cookies.set("gw_admin", bad, domain="bot", path="/giveaway")
+        assert (await web.get("/giveaway/api/admin/entries")).status_code == 401
+
+
 async def test_link_expires(web, brain):
     token = await owner_link(brain)
     brain.giveaway.clock.t += 16 * 60
@@ -154,9 +173,10 @@ async def test_not_owner_and_groups_get_no_link(web, brain):
     from .conftest import VASYA
 
     brain.tunnel_url = TUNNEL
-    brain.llm.queue = ["не понимаю"]
     await brain.handle_payload(upsert("/розыгрыш", chat=VASYA, sender=VASYA))
     await settle(brain)
+    hint = " ".join(brain.evo.texts())
+    assert "команда владельца" in hint and "OWNER_PHONE=" in hint  # подсказка, кого вписать владельцем
     brain.llm.queue = ["что?"]
     await brain.handle_payload(upsert("стелла розыгрыш", chat=GROUP, sender=OWNER_JID, name="Хозяин"))
     await settle(brain)
@@ -224,13 +244,84 @@ async def test_broadcast_goes_once_to_telegram_dms_with_buttons(web, brain):
 
     chat = await brain.db.get_chat_by_jid(brain.s.evolution_instance, "111@tg.chat")
     history = await brain.db.recent_messages(chat["id"], 5)
-    assert any("Розыгрыш! Жмите" in (m["text"] or "") for m in history)  # Стелла знает, что писала
+    # Стелла знает, что писала, — и даст настоящую ссылку, если спросят
+    assert any("Розыгрыш! Жмите" in (m["text"] or "") and f"{TUNNEL}/giveaway/" in m["text"] for m in history)
 
-    # второй раз тем же — не шлём (заблокировавшему — можно попробовать снова)
+    # второй раз — никому: получившие и заблокировавшие бота отмечены
     tg.calls.clear()
     r = await web.post("/giveaway/api/admin/broadcast", json={"text": "ещё раз", "button": DEFAULT_BUTTON})
+    assert r.status_code == 400 and tg.sent_to() == []
+    # новенький написал Стелле — ему одному; таймер и регистрацию повторная рассылка не трогает
+    draw_at = state["draw_at"]
+    await web.post("/giveaway/api/admin/settings", json={"closed": True})
+    await tg_dm(brain, 444)
+    r = await web.post("/giveaway/api/admin/broadcast", json={"text": "ещё раз", "button": DEFAULT_BUTTON})
     await settle(brain)
-    assert tg.sent_to() == [333]
+    assert tg.sent_to() == [444]
+    after = (await web.get("/giveaway/api/state")).json()
+    assert after["draw_at"] == draw_at and after["closed"]
+
+
+async def test_double_click_sends_once(web, brain):
+    import asyncio
+
+    brain.evo.tg = tg = FakeTg()
+    for uid in (111, 222, 333):
+        await tg_dm(brain, uid)
+    await login(web, brain)
+    body = {"text": "привет", "button": DEFAULT_BUTTON}
+    rs = await asyncio.gather(*(web.post("/giveaway/api/admin/broadcast", json=body) for _ in range(2)))
+    await settle(brain)
+    assert sorted(r.status_code for r in rs) == [200, 409]
+    assert sorted(tg.sent_to()) == [111, 222, 333]
+
+
+async def test_flood_wait_is_respected_not_skipped(web, brain, monkeypatch):
+    import asyncio
+
+    import bot.giveaway as gmod
+
+    slept = []
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(s):
+        slept.append(s)
+        await real_sleep(0)
+
+    monkeypatch.setattr(gmod.asyncio, "sleep", fast_sleep)
+    brain.evo.tg = FakeTg(flood=1)
+    for uid in (111, 222):
+        await tg_dm(brain, uid)
+    await login(web, brain)
+    await web.post("/giveaway/api/admin/broadcast", json={"text": "привет", "button": DEFAULT_BUTTON})
+    await settle(brain)
+    progress = (await web.get("/giveaway/api/admin/broadcast")).json()["progress"]
+    assert progress["sent"] == 2 and progress["failed"] == 0 and 36 in slept  # подождала, сколько просил Telegram
+
+
+async def test_link_is_rechecked_before_sending(web, brain):
+    brain.evo.tg = tg = FakeTg()
+    await tg_dm(brain, 111)
+    await login(web, brain)
+    brain.s.tunnel_metrics_url = "http://tunnel:2000"
+
+    async def tunnel_restarted():  # cloudflared перезапустился — у туннеля новый адрес
+        brain.tunnel_url = "https://new-host.trycloudflare.com"
+        return brain.tunnel_url
+
+    brain.check_tunnel = tunnel_restarted
+    await web.post("/giveaway/api/admin/broadcast", json={"text": "привет", "button": DEFAULT_BUTTON})
+    await settle(brain)
+    url = next(d for m, d in tg.calls if m == "sendMessage")["reply_markup"]["inline_keyboard"][0][0]["url"]
+    assert url == "https://new-host.trycloudflare.com/giveaway/"
+
+    async def tunnel_down():
+        raise OSError("нет туннеля")
+
+    brain.check_tunnel = tunnel_down
+    await tg_dm(brain, 222)
+    r = await web.post("/giveaway/api/admin/broadcast", json={"text": "привет", "button": DEFAULT_BUTTON})
+    assert r.status_code == 400 and "туннель" in r.json()["error"]  # мёртвую кнопку не рассылаем
 
 
 async def test_stop_button_unsubscribes_and_removes_itself(web, brain):
