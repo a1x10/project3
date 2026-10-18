@@ -224,7 +224,8 @@ class Brain:
         self._make_voice()
         from .sandbox import CodeSandbox
 
-        self.sandbox = CodeSandbox(model=settings.sandbox_model, timeout=self._sandbox_timeout())
+        self.sandbox = CodeSandbox(model=settings.sandbox_model, effort=settings.sandbox_effort,
+                                   timeout=self._sandbox_timeout())
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
                                  panel_unlock=self.unlock_panel)
@@ -235,6 +236,7 @@ class Brain:
         self.runners: dict[str, ChatRunner] = {}
         self.seen: OrderedDict[str, None] = OrderedDict()
         self.talking: dict[str, dict[str, float]] = {}  # чат -> собеседник -> когда Стелла ему отвечала
+        self._trust: dict[int, tuple[float, bool]] = {}  # человек -> (когда проверили, свой ли) — режим друзей
         self.connection_state = "unknown"
         self.disconnected_at: float | None = None
         self._last_alert: dict[str, float] = {}
@@ -294,7 +296,8 @@ class Brain:
         self.system = system_prompt(self.s)
         self._make_voice()
         if self.sandbox.timeout != self._sandbox_timeout():
-            self.sandbox = CodeSandbox(model=self.s.sandbox_model, timeout=self._sandbox_timeout())
+            self.sandbox = CodeSandbox(model=self.s.sandbox_model, effort=self.s.sandbox_effort,
+                                       timeout=self._sandbox_timeout())
 
     def _sandbox_timeout(self) -> float:
         """Песочница должна успеть раньше, чем истечёт время на весь ответ (LLM_TIMEOUT)."""
@@ -473,7 +476,9 @@ class Brain:
         if not self._allowed(inc):
             self._decision(inc, "чат не разрешён (ALLOWED_GROUPS / ALLOW_DMS)")
             return
-        if inc.is_dm and inc.chat_jid.endswith("@tg.chat") and not self.s.is_owner(phone_of(inc.sender_jid)):
+        if (inc.is_dm and inc.chat_jid.endswith("@tg.chat") and not self.s.is_owner(phone_of(inc.sender_jid))
+                and not await self.is_trusted(await self.db.find_person_by_jid(inc.sender_jid),
+                                              phone_of(inc.sender_jid))):
             key = f"tgdm:{inc.sender_jid}:{date.today().isoformat()}"
             used = await self.db.kv_get(key)
             if used and used[1] >= self.s.telegram_dm_per_day:
@@ -601,7 +606,8 @@ class Brain:
 
         dl = self.downloader
         today = date.today().isoformat()
-        owner = self.s.is_owner(phone_of(inc.sender_jid))
+        owner = self.s.is_owner(phone_of(inc.sender_jid)) or await self.is_trusted(
+            await self.db.find_person_by_jid(inc.sender_jid), phone_of(inc.sender_jid))
         person = phone_of(inc.sender_jid) or inc.sender_alt or inc.sender_jid
         keys = [(f"viddl:{chat['id']}:{today}", self.s.video_dl_per_day),
                 (f"viddl:all:{today}", dl.GLOBAL_DAY)]
@@ -768,6 +774,24 @@ class Brain:
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
         return task
+
+    async def is_trusted(self, person: Person | None, phone: str | None = None) -> bool:
+        """Владелец и админы бота — всегда. В режиме друзей (FRIENDS_MODE) — ещё и все, кто состоит в одной
+        группе с владельцем или админом бота: чужой, нашедший бота по @username или добавивший его в свою
+        группу, сюда не попадает. Проверка кешируется на 10 минут."""
+        phone = phone or (phone_of(person.jid) or person.phone if person else None)
+        if self.s.is_admin(phone):
+            return True
+        if not self.s.friends_mode or person is None:
+            return False
+        now = time.monotonic()
+        hit = self._trust.get(person.id)
+        if hit and now - hit[0] < 600:
+            return hit[1]
+        mates = await self.db.group_mates(person.id)
+        ok = any(self.s.is_admin(phone_of(m.jid) or m.phone) for m in mates if m.id != person.id)
+        self._trust[person.id] = (now, ok)
+        return ok
 
     async def is_group_admin(self, chat: dict[str, Any], person: Person, max_age: float | None = None) -> bool:
         """Админ группы в WhatsApp (может, например, поставить Стеллу на паузу).
@@ -942,10 +966,10 @@ class Brain:
         # пачка от нескольких людей: права того, кто написал последним, не должны достаться остальным
         shared = any(not self._same_sender(i, target) for i in starred)
         tool_ctx = ToolContext(chat_id=chat["id"], sender=sender, people_refs={p.ref: p for p in people},
-                               is_admin=not shared and self.s.is_admin(phone_of(sender.jid) or sender.phone),
+                               is_admin=not shared and await self.is_trusted(sender),
                                actions=_ChatActions(self, chat, target), quoted_wa_id=target.quoted_id,
                                quoted_media=self._media_source(target) or self._recent_media_of(target, batch),
-                               on_cost=self.track_cost)
+                               attachments=self._attachments(starred, target, batch), on_cost=self.track_cost)
 
         images = await self._images_for(starred, target, batch) if mode != AMBIENT else []
         if images:
@@ -1031,7 +1055,7 @@ class Brain:
             extra += build_voice_tools(self.db, self.s, ctx, speaker=self.speaker)
         if shared:
             return extra
-        self.sandbox.model = self.s.sandbox_model
+        self.sandbox.model, self.sandbox.effort = self.s.sandbox_model, self.s.sandbox_effort
         extra += build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)
         on_whatsapp = not chat["jid"].endswith("@tg.chat")
         if on_whatsapp and (chat["is_group"]
@@ -1048,6 +1072,38 @@ class Brain:
         """Один и тот же человек (в группах с LID он может прийти и по номеру, и по LID)."""
         ids = {j for j in (a.sender_jid, a.sender_alt) if j}
         return bool(ids & {j for j in (b.sender_jid, b.sender_alt) if j})
+
+    def _attachments(self, starred: list[Incoming], target: Incoming,
+                     batch: list[tuple[Incoming, str]]) -> list[tuple[dict[str, Any], dict[str, Any] | None, str, str]]:
+        """Файлы и фото для песочницы: присланные с просьбой, процитированные или (если их нет) последние от того же
+        человека в этой пачке. (key, message, имя, mime)."""
+        out: list[tuple[dict[str, Any], dict[str, Any] | None, str, str]] = []
+
+        def add(key: dict[str, Any], message: dict[str, Any] | None, kind: str) -> None:
+            msg = message or {}
+            if kind == "document":
+                doc = msg.get("documentMessage") or {}
+                name = str(doc.get("fileName") or doc.get("title") or "файл")[:120]
+                out.append((key, message, name, str(doc.get("mimetype") or "application/octet-stream")))
+            elif kind == "image":
+                img = msg.get("imageMessage") or {}
+                mime = str(img.get("mimetype") or "image/jpeg")
+                out.append((key, message, f"photo{len(out) + 1}.{'png' if 'png' in mime else 'jpg'}", mime))
+
+        for inc in starred:
+            if inc.kind in ("document", "image"):
+                add(inc.raw_key, inc.raw_message, inc.kind)
+            elif inc.quoted_kind in ("document", "image") and inc.quoted_id and inc.quoted_message:
+                key = {"id": inc.quoted_id, "remoteJid": inc.chat_jid, "fromMe": self.outbox.is_ours(inc.quoted_id)}
+                if inc.quoted_sender and not key["fromMe"]:
+                    key["participant"] = inc.quoted_sender
+                add(key, inc.quoted_message, inc.quoted_kind)
+        if not out:
+            for inc, _ in reversed(batch):
+                if inc.sender_jid == target.sender_jid and inc.kind in ("document", "image"):
+                    add(inc.raw_key, inc.raw_message, inc.kind)
+                    break
+        return out[-5:]
 
     async def _documents_for(self, starred: list[Incoming], target: Incoming,
                              batch: list[tuple[Incoming, str]]) -> str:

@@ -122,4 +122,4 @@ async def test_switching_llm_rebuilds_when_settings_change(tmp_path):
     assert (await llm.ask(system="", prompt="")).text == "claude-opus-5-5"
     s.llm_model, s.llm_effort = "claude-sonnet-5-5", "medium"  # поменяли в панели
     assert (await llm.ask(system="", prompt="")).text == "claude-sonnet-5-5"
-    assert made == [("claude-opus-5-5", "low"), ("claude-sonnet-5-5", "medium")]
+    assert made == [("claude-opus-5-5", "high"), ("claude-sonnet-5-5", "medium")]
