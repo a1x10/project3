@@ -168,11 +168,13 @@ class _ChatActions:
         """Фоновая работа (мультик рисуется) — не задерживает очередь ответов чата."""
         self.brain.spawn(coro)
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, reply: bool = False) -> None:
+        """reply — ответом на её сообщение-просьбу (готовый позже результат)."""
         from .casino import CasinoResult
 
         try:
-            await self.brain.outbox.send_result(self.chat, CasinoResult([text]))
+            await self.brain.outbox.send_result(self.chat, CasinoResult([text]),
+                                                reply_to=self.target if reply else None, quote=reply)
         except EvolutionError:
             pass
 
@@ -225,7 +227,7 @@ class Brain:
         from .sandbox import CodeSandbox
 
         self.sandbox = CodeSandbox(model=settings.sandbox_model, effort=settings.sandbox_effort,
-                                   timeout=self._sandbox_timeout())
+                                   timeout=settings.sandbox_project_timeout, max_run_usd=settings.sandbox_max_run_usd)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
                                  panel_unlock=self.unlock_panel)
@@ -291,17 +293,8 @@ class Brain:
 
     def on_settings_changed(self) -> None:
         """Настройки поменяли в панели: пересобрать то, что от них зависит."""
-        from .sandbox import CodeSandbox
-
         self.system = system_prompt(self.s)
         self._make_voice()
-        if self.sandbox.timeout != self._sandbox_timeout():
-            self.sandbox = CodeSandbox(model=self.s.sandbox_model, effort=self.s.sandbox_effort,
-                                       timeout=self._sandbox_timeout())
-
-    def _sandbox_timeout(self) -> float:
-        """Песочница должна успеть раньше, чем истечёт время на весь ответ (LLM_TIMEOUT)."""
-        return max(60.0, self.s.llm_timeout - 50)
 
     def _make_voice(self) -> None:
         """Создаёт распознавание и озвучку; при смене модели в панели старая выгружается из памяти."""
@@ -510,8 +503,9 @@ class Brain:
             if quoted_is_bot and inc.quoted_sender:
                 await self.add_bot_jid(inc.quoted_sender)  # так узнаём LID самого бота
             elif inc.quoted_sender and inc.quoted_sender not in self.bot.jids:
-                qp = await self.db.upsert_person(inc.quoted_sender, inc.quoted_name or "", phone_of(inc.quoted_sender))
-                await self.db.touch_member(chat["id"], qp.id)
+                # только имя: в участники чата не записываем — автора цитаты задаёт телефон отправителя (в WhatsApp
+                # его можно подделать), а по участникам решается, кто «свой» в режиме друзей
+                await self.db.upsert_person(inc.quoted_sender, inc.quoted_name or "", phone_of(inc.quoted_sender))
         msg_id = await self.db.add_message(chat["id"], "user", text, wa_message_id=inc.msg_id, person_id=sender.id,
                                            sender_name=sender.name, kind=inc.kind, quoted_wa_id=inc.quoted_id)
         if msg_id is None:
@@ -761,7 +755,52 @@ class Brain:
             if part.get("admin"):
                 admins |= ids
         self.group_admins[jid] = (time.monotonic(), admins)
+        if jid.endswith("@g.us"):  # в Telegram бот видит только админов — там ушедших узнаём по событию выхода
+            await self._prune_members(chat_id, info.get("participants") or [])
         return admins
+
+    async def _prune_members(self, chat_id: int, participants: list[Any]) -> None:
+        """Кто вышел или кого удалили — больше не участник (и не «свой» в режиме друзей). Список участников даёт
+        сам WhatsApp. Убираем, только когда уверены: человек с одним номером мог прийти под одним LID и наоборот."""
+        phones: set[str] = set()
+        lids: set[str] = set()
+        lid_only = phone_only = False
+        for part in participants:
+            if not isinstance(part, dict):
+                continue
+            ids = {normalize_jid(part.get(k)) for k in ("id", "phoneNumber", "lid", "jid")
+                   if isinstance(part.get(k), str)}
+            by_phone = {j for j in ids if j.endswith("@s.whatsapp.net")}
+            by_lid = {j for j in ids if j.endswith("@lid")}
+            phones |= by_phone
+            lids |= by_lid
+            lid_only |= bool(by_lid) and not by_phone
+            phone_only |= bool(by_phone) and not by_lid
+        if not phones and not lids:
+            return  # пустой список — скорее сбой, чем пустая группа
+        gone = []
+        for person in await self.db.chat_members(chat_id, limit=100000):
+            mine = {normalize_jid(j) for j in (person.jid, person.alt_jid) if j}
+            if mine & (phones | lids):
+                continue
+            has_phone = any(j.endswith("@s.whatsapp.net") for j in mine)
+            has_lid = any(j.endswith("@lid") for j in mine)
+            if (has_phone and not has_lid and lid_only) or (has_lid and not has_phone and phone_only):
+                continue  # мог прийти под другим id — не уверены
+            if has_phone or has_lid:
+                gone.append(person.id)
+        if gone:
+            await self.db.remove_members(chat_id, gone)
+            log.info("группа: убрала из участников %d (вышли или удалены)", len(gone))
+        self._trust.clear()
+
+    async def member_left(self, chat_jid: str, person_jid: str) -> None:
+        """Telegram: человек вышел из группы или его удалили."""
+        chat = await self.db.get_chat_by_jid(self.s.evolution_instance, chat_jid)
+        person = await self.db.find_person_by_jid(person_jid)
+        if chat and person:
+            await self.db.remove_members(chat["id"], [person.id])
+            self._trust.clear()
 
     def _start_group_sync(self, chat_id: int, jid: str) -> asyncio.Task:
         task = self._group_sync.get(jid)
@@ -977,7 +1016,8 @@ class Brain:
         documents = await self._documents_for(starred, target, batch) if mode != AMBIENT else ""
         if documents:
             prompt += "\n\n" + documents
-            tool_ctx.untrusted = True  # в ответе чужой текст: опасные действия по нему не делаем
+            # в ответе чужой текст: опасные действия по нему не делаем (сами файлы песочнице отдать можно)
+            tool_ctx.untrusted = "files"
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
         tools += self._extra_tools(chat, tool_ctx, shared=shared)
         started = time.monotonic()
@@ -1056,6 +1096,7 @@ class Brain:
         if shared:
             return extra
         self.sandbox.model, self.sandbox.effort = self.s.sandbox_model, self.s.sandbox_effort
+        self.sandbox.timeout, self.sandbox.max_run_usd = self.s.sandbox_project_timeout, self.s.sandbox_max_run_usd
         extra += build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)
         on_whatsapp = not chat["jid"].endswith("@tg.chat")
         if on_whatsapp and (chat["is_group"]

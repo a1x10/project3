@@ -43,9 +43,9 @@ class MessagesApiLLM:
         self.effort = effort or None
         self.client = client or anthropic.AsyncAnthropic(timeout=timeout, max_retries=2)
 
-    async def _create(self, model: str, **kwargs: Any) -> Any:
-        if self.effort:
-            kwargs["output_config"] = {"effort": self.effort}
+    async def _create(self, model: str, effort: str | None = None, **kwargs: Any) -> Any:
+        if effort or self.effort:
+            kwargs["output_config"] = {"effort": effort or self.effort}
         if model.startswith(SERVER_FALLBACK_MODELS):
             return await self.client.beta.messages.create(
                 model=model, betas=[FALLBACK_BETA], fallbacks="default", **kwargs
@@ -53,7 +53,7 @@ class MessagesApiLLM:
         return await self.client.messages.create(model=model, **kwargs)
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = (), effort: str | None = None) -> LLMReply:
         import anthropic
 
         model = model or self.default_model
@@ -73,7 +73,7 @@ class MessagesApiLLM:
             if tool_defs:
                 kwargs["tools"] = tool_defs
             try:
-                response = await self._create(model, **kwargs)
+                response = await self._create(model, effort, **kwargs)
             except anthropic.RateLimitError as exc:
                 raise LLMError("rate limited") from exc
             except anthropic.APIStatusError as exc:

@@ -49,6 +49,8 @@ ACTIONS = ("kick", "add", "promote", "demote", "rename", "describe", "close", "o
 PARTICIPANT_ACTIONS = {"kick": "remove", "add": "add", "promote": "promote", "demote": "demote"}
 SETTING_ACTIONS = {"close": "announcement", "open": "not_announcement",
                    "lock_info": "locked", "unlock_info": "unlocked"}
+# что друг владельца (режим друзей) может попросить, не будучи админом группы
+FRIEND_ACTIONS = {"rename", "describe", "invite_link"}
 
 
 class GroupApi:
@@ -229,7 +231,10 @@ def build_group_tools(
             log.warning("группа %s: Evolution ответил ошибкой: %s", group_jid[-12:], exc)
             raise ToolError(f"не получилось, WhatsApp ответил ошибкой ({_reason(exc)})") from exc
 
-    async def check_rights() -> None:
+    def asker_is_bot_admin() -> bool:
+        return bool(ctx.sender) and settings.is_admin(phone_of(ctx.sender.jid) or ctx.sender.phone)
+
+    async def check_rights(action: str) -> None:
         if not chat.get("is_group") or not group_jid.endswith("@g.us"):
             raise ToolError("это работает только в группах")
         if getattr(ctx, "untrusted", False):
@@ -237,7 +242,11 @@ def build_group_tools(
                             "только по отдельному сообщению админа")
         if ctx.sender is None:
             raise ToolError("управлять группой можно только по просьбе админа")
-        if ctx.is_admin:
+        if asker_is_bot_admin():
+            return
+        # друзьям (режим друзей) без прав админа группы — только безобидное; удалить, повысить, закрыть —
+        # если сами админы этой группы: иначе друг сделал бы себя админом и руками удалил владельца
+        if ctx.is_admin and action in FRIEND_ACTIONS:
             return
         try:
             allowed = await is_group_admin(chat, ctx.sender)
@@ -320,8 +329,7 @@ def build_group_tools(
                     raise ToolError("это создатель группы — его нельзя ни удалить, ни снять с админов")
                 protected = target.digits | _phones(_part_ids(part))
                 # владельца и админов бота трогают только они сами (друзья в режиме друзей — нет)
-                asker = phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else ""
-                if not settings.is_admin(asker) and any(settings.is_admin(d) for d in protected):
+                if not asker_is_bot_admin() and any(settings.is_admin(d) for d in protected):
                     raise ToolError("это мой владелец — по просьбе админа группы его трогать не буду")
             if action == "promote" and part.get("admin"):
                 return f"{target.label} и так админ"
@@ -337,6 +345,9 @@ def build_group_tools(
             problem = _participant_problem(action, str(r.get("status") or ""), target.label)
             if problem:
                 raise ToolError(problem)
+        if action == "kick" and target.person is not None and db is not None:
+            # больше не участник (и не «свой» в режиме друзей)
+            await db.remove_members(ctx.chat_id, [target.person.id])
         await changed()
         return {
             "kick": f"удалила {target.label} из группы",
@@ -346,10 +357,10 @@ def build_group_tools(
         }[action]
 
     async def group_manage(args: dict[str, Any]) -> str:
-        await check_rights()
         action = str(args.get("action") or "").strip()
         if action not in ACTIONS:
             raise ToolError("action: " + " | ".join(ACTIONS))
+        await check_rights(action)
         if action in PARTICIPANT_ACTIONS:
             return await participants_action(action, args)
         value = str(args.get("value") or "").strip()

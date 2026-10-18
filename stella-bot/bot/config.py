@@ -49,7 +49,9 @@ class Settings:
     # high — умно и всё ещё быстро для чата; xhigh/max — ещё глубже, но ответ в чате может идти минуты
     llm_effort: str = field(default_factory=lambda: _str("LLM_EFFORT", "high"))
     # Модель для фоновой выжимки фактов о людях (дешёвая)
-    llm_memory_model: str = field(default_factory=lambda: _str("LLM_MEMORY_MODEL", "claude-opus-5-5"))
+    llm_memory_model: str = field(default_factory=lambda: _str("LLM_MEMORY_MODEL", "claude-sonnet-5-5"))
+    # глубина обдумывания для выжимки фактов (фоновая работа: medium — точно и недорого); пусто — как LLM_EFFORT
+    llm_memory_effort: str = field(default_factory=lambda: _str("LLM_MEMORY_EFFORT", "medium"))
     # Автопереключение после окончания промокредитов
     llm_switch_at: date | None = field(default_factory=lambda: _date("LLM_SWITCH_AT"))
     llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "messages_api"))
@@ -108,13 +110,18 @@ class Settings:
     voice_max_seconds: int = field(default_factory=lambda: _int("VOICE_MAX_SECONDS", 180))
     # читает присланные файлы: PDF, Word, Excel, PowerPoint, текст
     documents_enabled: bool = field(default_factory=lambda: _bool("DOCUMENTS_ENABLED", True))
-    # запуск кода в песочнице Anthropic — ТОЛЬКО по просьбе владельца (OWNER_PHONE)
+    # запуск кода в песочнице Anthropic — по просьбе владельца (и друзей при FRIENDS_MODE)
     sandbox_enabled: bool = field(default_factory=lambda: _bool("SANDBOX_ENABLED", True))
     sandbox_model: str = field(default_factory=lambda: _str("SANDBOX_MODEL", "claude-opus-5-5"))
     sandbox_effort: str = field(default_factory=lambda: _str("SANDBOX_EFFORT", "max"))
     # большая задача (mode=project) делается в фоне не дольше стольких секунд
     sandbox_project_timeout: float = field(default_factory=lambda: _float("SANDBOX_PROJECT_TIMEOUT", 1800))
+    # запусков в сутки на человека (владельцу — без лимита)
     sandbox_per_day: int = field(default_factory=lambda: _int("SANDBOX_PER_DAY", 30))
+    # quick-задача ждёт ответа не дольше стольких секунд (не держим очередь ответов бота) — дальше доделывает в фоне
+    sandbox_quick_seconds: float = field(default_factory=lambda: _float("SANDBOX_QUICK_SECONDS", 150))
+    # потолок расходов одного запуска, $ (дальше — останавливается, «продолжи» доделает); 0 — без потолка
+    sandbox_max_run_usd: float = field(default_factory=lambda: _float("SANDBOX_MAX_RUN_USD", 10))
 
     # --- панель управления (сайт) ---
     # Оба пароля задаются ТОЛЬКО в .env на сервере. Пока хоть один пустой — панель выключена.

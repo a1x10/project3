@@ -155,6 +155,16 @@ def _name(user: dict[str, Any]) -> str:
     return " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x).strip() or (user.get("username") or "")
 
 
+def left_member(update: dict[str, Any]) -> tuple[str, str] | None:
+    """Служебное «вышел из группы / удалили»: (чат, человек) — он больше не участник (и не «свой» для режима друзей)."""
+    m = update.get("message")
+    gone = m.get("left_chat_member") if isinstance(m, dict) else None
+    chat_id = ((m or {}).get("chat") or {}).get("id") if isinstance(m, dict) else None
+    if not isinstance(gone, dict) or not gone.get("id") or chat_id is None:
+        return None
+    return chat_jid(chat_id), user_jid(gone["id"])
+
+
 def parse_update(update: dict[str, Any], *, bot_id: int, bot_username: str, bot_name: str) -> Incoming | None:
     """Обновление Telegram -> Incoming (или None: не сообщение, канал, бот, служебное)."""
     m = update.get("message")
@@ -564,6 +574,9 @@ async def poll_forever(brain: Any, tg: Telegram) -> None:
             updates = await tg.updates(offset)
             for upd in updates:
                 offset = max(offset, int(upd.get("update_id", 0)) + 1)
+                gone = left_member(upd)
+                if gone:
+                    brain.spawn(brain.member_left(*gone))
                 try:
                     inc = parse_update(upd, bot_id=tg.bot_id, bot_username=tg.username, bot_name=brain.s.bot_name)
                 except Exception:

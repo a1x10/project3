@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from ..config import Settings
 from .base import LLM, Image, LLMError, LLMRefusal, LLMReply, ToolSpec
@@ -64,8 +64,10 @@ class SwitchingLLM:
         return self._cache[key], kind, model
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = (), effort: str | None = None) -> LLMReply:
         backend, _, default_model = self._backend()
-        kwargs = {"images": images} if images else {}
+        kwargs: dict[str, Any] = {"images": images} if images else {}
+        if effort:
+            kwargs["effort"] = effort
         return await backend.ask(system=system, prompt=prompt, tools=tools, model=model or default_model,
                                  max_turns=max_turns, **kwargs)

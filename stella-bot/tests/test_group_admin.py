@@ -241,6 +241,20 @@ async def test_friend_in_friends_mode_cannot_kick_bot_owner(settings):
     assert evo.changes() == []
 
 
+async def test_friend_without_group_admin_rights_gets_only_harmless_actions(settings):
+    # друг владельца (режим друзей), но в этой группе не админ: себя не повысит, никого не удалит, группу не закроет —
+    # иначе сделал бы себя админом и руками удалил владельца
+    settings.friends_mode = True
+    evo = Evo()
+    t = make_tools(evo, make_ctx(PETYA_P, is_admin=True), settings)
+    for args in ({"action": "promote", "person": "я"}, {"action": "kick", "person": "p1"}, {"action": "close"},
+                 {"action": "lock_info"}, {"action": "revoke_invite"}):
+        with pytest.raises(ToolError, match="не админ группы"):
+            await t["group_manage"](args)
+    assert evo.changes() == []
+    assert await t["group_manage"]({"action": "rename", "value": "Клуб"}) == "переименовала группу в «Клуб»"
+
+
 # ---------- «я не админ» ----------
 async def test_not_admin_error_from_whatsapp(settings):
     body = {"status": 400, "error": "Bad Request",

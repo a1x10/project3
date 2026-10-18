@@ -122,9 +122,9 @@ class FakeLLM:
         self.calls: list[dict[str, Any]] = []
         self.queue: list[Any] = []
 
-    async def ask(self, *, system, prompt, tools=(), model=None, max_turns=5, images=()):
+    async def ask(self, *, system, prompt, tools=(), model=None, max_turns=5, images=(), effort=None):
         self.calls.append({"system": system, "prompt": prompt, "tools": {t.name: t for t in tools}, "model": model,
-                           "images": list(images)})
+                           "images": list(images), "effort": effort})
         item = self.queue.pop(0) if self.queue else "ок"
         if callable(item):
             item = await item({t.name: t for t in tools}, prompt)

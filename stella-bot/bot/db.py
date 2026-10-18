@@ -581,6 +581,12 @@ class DB:
                 except IntegrityError:
                     pass
 
+    async def remove_members(self, chat_id: int, person_ids: list[int]) -> None:
+        if not person_ids:
+            return
+        async with self.engine.begin() as conn:
+            await conn.execute(delete(members).where(members.c.chat_id == chat_id, members.c.person_id.in_(person_ids)))
+
     async def chat_members(self, chat_id: int, limit: int = 50) -> list[Person]:
         async with self.engine.connect() as conn:
             rows = (
