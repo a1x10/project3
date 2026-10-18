@@ -52,7 +52,7 @@ LINK_MINUTES = 15
 HITS_MAX = 50000  # адресов в памяти для ограничения частоты (дальше — забываем самые старые)
 CAPTCHAS_MAX = 20000
 FLOOD_TRIES = 3  # Telegram просит подождать — ждём и шлём этому же человеку ещё раз
-SPIKE_PER_MINUTE = 40  # столько заявок за минуту — похоже на накрутку: сообщаем владельцу
+SPIKE_PER_MINUTE = 60  # столько заявок за минуту — похоже на накрутку: сообщаем владельцу
 CAPTCHA_SECONDS = 25
 TIMER_MINUTES = 30
 STOP_DATA = "gw:stop"  # кнопка «Не присылать такое»
@@ -74,6 +74,8 @@ CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline
 
 # как у Telegram: 5–32 символа, с буквы, без «_» на конце (обрезанная при вставке ссылка не пройдёт)
 USERNAME_RE = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{3,30}[A-Za-z0-9]$")
+# невидимые знаки, которые прилипают к номеру при копировании из контактов iOS/WhatsApp/Android
+INVISIBLE_RE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
 INVITE_RE = re.compile(r"(\d{1,15})\.([0-9a-f]{20})", re.ASCII)
 SESSION_RE = re.compile(r"(\d{1,12})\.(\d{1,9})\.([0-9a-f]{64})", re.ASCII)
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-zА-Яа-я]{2,24}$")
@@ -132,7 +134,8 @@ def clean(s: str | None, n: int) -> str:
 
 def normalize_contact(raw: str) -> tuple[str, str, str] | None:
     """Ник Telegram или телефон -> (как показать, ключ для «одна заявка на контакт», тип)."""
-    s = re.sub(r"\s", " ", raw or "").strip()  # неразрывные и узкие пробелы (так часто копируется номер) — обычные
+    # неразрывные и узкие пробелы — обычные, невидимые знаки направления текста — долой (так копируется номер)
+    s = re.sub(r"\s", " ", INVISIBLE_RE.sub("", raw or "")).strip()
     # только обычные цифры: «７７０１…» (широкие, арабские и т.п.) — тот же номер, второй заявки по нему быть не должно
     if re.fullmatch(r"[+0-9 \-()]{10,22}", s):
         digits = re.sub(r"[^0-9]", "", s)
@@ -319,8 +322,9 @@ class Giveaway:
             self.recent.popleft()
         if len(self.recent) >= SPIKE_PER_MINUTE and now - self._spike_told > 600:
             self._spike_told = now
-            return (f"⚠️ Розыгрыш: {len(self.recent)} заявок за минуту — похоже на накрутку. В админке у пришедших "
-                    "по кнопке из рассылки метка «TG»; выбирай победителя с галочкой «Только из рассылки»")
+            return (f"⚠️ Розыгрыш: {len(self.recent)} заявок за минуту — если столько не ждал, похоже на накрутку. "
+                    "В админке у пришедших по кнопке из рассылки метка «TG»; их не накрутить — можно выбрать "
+                    "победителя только среди них (галочка «Только из рассылки»)")
         return None
 
     def owner_text(self) -> list[str]:
@@ -358,6 +362,7 @@ class Giveaway:
 
     # ---------- защита от частых запросов ----------
     def rate_limit(self, ip: str, limit: int, window: int, bucket: str) -> None:
+        """Не больше limit запросов за window секунд с одного адреса (IPv6 — с одной сети /64)."""
         now = self.clock()
         key = f"{bucket}:{ip_key(ip)}"
         q = self.hits.pop(key, None) or deque()
@@ -373,7 +378,8 @@ class Giveaway:
                 break
             self.hits.popitem(last=False)
         if blocked:
-            raise HTTPException(429, "Слишком много попыток, подождите минуту")
+            wait = max(1, round((window - (now - q[0])) / 60)) if q else 1
+            raise HTTPException(429, f"Слишком много попыток с вашего адреса — попробуйте через {wait} мин")
 
     def new_captcha(self) -> dict[str, Any]:
         now = self.clock()
@@ -396,9 +402,8 @@ class Giveaway:
                 "draw_at": self.setting("draw_at"), "closed": self.setting("closed", "0") == "1", "count": n,
                 "captcha_seconds": CAPTCHA_SECONDS, "round": rnd}
 
-    def register(self, data: "RegisterIn", ip: str, user_agent: str) -> dict[str, Any]:
-        if self.setting("closed", "0") == "1":
-            raise HTTPException(400, "Регистрация уже закрыта — итоги подводятся")
+    def check_captcha(self, data: "RegisterIn") -> float:
+        """Ответ на вопрос (в памяти, до ограничения частоты: ошибки не тратят лимит заявок). -> секунды на ответ."""
         if data.website:
             raise HTTPException(400, "Проверка не пройдена")
         cap = self.captchas.pop(data.captcha_id, None)
@@ -412,6 +417,11 @@ class Giveaway:
             raise HTTPException(400, "Слишком быстро — похоже на робота. Попробуйте ещё раз")
         if data.captcha_answer.strip().lower() != ans.lower():
             raise HTTPException(400, "Неверный ответ — попробуйте ещё раз")
+        return spent
+
+    def register(self, data: "RegisterIn", ip: str, user_agent: str, spent: float) -> dict[str, Any]:
+        if self.setting("closed", "0") == "1":
+            raise HTTPException(400, "Регистрация уже закрыта — итоги подводятся")
         first, last = clean(data.first_name, 60), clean(data.last_name, 60)
         if len(first) < 2:
             raise HTTPException(400, "Укажите имя")
@@ -424,16 +434,20 @@ class Giveaway:
         token = secrets.token_urlsafe(18)
         rnd = self.round()
         tg_chat = self.invited_chat(data.invite)  # пришёл по своей кнопке из рассылки
+        sql = ("INSERT INTO entries(round,token,first_name,last_name,contact,contact_key,contact_type,captcha_sec,ip,"
+               "user_agent,created_at,tg_chat_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+        row = (rnd, token, first, last, contact, key, ctype, round(spent, 1), ip, clean(user_agent, 300), now_iso())
         try:
             with self._lock, self.db() as con:
-                cur = con.execute(
-                    "INSERT INTO entries(round,token,first_name,last_name,contact,contact_key,contact_type,"
-                    "captcha_sec,ip,user_agent,created_at,tg_chat_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (rnd, token, first, last, contact, key, ctype, round(spent, 1), ip, clean(user_agent, 300),
-                     now_iso(), tg_chat))
-        except sqlite3.IntegrityError as exc:
-            if "tg_chat_id" in str(exc):
-                raise HTTPException(409, "Вы уже участвуете в этом розыгрыше 👍") from None
+                try:
+                    cur = con.execute(sql, (*row, tg_chat))
+                except sqlite3.IntegrityError as exc:
+                    if tg_chat is None or "tg_chat_id" not in str(exc):
+                        raise
+                    # по этой личной ссылке заявка уже есть (ссылкой поделились) — эта будет без привязки к Telegram:
+                    # никто не заперт, а «из рассылки» по-прежнему одна заявка на человека
+                    cur = con.execute(sql, (*row, None))
+        except sqlite3.IntegrityError:
             raise HTTPException(409, "Этот контакт уже участвует в розыгрыше 👍") from None
         return {"ok": True, "token": token, "number": cur.lastrowid, "round": rnd}
 
@@ -469,7 +483,9 @@ class Giveaway:
         with self._lock, self.db() as con:
             con.execute("UPDATE entries SET is_winner=1 WHERE id=?", (win["id"],))
             r = con.execute("SELECT * FROM entries WHERE id=?", (win["id"],)).fetchone()
-        return {"winner": _row(r), "pool": len(pool), "names": [p["first_name"] for p in pool[:60]]}
+        with self.db() as con:
+            total = con.execute("SELECT COUNT(*) c FROM entries WHERE round=?", (self.round(),)).fetchone()["c"]
+        return {"winner": _row(r), "pool": len(pool), "total": total, "names": [p["first_name"] for p in pool[:60]]}
 
     def new_round(self) -> int:
         rnd = self.round() + 1
@@ -553,7 +569,10 @@ class Giveaway:
         jids = {c["jid"] for c in chats}
         counts = {"optout": len(off & jids),
                   "sent": sum(1 for j, o in done.items() if o == "sent" and j in jids),
-                  "blocked": sum(1 for j, o in done.items() if o == "blocked" and j in jids)}
+                  "blocked": sum(1 for j, o in done.items() if o == "blocked" and j in jids),
+                  # «pending» без идущей рассылки — бот перезапустили посреди отправки: дошло ли — неизвестно,
+                  # второй раз не шлём (лучше не дошло одному, чем дважды многим)
+                  "unknown": sum(1 for j, o in done.items() if o == "pending" and j in jids)}
         return todo, counts
 
     async def fresh_url(self) -> str | None:
@@ -572,6 +591,8 @@ class Giveaway:
         return {"telegram": tg is not None, "url": await self.fresh_url(), "recipients": len(todo),
                 "optout": counts.get("optout", 0), "already": counts.get("sent", 0),
                 "blocked": counts.get("blocked", 0), "progress": dict(self.progress), "default_text": DEFAULT_TEXT,
+                "unknown": 0 if self._broadcast is not None and not self._broadcast.done()
+                else counts.get("unknown", 0),
                 "default_button": DEFAULT_BUTTON, "timer_minutes": TIMER_MINUTES,
                 "timer_running": bool(self.setting("draw_at"))}
 
@@ -592,7 +613,7 @@ class Giveaway:
             wa_id = msg_id(cid, result["message_id"])
             self.brain.outbox.remember_sent(wa_id)
             # в истории чата (со ссылкой): ответят «а что за розыгрыш? дай ссылку» — Стелла поймёт и даст настоящую
-            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {personal}]",
+            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {url}]",
                                             wa_message_id=wa_id, sender_name=self.s.bot_name)
         except Exception:
             log.warning("рассылка: ушло, но не записалось в историю чата", exc_info=True)
@@ -758,8 +779,11 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
 
 
 def client_ip(request: Request) -> str:
-    """Через туннель адрес человека — в CF-Connecting-IP (его ставит Cloudflare); X-Forwarded-For можно подделать."""
-    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+    """Адрес человека: через туннель — CF-Connecting-IP (ставит Cloudflare), через свой nginx — X-Real-IP (порт бота
+    открыт только на 127.0.0.1, подделать снаружи нельзя); X-Forwarded-For не читаем."""
+    from .admin import client_ip as real_ip
+
+    return real_ip(request)
 
 
 def is_https(request: Request) -> bool:
@@ -869,8 +893,9 @@ def build_router(get_giveaway: Callable[[Request], Giveaway | None]) -> APIRoute
     async def register(data: RegisterIn, request: Request) -> dict[str, Any]:
         g = gw(request)
         ip = client_ip(request)
+        spent = g.check_captcha(data)  # неверные ответы ограничивает выдача вопросов, не лимит заявок
         g.rate_limit(ip, 10, 600, "reg")  # 10 заявок за 10 минут с одного адреса (IPv6 — с одной сети /64)
-        result = await asyncio.to_thread(g.register, data, ip, request.headers.get("user-agent", ""))
+        result = await asyncio.to_thread(g.register, data, ip, request.headers.get("user-agent", ""), spent)
         alert = g.note_registration()
         if alert and g.brain is not None:
             g.brain.spawn(g.brain.tell_owner(alert))

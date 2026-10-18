@@ -13,7 +13,7 @@ from .db import DB, Person
 from .evolution import Evolution, EvolutionError
 from .parser import Incoming
 from .stickers import StickerLibrary
-from .util import money, norm, phone_of, utcnow
+from .util import mask_phone, money, norm, phone_of, utcnow
 
 log = logging.getLogger("stella.commands")
 
@@ -110,7 +110,7 @@ class Commands:
                 # команду набрали, но владельцем бот этого человека не считает — подскажем, что вписать в .env
                 me = phone_of(sender.jid) or sender.phone or ""
                 hint = f"TELEGRAM_OWNER_ID={me[2:]}" if me.startswith("tg") else f"OWNER_PHONE={me} (или ADMIN_PHONES)"
-                log.info("«/розыгрыш» не от владельца/админа (%s)", me)
+                log.info("«/розыгрыш» не от владельца/админа (%s)", mask_phone(sender.jid or me))
                 return CasinoResult(["это команда владельца бота",
                                      f"если владелец — ты, впиши на сервере в .env {hint} и перезапусти бота"])
             lines = await self.giveaway_links()
