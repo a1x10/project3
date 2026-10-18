@@ -154,6 +154,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         webhook_secret="s3cret",
         llm_switch_at=None,
         initiative_per_week=0,
+        tunnel_metrics_url="",  # без настоящего туннеля Cloudflare
     )
     values.update(overrides)
     for k, v in values.items():

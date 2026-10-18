@@ -91,7 +91,7 @@ dialog textarea{min-height:190px;resize:vertical}
       <a class="btn" href="/giveaway/" target="_blank" rel="noopener">Открыть страницу</a>
       <a class="btn" href="/giveaway/api/admin/export.csv">Скачать CSV</a>
       <button class="btn" id="newRound">Новый розыгрыш</button>
-      <button class="btn" id="logout">Выйти</button>
+      <button class="btn" id="logout" title="Закроет вход на всех устройствах">Выйти</button>
     </div>
   </header>
 
@@ -112,7 +112,7 @@ dialog textarea{min-height:190px;resize:vertical}
         <label class="lbl" for="bcBtn">Надпись на кнопке</label>
         <input class="inp" id="bcBtn" maxlength="40">
         <div class="row" style="margin:12px 0 4px;gap:16px">
-          <label class="chk"><input type="checkbox" id="bcTimer" checked> Запустить таймер на 30 минут</label>
+          <label class="chk"><input type="checkbox" id="bcTimer" checked> <span id="bcTimerT">Запустить таймер на 30 минут</span></label>
         </div>
         <div class="row" style="margin-top:10px">
           <button class="btn" id="bcTest">Пробное — только мне</button>
@@ -268,6 +268,8 @@ async function loadBc(){
     (p.blocked ? `, заблокировали бота ${p.blocked}` : '') + (p.failed ? `, не ушло ${p.failed}` : '');
   else $('bcProg').textContent = '';
   $('bcSend').disabled = !BC.telegram || !BC.url || !BC.recipients || running;
+  $('bcTimer').disabled = BC.timer_running;
+  $('bcTimerT').textContent = BC.timer_running ? 'Таймер уже идёт — повторная рассылка его не тронет' : 'Запустить таймер на 30 минут';
   $('bcTest').disabled = !BC.telegram || !BC.url;
 }
 $('bcTest').onclick = async () => {
@@ -276,10 +278,12 @@ $('bcTest').onclick = async () => {
   catch(e){ toast(e.message) } finally{ loadBc() }
 };
 $('bcSend').onclick = async () => {
-  if(!BC || !confirm(`Отправить сообщение ${BC.recipients} людям в Telegram?` + ($('bcTimer').checked ? '\nТаймер на 30 минут запустится сразу.' : ''))) return;
+  if(!BC) return;
+  const timer = $('bcTimer').checked && !BC.timer_running;
+  if(!confirm(`Отправить сообщение ${BC.recipients} людям в Telegram?` + (timer ? '\nТаймер на 30 минут запустится сразу.' : ''))) return;
   $('bcSend').disabled = true;
   try{
-    await api('broadcast','POST',{text:$('bcText').value, button:$('bcBtn').value, start_timer:$('bcTimer').checked});
+    await api('broadcast','POST',{text:$('bcText').value, button:$('bcBtn').value, start_timer:timer});
     toast('Рассылка началась'); load();
   }catch(e){ toast(e.message) } finally{ loadBc() }
 };

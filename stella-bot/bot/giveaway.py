@@ -16,6 +16,7 @@ import csv
 import hashlib
 import hmac
 import io
+import ipaddress
 import logging
 import os
 import random
@@ -25,7 +26,7 @@ import smtplib
 import sqlite3
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -43,8 +44,11 @@ log = logging.getLogger("stella.giveaway")
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "giveaway_static")
 PREFIX = "/giveaway"
 COOKIE = "gw_admin"
-SESSION_HOURS = 12
+SESSION_HOURS = 6
 LINK_MINUTES = 15
+HITS_MAX = 50000  # адресов в памяти для ограничения частоты (дальше — забываем самые старые)
+CAPTCHAS_MAX = 20000
+FLOOD_TRIES = 3  # Telegram просит подождать — ждём и шлём этому же человеку ещё раз
 CAPTCHA_SECONDS = 25
 TIMER_MINUTES = 30
 STOP_DATA = "gw:stop"  # кнопка «Не присылать такое»
@@ -65,6 +69,7 @@ CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline
        "form-action 'self'; frame-ancestors 'none'")
 
 USERNAME_RE = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{4,31}$")
+SESSION_RE = re.compile(r"(\d{1,12})\.(\d{1,9})\.([0-9a-f]{64})", re.ASCII)
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-zА-Яа-я]{2,24}$")
 DAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 ODD_ONE = [
@@ -115,11 +120,16 @@ def clean(s: str | None, n: int) -> str:
 def normalize_contact(raw: str) -> tuple[str, str, str] | None:
     """Ник Telegram или телефон -> (как показать, ключ для «одна заявка на контакт», тип)."""
     s = (raw or "").strip()
-    digits = re.sub(r"\D", "", s)
-    if re.fullmatch(r"[+\d\s\-()]{10,20}", s) and 10 <= len(digits) <= 15:
+    # только обычные цифры: «７７０１…» (широкие, арабские и т.п.) — тот же номер, второй заявки по нему быть не должно
+    if re.fullmatch(r"[+0-9 \-()]{10,22}", s):
+        digits = re.sub(r"[^0-9]", "", s)
+        if digits.startswith("00"):  # 007 701… — то же, что +7 701…
+            digits = digits[2:]
         if len(digits) == 11 and digits[0] == "8":
             digits = "7" + digits[1:]
-        return "+" + digits, "phone:" + digits, "phone"
+        if 10 <= len(digits) <= 15:
+            return "+" + digits, "phone:" + digits, "phone"
+        return None
     s2 = re.sub(r"^(https?://)?t\.me/", "", s)
     if USERNAME_RE.fullmatch(s2):
         u = s2.lstrip("@")
@@ -184,11 +194,14 @@ class Giveaway:
         self._lock = threading.Lock()  # записи — по одной
         self._init_lock = threading.Lock()
         self._ready = False
-        self.captchas: dict[str, tuple[str, float]] = {}
-        self.hits: dict[str, deque[float]] = {}
+        # по времени создания / последнего запроса: самые старые — в начале (выбрасываем оттуда, без перебора всего)
+        self.captchas: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        self.hits: OrderedDict[str, deque[float]] = OrderedDict()
         self.links: dict[str, float] = {}  # sha256(одноразовый токен входа) -> до какого времени действует
         self.progress: dict[str, Any] = {"state": "idle"}  # ход рассылки — видно в админке
         self._broadcast: asyncio.Task | None = None
+        self._start_lock = asyncio.Lock()  # две вкладки нажали «Разослать» разом — уйдёт одна рассылка
+        self._url_checked = 0.0
 
     # ---------- база ----------
     @contextmanager
@@ -281,35 +294,50 @@ class Giveaway:
 
     # ---------- сессия админки ----------
     def make_session(self) -> str:
-        exp = str(int(self.clock()) + SESSION_HOURS * 3600)
-        return f"{exp}.{self._sign(exp)}"
+        value = f"{int(self.clock()) + SESSION_HOURS * 3600}.{self.setting('session_gen', '1')}"
+        return f"{value}.{self._sign(value)}"
 
     def _sign(self, value: str) -> str:
         return hmac.new(self.secret(), value.encode(), hashlib.sha256).hexdigest()
 
     def is_admin(self, request: Request) -> bool:
-        cookie = request.cookies.get(COOKIE, "")
-        exp, _, sig = cookie.partition(".")
-        if not exp.isdigit() or not sig:
+        """Подпись верна, срок не вышел и после выдачи никто не нажимал «Выйти» (это закрывает все входы)."""
+        m = SESSION_RE.fullmatch(request.cookies.get(COOKIE, ""))
+        if not m:
             return False
-        return hmac.compare_digest(sig, self._sign(exp)) and int(exp) > self.clock()
+        exp, gen, sig = m.groups()
+        return (hmac.compare_digest(sig, self._sign(f"{exp}.{gen}")) and int(exp) > self.clock()
+                and gen == self.setting("session_gen", "1"))
+
+    def logout_everywhere(self) -> None:
+        self.set_setting("session_gen", str(int(self.setting("session_gen", "1") or 1) + 1))
 
     # ---------- защита от частых запросов ----------
     def rate_limit(self, ip: str, limit: int, window: int, bucket: str) -> None:
         now = self.clock()
-        if len(self.hits) > 20000:  # не копим память: старые адреса выбрасываем
-            self.hits = {k: q for k, q in self.hits.items() if q and now - q[-1] < 600}
-        q = self.hits.setdefault(f"{bucket}:{ip}", deque())
+        key = f"{bucket}:{ip_key(ip)}"
+        q = self.hits.pop(key, None) or deque()
         while q and now - q[0] > window:
             q.popleft()
-        if len(q) >= limit:
+        blocked = len(q) >= limit
+        if not blocked:
+            q.append(now)
+        self.hits[key] = q  # в конец: недавние — в конце, давние — в начале
+        while len(self.hits) > 1:  # не копим память: выбрасываем давно молчащих и лишних — с начала, без перебора
+            oldest = next(iter(self.hits.values()))
+            if len(self.hits) <= HITS_MAX and now - oldest[-1] < 3600:
+                break
+            self.hits.popitem(last=False)
+        if blocked:
             raise HTTPException(429, "Слишком много попыток, подождите минуту")
-        q.append(now)
 
     def new_captcha(self) -> dict[str, Any]:
         now = self.clock()
-        if len(self.captchas) > 5000:
-            self.captchas = {k: v for k, v in self.captchas.items() if now - v[1] < CAPTCHA_SECONDS + 60}
+        while self.captchas:
+            oldest = next(iter(self.captchas.values()))
+            if len(self.captchas) < CAPTCHAS_MAX and now - oldest[1] <= CAPTCHA_SECONDS + 60:
+                break
+            self.captchas.popitem(last=False)
         q, ans, opts = make_question()
         cid = secrets.token_urlsafe(16)
         self.captchas[cid] = (ans, now)
@@ -467,105 +495,140 @@ class Giveaway:
         todo = [c for c in chats if c["jid"] not in off and c["jid"] not in got]
         return todo, len([c for c in chats if c["jid"] in off]), len([c for c in chats if c["jid"] in got])
 
+    async def fresh_url(self) -> str | None:
+        """Адрес страницы, проверенный только что: туннель Cloudflare после перезапуска получает новый адрес, и
+        рассылать старый — значит разослать мёртвую кнопку. Свой домен (GIVEAWAY_PUBLIC_URL) не проверяем."""
+        refresh = getattr(self.brain, "refresh_tunnel", None)
+        own = (getattr(self.s, "giveaway_public_url", "") or "").strip()
+        if refresh is not None and not own and self.clock() - self._url_checked > 10:
+            self._url_checked = self.clock()
+            await refresh()
+        return self.page_url()
+
     async def broadcast_info(self) -> dict[str, Any]:
         tg = self._tg()
         todo, off, got = await self.recipients() if self.brain is not None else ([], 0, 0)
-        return {"telegram": tg is not None, "url": self.page_url(), "recipients": len(todo), "optout": off,
+        return {"telegram": tg is not None, "url": await self.fresh_url(), "recipients": len(todo), "optout": off,
                 "already": got, "progress": dict(self.progress), "default_text": DEFAULT_TEXT,
-                "default_button": DEFAULT_BUTTON, "timer_minutes": TIMER_MINUTES}
+                "default_button": DEFAULT_BUTTON, "timer_minutes": TIMER_MINUTES,
+                "timer_running": bool(self.setting("draw_at"))}
 
     def _markup(self, button: str, url: str) -> dict[str, Any]:
         return {"inline_keyboard": [[{"text": button, "url": url}],
                                     [{"text": "Не присылать такое", "callback_data": STOP_DATA}]]}
 
-    async def _send_one(self, tg: Any, chat: dict[str, Any], text: str, button: str, url: str) -> None:
+    async def _send(self, tg: Any, chat: dict[str, Any], text: str, button: str, url: str) -> None:
+        """Отправить и записать в историю чата. Ушло, а запись не удалась, — всё равно «ушло» (иначе пришлём дважды)."""
         from .telegram import msg_id
 
         cid = int(str(chat["jid"]).split("@", 1)[0])
         result = await tg.call("sendMessage", data={"chat_id": cid, "text": text,
                                                      "reply_markup": self._markup(button, url),
                                                      "link_preview_options": {"is_disabled": True}})
-        wa_id = msg_id(cid, result["message_id"])
-        brain = self.brain
-        brain.outbox.remember_sent(wa_id)
-        # в истории чата: ответит «а что за розыгрыш?» — Стелла поймёт, о чём речь
-        await brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}» — страница розыгрыша]",
-                                   wa_message_id=wa_id, sender_name=self.s.bot_name)
+        try:
+            wa_id = msg_id(cid, result["message_id"])
+            self.brain.outbox.remember_sent(wa_id)
+            # в истории чата (со ссылкой): ответят «а что за розыгрыш? дай ссылку» — Стелла поймёт и даст настоящую
+            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {url}]",
+                                            wa_message_id=wa_id, sender_name=self.s.bot_name)
+        except Exception:
+            log.warning("рассылка: ушло, но не записалось в историю чата", exc_info=True)
 
     async def send_test(self, text: str, button: str) -> str:
         """Пробное сообщение — только владельцу в личку Telegram."""
-        tg, url = self._check(text, button)
+        tg, url = await self._check(text, button)
         owner = (getattr(self.s, "telegram_owner_id", "") or "").strip()
         if not owner.lstrip("-").isdigit():
             raise HTTPException(400, "Не задан TELEGRAM_OWNER_ID — некому прислать пробное сообщение")
-        jid = f"{owner}@tg.chat"
-        chat = await self.brain.db.get_chat_by_jid(self.s.evolution_instance, jid)
+        chat = await self.brain.db.get_chat_by_jid(self.s.evolution_instance, f"{owner}@tg.chat")
         if chat is None:
             raise HTTPException(400, "Напиши Стелле в личку Telegram хоть одно сообщение — тогда пришлю пробное")
         try:
-            await self._send_one(tg, chat, text, button, url)
+            await self._send(tg, chat, text, button, url)
         except Exception as exc:
             raise HTTPException(502, f"Telegram не принял сообщение: {exc}") from None
         return "пробное сообщение отправлено тебе в Telegram"
 
-    def _check(self, text: str, button: str) -> tuple[Any, str]:
+    async def _check(self, text: str, button: str) -> tuple[Any, str]:
         tg = self._tg()
         if tg is None:
             raise HTTPException(400, "Telegram не подключён (TELEGRAM_BOT_TOKEN)")
-        url = self.page_url()
-        if not url or not url.startswith("https://"):
-            raise HTTPException(400, "Нет внешней https-ссылки на страницу: включи туннель (COMPOSE_PROFILES=panel) "
-                                     "или задай GIVEAWAY_PUBLIC_URL")
         if not text.strip() or len(text) > MAX_TEXT:
             raise HTTPException(400, f"Текст рассылки — от 1 до {MAX_TEXT} символов")
         if not button.strip() or len(button) > 40:
             raise HTTPException(400, "Надпись на кнопке — от 1 до 40 символов")
+        self._url_checked = 0.0  # перед отправкой — всегда свежий адрес
+        url = await self.fresh_url()
+        if not url or not url.startswith("https://"):
+            raise HTTPException(400, "Нет внешней https-ссылки на страницу: включи туннель (COMPOSE_PROFILES=panel) "
+                                     "или задай GIVEAWAY_PUBLIC_URL")
         return tg, url
 
     async def start_broadcast(self, text: str, button: str, start_timer: bool) -> dict[str, Any]:
-        tg, url = self._check(text, button)
-        if self._broadcast is not None and not self._broadcast.done():
-            raise HTTPException(409, "Рассылка уже идёт")
-        todo, _, _ = await self.recipients()
-        if not todo:
-            raise HTTPException(400, "Некому отправлять: все уже получили это сообщение, отписались или "
-                                     "ещё никто не писал Стелле в личку Telegram")
-        if start_timer:
-            self.start_timer(TIMER_MINUTES)
-            self.set_setting("closed", "0")
-        self.progress = {"state": "running", "total": len(todo), "sent": 0, "blocked": 0, "failed": 0,
-                         "started_at": now_iso()}
-        self._broadcast = asyncio.ensure_future(self._run_broadcast(tg, todo, text, button, url))
-        if self.brain is not None:
-            self.brain.tasks.add(self._broadcast)
-            self._broadcast.add_done_callback(self.brain.tasks.discard)
-        return dict(self.progress)
+        async with self._start_lock:  # проверка «уже идёт» и запуск — без зазора для второго запроса
+            if self._broadcast is not None and not self._broadcast.done():
+                raise HTTPException(409, "Рассылка уже идёт")
+            tg, url = await self._check(text, button)
+            todo, _, _ = await self.recipients()
+            if not todo:
+                raise HTTPException(400, "Некому отправлять: все уже получили это сообщение, отписались или "
+                                         "ещё никто не писал Стелле в личку Telegram")
+            if start_timer and not self.setting("draw_at"):
+                self.start_timer(TIMER_MINUTES)  # только первый раз за розыгрыш; регистрацию не трогаем
+            self.progress = {"state": "running", "total": len(todo), "sent": 0, "blocked": 0, "failed": 0,
+                             "started_at": now_iso()}
+            self._broadcast = asyncio.ensure_future(self._run_broadcast(tg, todo, text, button, url))
+            if self.brain is not None:
+                self.brain.tasks.add(self._broadcast)
+                self._broadcast.add_done_callback(self.brain.tasks.discard)
+            return dict(self.progress)
 
-    async def _run_broadcast(self, tg: Any, todo: list[dict[str, Any]], text: str, button: str, url: str) -> None:
+    def _claim(self, rnd: int, jid: str) -> bool:
+        """Застолбить человека до отправки: второй запуск (или повтор после сбоя) ему уже не пришлёт."""
+        with self._lock, self.db() as con:
+            return con.execute("INSERT OR IGNORE INTO sent(round,chat_jid,at) VALUES(?,?,?)",
+                               (rnd, jid, now_iso())).rowcount == 1
+
+    def _unclaim(self, rnd: int, jid: str) -> None:
+        with self._lock, self.db() as con:
+            con.execute("DELETE FROM sent WHERE round=? AND chat_jid=?", (rnd, jid))
+
+    async def _deliver(self, tg: Any, chat: dict[str, Any], text: str, button: str, url: str) -> str:
+        """-> sent | blocked (заблокировал бота, удалил аккаунт — больше не пробуем) | failed (можно позже)."""
         from .telegram import TelegramError
 
+        for attempt in range(FLOOD_TRIES):
+            try:
+                await self._send(tg, chat, text, button, url)
+                return "sent"
+            except TelegramError as exc:
+                msg = str(exc).lower()
+                if any(w in msg for w in ("blocked", "deactivated", "chat not found", "forbidden")):
+                    return "blocked"
+                wait = getattr(exc, "retry_after", 0) or 0
+                if wait and attempt < FLOOD_TRIES - 1:  # Telegram просит подождать — ждём сколько сказал
+                    log.info("рассылка: Telegram просит подождать %s с", wait)
+                    await asyncio.sleep(min(wait, 300) + 1)
+                    continue
+                log.warning("рассылка: не ушло: %s", exc)
+                return "failed"
+            except Exception:
+                log.warning("рассылка: ошибка", exc_info=True)
+                return "failed"
+        return "failed"
+
+    async def _run_broadcast(self, tg: Any, todo: list[dict[str, Any]], text: str, button: str, url: str) -> None:
         p = self.progress
         rnd = self.round()
         try:
             for chat in todo:
-                try:
-                    await self._send_one(tg, chat, text, button, url)
-                    p["sent"] += 1
-                    with self._lock, self.db() as con:
-                        con.execute("INSERT OR IGNORE INTO sent(round,chat_jid,at) VALUES(?,?,?)",
-                                    (rnd, chat["jid"], now_iso()))
-                except TelegramError as exc:
-                    msg = str(exc).lower()
-                    if any(w in msg for w in ("blocked", "deactivated", "chat not found", "forbidden")):
-                        p["blocked"] += 1  # заблокировал бота или удалил аккаунт — пропускаем
-                    else:
-                        p["failed"] += 1
-                        log.warning("рассылка: не ушло: %s", exc)
-                        if "слишком часто" in msg:
-                            await asyncio.sleep(5)
-                except Exception:
-                    p["failed"] += 1
-                    log.warning("рассылка: ошибка", exc_info=True)
+                if not self._claim(rnd, chat["jid"]):
+                    p["total"] -= 1  # уже получил — от другого запуска
+                    continue
+                outcome = await self._deliver(tg, chat, text, button, url)
+                p[outcome] += 1
+                if outcome == "failed":
+                    self._unclaim(rnd, chat["jid"])  # временная ошибка — при следующей рассылке попробуем снова
                 await asyncio.sleep(SEND_PAUSE)
         finally:
             p["state"] = "done"
@@ -576,7 +639,7 @@ class Giveaway:
                     await self.brain.tell_owner(
                         f"📣 Рассылка о розыгрыше: доставлено {p['sent']} из {p['total']}"
                         + (f", заблокировали бота {p['blocked']}" if p["blocked"] else "")
-                        + (f", не ушло {p['failed']}" if p["failed"] else ""))
+                        + (f", не ушло {p['failed']} (попробую снова при следующей рассылке)" if p["failed"] else ""))
                 except Exception:
                     log.warning("рассылка: не смогла сообщить владельцу", exc_info=True)
 
@@ -602,6 +665,16 @@ class Giveaway:
             await tg.call("answerCallbackQuery", data=answer)
         except Exception:
             log.debug("рассылка: не ответила на кнопку", exc_info=True)
+
+
+def ip_key(ip: str) -> str:
+    """IPv6 — по сети /64 (её целиком выдают одному абоненту: менять адрес внутри неё ничего не даёт)."""
+    if ":" in ip:
+        try:
+            return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+        except ValueError:
+            return ip
+    return ip
 
 
 def _hash(token: str) -> str:
@@ -747,7 +820,9 @@ def build_router(get_giveaway: Callable[[Request], Giveaway | None]) -> APIRoute
 
     @router.post("/api/admin/logout")
     async def logout(request: Request, response: Response) -> dict[str, bool]:
-        gw(request)
+        g = gw(request)
+        if g.is_admin(request):  # «Выйти» закрывает все входы (и на других устройствах)
+            await asyncio.to_thread(g.logout_everywhere)
         response.delete_cookie(COOKIE, path=PREFIX)
         return {"ok": True}
 
