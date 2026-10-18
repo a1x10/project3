@@ -1,4 +1,5 @@
-"""FastAPI: POST /webhook (от Evolution API), GET /health, панель управления (/panel/ и /admin/api)."""
+"""FastAPI: POST /webhook (от Evolution API), GET /health, панель управления (/panel/ и /admin/api),
+страница розыгрыша (/giveaway/)."""
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from .brain import Brain
 from .config import Settings, settings
 from .db import DB
 from .evolution import Evolution
+from .giveaway import build_router as build_giveaway_router
 from .llm import SwitchingLLM
 
 PANEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel")
@@ -39,7 +41,9 @@ def setup_logging(level: str) -> None:
 
 ADMIN_BODY_LIMIT = 64 * 1024
 WEBHOOK_BODY_LIMIT = 20 * 1024 * 1024
-PUBLIC_PREFIXES = ("/panel", "/admin/api")  # что видно из интернета через туннель Cloudflare
+# что видно из интернета через туннель Cloudflare: панель, её API и страница розыгрыша
+PUBLIC_PREFIXES = ("/panel", "/admin/api", "/giveaway")
+SMALL_BODY_PREFIXES = ("/admin", "/giveaway")
 
 
 class BodyTooLarge(Exception):
@@ -60,7 +64,7 @@ class GuardMiddleware:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         if "cf-connecting-ip" in headers and not path.startswith(PUBLIC_PREFIXES):
             return await self._reply(send, 404, b'{"error":"not found"}')
-        limit = ADMIN_BODY_LIMIT if path.startswith("/admin") else WEBHOOK_BODY_LIMIT
+        limit = ADMIN_BODY_LIMIT if path.startswith(SMALL_BODY_PREFIXES) else WEBHOOK_BODY_LIMIT
         try:
             if int(headers.get("content-length") or 0) > limit:
                 return await self._reply(send, 413, b'{"error":"too large"}')
@@ -146,6 +150,15 @@ def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
             response.headers["Content-Security-Policy"] = PANEL_CSP
             if request.headers.get("x-forwarded-proto") == "https" or request.headers.get("cf-connecting-ip"):
                 response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        elif path.startswith("/giveaway"):
+            from .giveaway import CSP as GIVEAWAY_CSP
+
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Content-Security-Policy"] = GIVEAWAY_CSP
+            if path.startswith(("/giveaway/api", "/giveaway/admin")):
+                response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(StarletteHTTPException)
@@ -158,6 +171,11 @@ def create_app(s: Settings = settings, brain: Brain | None = None) -> FastAPI:
         return JSONResponse({"error": "invalid", "detail": "неверные данные в запросе"}, status_code=422)
 
     app.include_router(build_router(lambda request: request.app.state.brain))
+    def giveaway_of(request: Request) -> Any:
+        b: Brain = request.app.state.brain
+        return b.giveaway if b.s.giveaway_enabled else None
+
+    app.include_router(build_giveaway_router(giveaway_of))
     if os.path.isdir(PANEL_DIR):
         app.mount("/panel", StaticFiles(directory=PANEL_DIR, html=True), name="panel")
 

@@ -135,6 +135,19 @@ class Settings:
     # Cloudflare-туннель (docker compose --profile panel): бот сам узнаёт его адрес и присылает владельцу ссылку
     tunnel_metrics_url: str = field(default_factory=lambda: _str("TUNNEL_METRICS_URL", "http://tunnel:2000"))
 
+    # --- розыгрыш: страница /giveaway/, админка по ссылке от Стеллы на «/розыгрыш», рассылка в личку Telegram ---
+    giveaway_enabled: bool = field(default_factory=lambda: _bool("GIVEAWAY_ENABLED", True))
+    # свой домен (https://…); пусто — адрес туннеля Cloudflare
+    giveaway_public_url: str = field(default_factory=lambda: _str("GIVEAWAY_PUBLIC_URL"))
+    giveaway_title: str = field(default_factory=lambda: _str("GIVEAWAY_TITLE", "Розыгрыш"))
+    giveaway_prize: str = field(default_factory=lambda: _str("GIVEAWAY_PRIZE", "Безлимитный ИИ на 35 дней"))
+    # письмо победителю прямо из админки (необязательно: без этого — кнопка «Открыть в почте»)
+    giveaway_smtp_host: str = field(default_factory=lambda: _str("GIVEAWAY_SMTP_HOST"))
+    giveaway_smtp_port: int = field(default_factory=lambda: _int("GIVEAWAY_SMTP_PORT", 465))
+    giveaway_smtp_user: str = field(default_factory=lambda: _str("GIVEAWAY_SMTP_USER"))
+    giveaway_smtp_pass: str = field(default_factory=lambda: _str("GIVEAWAY_SMTP_PASS"))
+    giveaway_smtp_from: str = field(default_factory=lambda: _str("GIVEAWAY_SMTP_FROM"))
+
     # --- Evolution API ---
     evolution_url: str = field(default_factory=lambda: _str("EVOLUTION_URL", "http://evolution:8080").rstrip("/"))
     evolution_api_key: str = field(default_factory=lambda: _str("EVOLUTION_API_KEY"))

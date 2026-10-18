@@ -36,9 +36,11 @@ def _parse_amount(s: str) -> int:
 class Commands:
     def __init__(self, db: DB, casino: Casino, stickers: StickerLibrary, evo: Evolution, settings: Settings,
                  group_admin: Callable[[dict[str, Any], Person], Awaitable[bool]] | None = None,
-                 panel_unlock: Callable[[], Awaitable[None]] | None = None):
+                 panel_unlock: Callable[[], Awaitable[None]] | None = None,
+                 giveaway_links: Callable[[], Awaitable[list[str] | None]] | None = None):
         self.group_admin = group_admin  # админ группы в WhatsApp (проверяет Brain по списку участников)
         self.panel_unlock = panel_unlock
+        self.giveaway_links = giveaway_links
         self.db = db
         self.casino = casino
         self.stickers = stickers
@@ -97,6 +99,17 @@ class Commands:
                 return None
             await self.panel_unlock()
             return CasinoResult(["готово, вход в панель снова открыт"])
+
+        # --- розыгрыш: ссылка на страницу и одноразовая — в админку (только владелец/админы из .env, только в личке) ---
+        if re.fullmatch(r"/?(розыгрыш|giveaway)( админка| ссылка)?", t) and self.giveaway_links is not None:
+            if not admin or chat["is_group"]:
+                return None
+            lines = await self.giveaway_links()
+            if lines is None:
+                return CasinoResult(["розыгрыш выключен (GIVEAWAY_ENABLED=false)"])
+            res = CasinoResult(lines)
+            res.follow_up = False
+            return res
 
         # --- режим «встревания» в разговор ---
         m = re.fullmatch(r"режим\s+(\S+)", t)

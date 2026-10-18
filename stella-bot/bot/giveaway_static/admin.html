@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Админка розыгрыша</title>
+<link rel="icon" href="/giveaway/favicon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0d0e13;--bg2:#14161d;--card:#171922;--line:#272a36;--ink:#f3f1ea;--muted:#9a9cab;--dim:#686b7a;
+  --acc:#d4ff3a;--acc-ink:#11140a;--acc2:#7b6cff;--bad:#ff6b6b;--ok:#47e6a0;--gold:#ffcf4a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:Manrope,system-ui,sans-serif;font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 16px 60px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+h1{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:800;font-size:20px}
+h1 small{display:block;font-family:Manrope;font-weight:500;font-size:13px;color:var(--muted);margin-top:3px}
+h3{font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:600;font-size:14px;letter-spacing:.02em;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;font-weight:700;font-size:14px;border:1.5px solid var(--line);background:var(--bg2);color:var(--ink);
+  border-radius:12px;padding:10px 14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{border-color:#3a3e4e}
+.btn.acc{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+.btn.vio{background:var(--acc2);border-color:var(--acc2);color:#fff}
+.btn.bad{color:var(--bad)}
+.btn.sm{padding:6px 9px;font-size:13px;border-radius:9px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 16px}
+.stat small{color:var(--muted);font-size:13px}
+.stat b{display:block;font-family:Unbounded,Manrope,system-ui,sans-serif;font-size:26px;margin-top:2px;font-variant-numeric:tabular-nums}
+.panels{display:grid;grid-template-columns:1fr 1.3fr;gap:12px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px}
+.card.wide{margin-bottom:12px}
+.chk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--muted);cursor:pointer}
+.chk input{accent-color:var(--acc);width:17px;height:17px}
+.lbl{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 5px}
+.card textarea,.card .inp{width:100%;font:inherit;color:var(--ink);background:var(--bg2);border:1.5px solid var(--line);border-radius:11px;padding:11px;outline:none}
+.card textarea{min-height:170px;resize:vertical}
+.card textarea:focus,.card .inp:focus{border-color:var(--acc2)}
+.bcgrid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+.preview{background:#0e1621;border-radius:14px;padding:12px;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.preview .pbtn{display:block;margin-top:8px;text-align:center;background:#2b5278;border-radius:8px;padding:8px;font-weight:600}
+.preview .pbtn.dim{background:#1f3044;color:#9fb3c8}
+.info{font-size:14px;color:var(--muted);margin-bottom:6px}
+.info b{color:var(--ink)}
+.warn{color:var(--gold)}
+
+.slot{height:92px;display:grid;place-items:center;background:var(--bg2);border:1px dashed var(--line);border-radius:14px;margin:12px 0;
+  font-family:Unbounded,Manrope,system-ui,sans-serif;font-weight:800;font-size:28px;text-align:center;padding:0 10px;overflow:hidden}
+.slot.spin{color:var(--muted)}
+.slot.win{color:var(--gold);border-style:solid;border-color:var(--gold);background:rgba(255,207,74,.07)}
+.winbox{display:none;border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+.winbox dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:14px;margin-bottom:12px}
+.winbox dt{color:var(--muted)}.winbox dd{word-break:break-all}
+
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.tools input,.tools select{font:inherit;color:var(--ink);background:var(--bg2);border:1.5px solid var(--line);border-radius:11px;padding:9px 12px;outline:none}
+.tools input{flex:1;min-width:180px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:18px;background:var(--card)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:700;position:sticky;top:0;background:var(--card)}
+tr:last-child td{border-bottom:0}
+tr.w td{background:rgba(255,207,74,.06)}
+td .tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--bg2);color:var(--muted);margin-left:6px}
+td .gold{color:var(--gold)}
+td.muted{color:var(--dim)}
+.empty{padding:30px;text-align:center;color:var(--muted)}
+.tm{font-family:Unbounded,Manrope,system-ui,sans-serif;font-size:30px;font-variant-numeric:tabular-nums;margin:2px 0 10px}
+
+dialog{margin:auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:20px;padding:20px;width:min(560px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 5px}
+dialog input,dialog textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg2);border:1.5px solid var(--line);border-radius:11px;padding:11px;outline:none}
+dialog textarea{min-height:190px;resize:vertical}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#22252f;border:1px solid var(--line);padding:11px 16px;border-radius:12px;font-weight:600;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9;max-width:calc(100vw - 32px)}
+.toast.on{opacity:1}
+@media (max-width:820px){.grid{grid-template-columns:1fr 1fr}.panels,.bcgrid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Админка розыгрыша<small id="prizeLbl">—</small></h1>
+    <div class="row">
+      <a class="btn" href="/giveaway/" target="_blank" rel="noopener">Открыть страницу</a>
+      <a class="btn" href="/giveaway/api/admin/export.csv">Скачать CSV</a>
+      <button class="btn" id="newRound">Новый розыгрыш</button>
+      <button class="btn" id="logout">Выйти</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="stat"><small>Участников</small><b id="sAll">0</b></div>
+    <div class="stat"><small>Оставили почту</small><b id="sMail">0</b></div>
+    <div class="stat"><small>Победителей</small><b id="sWin">0</b></div>
+    <div class="stat"><small>За последние 10 мин</small><b id="sNew">0</b></div>
+  </div>
+
+  <div class="card wide">
+    <h3>Рассылка в Telegram</h3>
+    <div class="bcgrid">
+      <div>
+        <p class="info" id="bcInfo">Загружаем…</p>
+        <label class="lbl" for="bcText">Текст сообщения</label>
+        <textarea id="bcText" maxlength="3500"></textarea>
+        <label class="lbl" for="bcBtn">Надпись на кнопке</label>
+        <input class="inp" id="bcBtn" maxlength="40">
+        <div class="row" style="margin:12px 0 4px;gap:16px">
+          <label class="chk"><input type="checkbox" id="bcTimer" checked> Запустить таймер на 30 минут</label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="bcTest">Пробное — только мне</button>
+          <button class="btn acc" id="bcSend" disabled>Разослать</button>
+        </div>
+        <p class="note" id="bcProg"></p>
+      </div>
+      <div>
+        <label class="lbl">Как увидят в Telegram</label>
+        <div class="preview"><span id="pvText"></span><span class="pbtn" id="pvBtn"></span><span class="pbtn dim">Не присылать такое</span></div>
+        <p class="note">Получат все, кто сам писал Стелле в личку Telegram, — каждый один раз за розыгрыш. Кто нажмёт «Не присылать такое», больше рассылок не получит; заблокировавшие бота пропускаются.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="card">
+      <h3>Таймер и регистрация</h3>
+      <div class="tm" id="tm">не запущен</div>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn acc" data-min="30">Таймер 30 мин</button>
+        <button class="btn" data-add="5">+5 мин</button>
+        <button class="btn" id="clearT">Сбросить</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="closed"> Закрыть регистрацию</label>
+      <p class="note">Таймер виден участникам на странице. Когда время выйдет — закройте регистрацию и выберите победителя.</p>
+    </div>
+
+    <div class="card">
+      <h3>Выбор победителя</h3>
+      <div class="row" style="gap:16px">
+        <label class="chk"><input type="checkbox" id="onlyMail"> Только с почтой</label>
+        <label class="chk"><input type="checkbox" id="exclWin" checked> Без прошлых победителей</label>
+      </div>
+      <div class="slot" id="slot">?</div>
+      <button class="btn vio" id="draw" style="width:100%;justify-content:center;padding:13px">🎲 Выбрать победителя</button>
+      <div class="winbox" id="winbox">
+        <dl id="windl"></dl>
+        <div class="row" id="winActs"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tools">
+    <input id="q" placeholder="Поиск по имени, контакту, почте">
+    <select id="flt">
+      <option value="all">Все</option>
+      <option value="mail">С почтой</option>
+      <option value="win">Победители</option>
+    </select>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>№</th><th>Имя</th><th>Фамилия</th><th>Контакт</th><th>Почта</th><th>Капча</th><th>Время</th><th></th></tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <h3 style="margin-bottom:4px">Письмо победителю</h3>
+  <label>Кому</label><input id="mTo" type="email">
+  <label>Тема</label><input id="mSubj">
+  <label>Текст</label><textarea id="mBody"></textarea>
+  <p class="note" id="smtpNote"></p>
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" id="mCancel">Отмена</button>
+    <a class="btn" id="mMailto" href="#">Открыть в почте</a>
+    <button class="btn acc" id="mSend">Отправить</button>
+  </div>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let D = {entries:[]}, BC = null, curMail = null;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast = t => { $('toast').textContent=t; $('toast').classList.add('on'); setTimeout(()=>$('toast').classList.remove('on'),2600) };
+async function api(path, method='GET', body){
+  const opts = {method};
+  if(method !== 'GET'){ opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(body || {}) }
+  const r = await fetch('/giveaway/api/admin/' + path, opts);
+  let j={}; try{ j=await r.json() }catch(e){}
+  if(r.status===401){ location.reload(); throw new Error('Нужен вход') }
+  if(!r.ok) throw new Error(j.error||'Ошибка');
+  return j;
+}
+const fmt = iso => iso ? new Date(iso).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+const tgLink = e => e.contact_type==='telegram' ? 'https://t.me/'+e.contact.replace('@','') : 'tel:'+e.contact;
+
+async function load(){
+  try{ D = await api('entries') }catch(e){ return }
+  const E = D.entries;
+  $('prizeLbl').textContent = 'Приз: ' + D.prize + ' · розыгрыш №' + D.round;
+  $('sAll').textContent = E.length;
+  $('sMail').textContent = E.filter(e=>e.email).length;
+  $('sWin').textContent = E.filter(e=>e.is_winner).length;
+  $('sNew').textContent = E.filter(e=>Date.now()-new Date(e.created_at) < 600000).length;
+  $('closed').checked = D.closed;
+  render();
+}
+function render(){
+  const q = $('q').value.trim().toLowerCase(), f = $('flt').value;
+  const rows = D.entries.filter(e=>{
+    if(f==='mail' && !e.email) return false;
+    if(f==='win' && !e.is_winner) return false;
+    if(!q) return true;
+    return [e.first_name,e.last_name,e.contact,e.email].join(' ').toLowerCase().includes(q);
+  });
+  $('tb').innerHTML = rows.length ? rows.map(e=>`
+    <tr class="${e.is_winner?'w':''}">
+      <td>${e.id}</td>
+      <td>${e.is_winner?'<span class="gold">★</span> ':''}${esc(e.first_name)}</td>
+      <td class="${e.last_name?'':'muted'}">${esc(e.last_name)||'—'}</td>
+      <td><a href="${esc(tgLink(e))}" target="_blank" rel="noopener" style="color:var(--ink)">${esc(e.contact)}</a><span class="tag">${e.contact_type==='telegram'?'TG':'тел'}</span></td>
+      <td class="${e.email?'':'muted'}">${esc(e.email)||'—'}${e.email_sent_at?'<span class="tag" style="color:var(--ok)">отправлено</span>':''}</td>
+      <td class="muted">${e.captcha_sec ?? ''} с</td>
+      <td class="muted">${fmt(e.created_at)}</td>
+      <td><div class="row" style="flex-wrap:nowrap">
+        <button class="btn sm" title="Победитель" data-win="${e.id}">${e.is_winner?'Снять ★':'★'}</button>
+        <button class="btn sm" title="Письмо" data-mail="${e.id}" ${e.email?'':'disabled'}>✉</button>
+        <button class="btn sm bad" title="Удалить" data-del="${e.id}">✕</button>
+      </div></td>
+    </tr>`).join('') : `<tr><td colspan="8" class="empty">Пока нет участников</td></tr>`;
+}
+$('tb').onclick = ev => {
+  const b = ev.target.closest('button'); if(!b) return;
+  if(b.dataset.win) toggleWin(+b.dataset.win);
+  else if(b.dataset.mail) openMail(+b.dataset.mail);
+  else if(b.dataset.del) del(+b.dataset.del);
+};
+$('q').oninput = render; $('flt').onchange = render;
+
+/* ---------- рассылка ---------- */
+function preview(){
+  $('pvText').textContent = $('bcText').value || '…';
+  $('pvBtn').textContent = $('bcBtn').value || '…';
+}
+$('bcText').oninput = preview; $('bcBtn').oninput = preview;
+async function loadBc(){
+  try{ BC = await api('broadcast') }catch(e){ return }
+  if(!$('bcText').value){ $('bcText').value = BC.default_text; }
+  if(!$('bcBtn').value){ $('bcBtn').value = BC.default_button; }
+  preview();
+  const p = BC.progress || {}, running = p.state === 'running';
+  let info;
+  if(!BC.telegram) info = '<span class="warn">Telegram не подключён (TELEGRAM_BOT_TOKEN в .env)</span>';
+  else if(!BC.url) info = '<span class="warn">Нет внешней ссылки на страницу: включи туннель (COMPOSE_PROFILES=panel в .env) или задай GIVEAWAY_PUBLIC_URL</span>';
+  else info = `Получат: <b>${BC.recipients}</b> · уже получили: ${BC.already} · отписались: ${BC.optout}<br>Кнопка ведёт на <b>${esc(BC.url)}</b>`;
+  $('bcInfo').innerHTML = info;
+  if(running) $('bcProg').textContent = `Идёт рассылка: ${p.sent} из ${p.total}…`;
+  else if(p.state === 'done') $('bcProg').textContent = `Готово: доставлено ${p.sent} из ${p.total}` +
+    (p.blocked ? `, заблокировали бота ${p.blocked}` : '') + (p.failed ? `, не ушло ${p.failed}` : '');
+  else $('bcProg').textContent = '';
+  $('bcSend').disabled = !BC.telegram || !BC.url || !BC.recipients || running;
+  $('bcTest').disabled = !BC.telegram || !BC.url;
+}
+$('bcTest').onclick = async () => {
+  $('bcTest').disabled = true;
+  try{ const r = await api('broadcast','POST',{text:$('bcText').value, button:$('bcBtn').value, test:true}); toast(r.message) }
+  catch(e){ toast(e.message) } finally{ loadBc() }
+};
+$('bcSend').onclick = async () => {
+  if(!BC || !confirm(`Отправить сообщение ${BC.recipients} людям в Telegram?` + ($('bcTimer').checked ? '\nТаймер на 30 минут запустится сразу.' : ''))) return;
+  $('bcSend').disabled = true;
+  try{
+    await api('broadcast','POST',{text:$('bcText').value, button:$('bcBtn').value, start_timer:$('bcTimer').checked});
+    toast('Рассылка началась'); load();
+  }catch(e){ toast(e.message) } finally{ loadBc() }
+};
+
+/* ---------- таймер ---------- */
+function tickT(){
+  const da = D.draw_at ? new Date(D.draw_at) : null;
+  if(!da){ $('tm').textContent='не запущен'; $('tm').style.color=''; return }
+  const d = Math.max(0, Math.floor((da-Date.now())/1000));
+  $('tm').textContent = d ? String(Math.floor(d/60)).padStart(2,'0')+':'+String(d%60).padStart(2,'0') : 'время вышло';
+  $('tm').style.color = d ? '' : 'var(--gold)';
+}
+setInterval(tickT, 1000);
+document.querySelector('[data-min]').onclick = async () => { try{ await api('settings','POST',{draw_minutes:30}); await load(); toast('Таймер запущен на 30 минут') }catch(e){ toast(e.message) } };
+document.querySelector('[data-add]').onclick = async () => {
+  const left = D.draw_at ? Math.max(0,(new Date(D.draw_at)-Date.now())/60000) : 0;
+  try{ await api('settings','POST',{draw_minutes:Math.max(1,Math.round(left+5))}); await load(); toast('+5 минут') }catch(e){ toast(e.message) }
+};
+$('clearT').onclick = async () => { try{ await api('settings','POST',{clear_timer:true}); await load() }catch(e){ toast(e.message) } };
+$('closed').onchange = async e => {
+  try{ await api('settings','POST',{closed:e.target.checked}); toast(e.target.checked?'Регистрация закрыта':'Регистрация открыта') }
+  catch(err){ toast(err.message); e.target.checked = !e.target.checked }
+};
+
+/* ---------- новый розыгрыш ---------- */
+$('newRound').onclick = async () => {
+  if(!confirm('Начать новый розыгрыш? Список участников начнётся с нуля (старые заявки останутся в базе), таймер сбросится, рассылку можно будет сделать снова.')) return;
+  try{ const r = await api('new_round','POST'); toast('Розыгрыш №' + r.round); $('winbox').style.display='none'; $('slot').className='slot'; $('slot').textContent='?'; load(); loadBc() }
+  catch(e){ toast(e.message) }
+};
+
+/* ---------- победитель ---------- */
+$('draw').onclick = async () => {
+  $('draw').disabled = true; $('winbox').style.display='none';
+  const slot = $('slot'); slot.className='slot spin';
+  let res;
+  try{ res = await api('draw','POST',{only_with_email:$('onlyMail').checked, exclude_winners:$('exclWin').checked}) }
+  catch(e){ slot.className='slot'; slot.textContent='?'; toast(e.message); $('draw').disabled=false; return }
+  const names = res.names.length ? res.names : [res.winner.first_name];
+  let i=0, delay=50;
+  const spin = () => {
+    slot.textContent = names[Math.floor(Math.random()*names.length)];
+    i++; delay *= 1.08;
+    if(i<26) setTimeout(spin, delay); else reveal(res);
+  };
+  spin();
+};
+function reveal(res){
+  const w = res.winner, slot=$('slot');
+  slot.className='slot win'; slot.textContent = '🏆 ' + w.first_name + (w.last_name?' '+w.last_name:'');
+  $('windl').innerHTML = `
+    <dt>Номер</dt><dd>#${w.id}</dd>
+    <dt>Контакт</dt><dd>${esc(w.contact)}</dd>
+    <dt>Почта</dt><dd>${esc(w.email)||'—'}</dd>
+    <dt>Из скольких</dt><dd>${res.pool} участников</dd>`;
+  $('winActs').innerHTML = `
+    <a class="btn acc" href="${esc(tgLink(w))}" target="_blank" rel="noopener">${w.contact_type==='telegram'?'Написать в Telegram':'Позвонить'}</a>
+    <button class="btn" id="wCopy">Скопировать контакт</button>
+    ${w.email?`<button class="btn vio" id="wMail">✉ Письмо победителю</button>`:''}`;
+  $('wCopy').onclick = () => { navigator.clipboard.writeText(w.contact); toast('Контакт скопирован') };
+  if(w.email) $('wMail').onclick = () => openMail(w.id);
+  $('winbox').style.display='block'; $('draw').disabled=false;
+  load();
+}
+
+async function toggleWin(id){ try{ await api(`entries/${id}/winner`,'POST'); load() }catch(e){ toast(e.message) } }
+async function del(id){ if(!confirm('Удалить участника #'+id+'?')) return; try{ await api(`entries/${id}`,'DELETE'); load() }catch(e){ toast(e.message) } }
+
+/* ---------- письмо ---------- */
+function openMail(id){
+  const e = D.entries.find(x=>x.id===id); if(!e) return;
+  curMail = e;
+  $('mTo').value = e.email || '';
+  $('mSubj').value = '🎉 Вы выиграли: ' + D.prize;
+  $('mBody').value =
+`Здравствуйте, ${e.first_name}!
+
+Поздравляем — вы победили в нашем розыгрыше 🎉
+Ваш приз: ${D.prize}.
+
+Ваш номер участника: #${e.id}.
+Чтобы активировать безлимит, ответьте на это письмо или напишите нам в Telegram — мы всё подключим.
+
+Спасибо, что участвовали!`;
+  $('smtpNote').textContent = D.smtp
+    ? 'Письмо уйдёт с адреса ' + D.smtp_from + '.'
+    : 'Отправка с сервера не настроена — нажмите «Открыть в почте», письмо откроется в вашем почтовом приложении.';
+  $('mSend').style.display = D.smtp ? '' : 'none';
+  updMailto(); $('dlg').showModal();
+}
+function updMailto(){ $('mMailto').href = 'mailto:'+encodeURIComponent($('mTo').value)+'?subject='+encodeURIComponent($('mSubj').value)+'&body='+encodeURIComponent($('mBody').value) }
+['mTo','mSubj','mBody'].forEach(i=>$(i).oninput=updMailto);
+$('mMailto').onclick = () => { setTimeout(()=>$('dlg').close(),300) };
+$('mCancel').onclick = () => $('dlg').close();
+$('mSend').onclick = async () => {
+  $('mSend').disabled = true; $('mSend').textContent='Отправляем…';
+  try{ const r = await api('send','POST',{entry_id:curMail.id,to:$('mTo').value,subject:$('mSubj').value,body:$('mBody').value}); toast('Письмо отправлено на '+r.to); $('dlg').close(); load() }
+  catch(e){ toast(e.message) }
+  finally{ $('mSend').disabled=false; $('mSend').textContent='Отправить' }
+};
+
+$('logout').onclick = async () => {
+  await fetch('/giveaway/api/admin/logout', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  location.reload();
+};
+load(); loadBc(); setInterval(load, 8000); setInterval(loadBc, 4000);
+</script>
+</body>
+</html>
