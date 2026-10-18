@@ -46,15 +46,16 @@ class Settings:
     # --- модель ---
     llm_backend: str = field(default_factory=lambda: _str("LLM_BACKEND", "agent_sdk"))
     llm_model: str = field(default_factory=lambda: _str("LLM_MODEL", "claude-opus-5-5"))
-    llm_effort: str = field(default_factory=lambda: _str("LLM_EFFORT", "low"))
+    # high — умно и всё ещё быстро для чата; xhigh/max — ещё глубже, но ответ в чате может идти минуты
+    llm_effort: str = field(default_factory=lambda: _str("LLM_EFFORT", "high"))
     # Модель для фоновой выжимки фактов о людях (дешёвая)
-    llm_memory_model: str = field(default_factory=lambda: _str("LLM_MEMORY_MODEL", "claude-haiku-5-5"))
+    llm_memory_model: str = field(default_factory=lambda: _str("LLM_MEMORY_MODEL", "claude-opus-5-5"))
     # Автопереключение после окончания промокредитов
     llm_switch_at: date | None = field(default_factory=lambda: _date("LLM_SWITCH_AT"))
     llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "messages_api"))
-    llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-haiku-5-5"))
+    llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-opus-5-5"))
     # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут
-    llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 180))
+    llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 600))
     # потолок на один ответ (защита от зацикливания), $
     llm_max_call_usd: float = field(default_factory=lambda: _float("LLM_MAX_CALL_USD", 1.5))
     # поиск в интернете (выполняется на стороне Anthropic, к серверу доступа не даёт)
@@ -83,7 +84,7 @@ class Settings:
     html_task_budget: int = field(default_factory=lambda: _int("HTML_TASK_BUDGET", 100000))
     # доводка по скриншотам (нужен браузер в образе: WITH_BROWSER=true) и с каким усилием
     html_polish: bool = field(default_factory=lambda: _bool("HTML_POLISH", True))
-    html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "high"))
+    html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "max"))
     # презентации тоже делает студия (слайды рисуются в браузере -> PowerPoint + PDF); false — простые из списка
     deck_studio: bool = field(default_factory=lambda: _bool("DECK_STUDIO", True))
     html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 4))  # на чат в сутки (админам — без лимита)
@@ -109,7 +110,10 @@ class Settings:
     documents_enabled: bool = field(default_factory=lambda: _bool("DOCUMENTS_ENABLED", True))
     # запуск кода в песочнице Anthropic — ТОЛЬКО по просьбе владельца (OWNER_PHONE)
     sandbox_enabled: bool = field(default_factory=lambda: _bool("SANDBOX_ENABLED", True))
-    sandbox_model: str = field(default_factory=lambda: _str("SANDBOX_MODEL", "claude-sonnet-5-5"))
+    sandbox_model: str = field(default_factory=lambda: _str("SANDBOX_MODEL", "claude-opus-5-5"))
+    sandbox_effort: str = field(default_factory=lambda: _str("SANDBOX_EFFORT", "max"))
+    # большая задача (mode=project) делается в фоне не дольше стольких секунд
+    sandbox_project_timeout: float = field(default_factory=lambda: _float("SANDBOX_PROJECT_TIMEOUT", 1800))
     sandbox_per_day: int = field(default_factory=lambda: _int("SANDBOX_PER_DAY", 30))
 
     # --- панель управления (сайт) ---
@@ -153,6 +157,10 @@ class Settings:
     owner_phone: str = field(default_factory=lambda: _digits(_str("OWNER_PHONE")))
     admin_phones: list[str] = field(default_factory=lambda: [_digits(x) for x in _list("ADMIN_PHONES")])
     allow_dms: bool = field(default_factory=lambda: _bool("ALLOW_DMS", True))
+    # Режим друзей: всё, что было только у владельца и админов (запуск кода, без дневных лимитов, управление
+    # группой, профиль Стеллы), — и тем, кто состоит в одной группе с владельцем или админом бота. Чужие (нашли
+    # бота в Telegram по @username, добавили в свою группу) — как раньше: дневной бюджет и лимиты для всех
+    friends_mode: bool = field(default_factory=lambda: _bool("FRIENDS_MODE", False))
     allowed_groups: list[str] = field(default_factory=lambda: _list("ALLOWED_GROUPS"))
     # Telegram — та же Стелла, рядом с WhatsApp: токен от @BotFather; пусто — Telegram выключен
     telegram_bot_token: str = field(default_factory=lambda: _str("TELEGRAM_BOT_TOKEN"))

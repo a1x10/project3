@@ -543,6 +543,16 @@ class DB:
         if values:
             await conn.execute(update(people).where(people.c.id == k).values(**values))
 
+    async def group_mates(self, person_id: int) -> list[Person]:
+        """Все, с кем человек состоит хоть в одной общей группе (сам он — тоже в списке)."""
+        mine = select(members.c.chat_id).join(chats, chats.c.id == members.c.chat_id).where(
+            members.c.person_id == person_id, chats.c.is_group.is_(True))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(
+                select(people).distinct().join(members, members.c.person_id == people.c.id)
+                .where(members.c.chat_id.in_(mine)))).all()
+        return [_person(r) for r in rows]
+
     async def find_person_by_jid(self, jid: str) -> Person | None:
         async with self.engine.connect() as conn:
             row = (

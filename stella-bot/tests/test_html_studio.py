@@ -206,7 +206,7 @@ async def test_polish_call_sees_draft_screenshots_and_errors(settings, monkeypat
                   ["ошибка JS: TypeError: x is null"], overflow=True)
     await html_studio.generate(settings, BRIEF, "x", draft="<h1>черновик</h1>", shots=shots)
     call = fake.calls[0]
-    assert call["output_config"]["effort"] == "high"  # доводка — со своим усилием
+    assert call["output_config"]["effort"] == settings.html_polish_effort == "max"  # доводка — со своим усилием
     blocks = call["messages"][0]["content"]
     texts = "\n".join(b["text"] for b in blocks if b["type"] == "text")
     assert "<h1>черновик</h1>" in texts and "TypeError: x is null" in texts and "горизонтальная прокрутка" in texts

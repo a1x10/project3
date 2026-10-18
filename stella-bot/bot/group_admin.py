@@ -319,7 +319,9 @@ def build_group_tools(
                 if is_creator:
                     raise ToolError("это создатель группы — его нельзя ни удалить, ни снять с админов")
                 protected = target.digits | _phones(_part_ids(part))
-                if not ctx.is_admin and any(settings.is_admin(d) for d in protected):
+                # владельца и админов бота трогают только они сами (друзья в режиме друзей — нет)
+                asker = phone_of(ctx.sender.jid) or ctx.sender.phone if ctx.sender else ""
+                if not settings.is_admin(asker) and any(settings.is_admin(d) for d in protected):
                     raise ToolError("это мой владелец — по просьбе админа группы его трогать не буду")
             if action == "promote" and part.get("admin"):
                 return f"{target.label} и так админ"

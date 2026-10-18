@@ -58,6 +58,8 @@ class ToolContext:
     html_queued: bool = False
     # фото/стикер, из которого можно сделать мем: (key, message) для скачивания
     quoted_media: tuple[dict[str, Any], dict[str, Any] | None] | None = None
+    # присланные или процитированные файлы и фото (key, message, имя, mime) — для песочницы
+    attachments: list[tuple[dict[str, Any], dict[str, Any] | None, str, str]] = field(default_factory=list)
 
 
 class ToolError(Exception):

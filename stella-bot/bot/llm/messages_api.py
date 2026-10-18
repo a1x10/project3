@@ -67,9 +67,9 @@ class MessagesApiLLM:
         texts: list[str] = []
 
         for _ in range(max(1, max_turns)):
-            # презентация или видео с рисунками — длинный вызов инструмента: даём запас
-            kwargs: dict[str, Any] = {"max_tokens": 16000 if tool_defs else 4000, "system": system_blocks,
-                                      "messages": messages}
+            # обдумывание (на effort high и выше — длинное) тоже расходует max_tokens; без потока SDK пускает
+            # не больше ~21k — берём 20k и для инструментов, и для фоновой памяти
+            kwargs: dict[str, Any] = {"max_tokens": 20000, "system": system_blocks, "messages": messages}
             if tool_defs:
                 kwargs["tools"] = tool_defs
             try:

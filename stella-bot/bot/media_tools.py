@@ -77,7 +77,7 @@ class _Budget:
         if self.ctx.media_queued >= MAX_MEDIA_PER_REPLY:
             raise ToolError("за один ответ хватит двух файлов")
         used = await self.db.kv_get(f"media:{self.ctx.chat_id}:{date.today().isoformat()}")
-        if used and used[1] >= self.s.media_per_day:
+        if used and used[1] >= self.s.media_per_day and not self.ctx.is_admin:  # владельцу, админам и друзьям — без лимита
             raise ToolError("на сегодня в этом чате лимит файлов исчерпан, давай завтра")
 
     async def queue(self, file: media.MediaFile, caption: str = "") -> str:
@@ -166,7 +166,7 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         if not ctx.is_admin and used and used[1] >= settings.html_per_day:
             raise ToolError(f"на сегодня {w['many']} в этом чате хватит, давай завтра")
         used_all = await db.kv_get(all_key)
-        if not owner and used_all and used_all[1] >= settings.html_per_day_total:
+        if not (owner or ctx.is_admin) and used_all and used_all[1] >= settings.html_per_day_total:
             raise ToolError(f"на сегодня {w['many']} хватит, давай завтра")
         spent = await db.kv_get(f"spend:{today}")
         # учитываем и то, что ещё делается: расходы записываются только по готовности, через минуты
