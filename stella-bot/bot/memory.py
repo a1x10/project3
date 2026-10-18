@@ -97,7 +97,7 @@ class Memory:
         try:
             async with self._limiter:
                 reply = await self.llm.ask(system=EXTRACT_SYSTEM, prompt=prompt, model=self.s.llm_memory_model,
-                                           max_turns=1)
+                                           max_turns=1, effort=self.s.llm_memory_effort or None)
         except LLMError as exc:
             log.warning("memory: модель недоступна: %s", exc)
             return 0

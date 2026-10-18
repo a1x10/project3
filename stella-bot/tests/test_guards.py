@@ -199,3 +199,63 @@ def test_reminder_text_cannot_ping_everyone():
 
     out = reminder_text("@@все на урок, @all тоже, почта @всем.ру", None)
     assert "@все" not in out and "@all" not in out and "все на урок" in out
+
+
+# ---------- режим друзей: «свой» — только настоящий участник группы с владельцем ----------
+async def _tools_of(brain, who: str) -> set:
+    seen = {}
+
+    async def grab(tools, prompt):
+        seen["t"] = set(tools)
+        return "ок"
+
+    brain.llm.queue = [grab]
+    await brain.handle_payload(upsert("стелла посчитай", chat=who, sender=who, name="Кто-то"))
+    await settle(brain)
+    return seen["t"]
+
+
+async def test_forged_quote_of_the_owner_does_not_make_a_stranger_a_friend(brain):
+    brain.s.friends_mode = True
+    # чужой создал свою группу с ботом и «процитировал» владельца, которого там нет (цитату задаёт телефон
+    # отправителя — в WhatsApp её можно подделать)
+    own_group = "120363000000000077@g.us"
+    await brain.handle_payload(upsert("смотри", chat=own_group, sender=PETYA, name="Петя", quoted={
+        "stanzaId": "FAKE1", "participant": OWNER_JID, "quotedMessage": {"conversation": "привет"}}))
+    await settle(brain)
+    assert "run_code" not in await _tools_of(brain, PETYA)
+
+
+async def test_member_who_left_the_group_is_no_longer_a_friend(brain):
+    brain.s.friends_mode = True
+    await brain.handle_payload(upsert("всем привет", sender=OWNER_JID, name="Хозяин"))
+    await brain.handle_payload(upsert("привет", sender=VASYA))
+    await settle(brain)
+    vasya = await brain.db.find_person_by_jid(VASYA)
+    chat = await brain.db.get_chat_by_jid("stella", GROUP)
+    assert await brain.is_trusted(vasya)
+
+    # список участников из WhatsApp только по LID: Вася с одним номером мог прийти под LID — не убираем
+    brain.evo.participants = [{"id": "111@lid"}]
+    await brain.sync_group(chat["id"], GROUP)
+    assert await brain.is_trusted(vasya)
+
+    brain.evo.participants = [{"id": OWNER_JID}, {"id": PETYA}]  # Васю удалили из группы
+    await brain.sync_group(chat["id"], GROUP)
+    assert not await brain.is_trusted(vasya)
+
+
+async def test_telegram_member_left_is_no_longer_a_friend(brain):
+    from bot.telegram import left_member
+
+    assert left_member({"message": {"chat": {"id": -100}, "left_chat_member": {"id": 42}}}) == (
+        "-100@tg.chat", "42@tg.user")
+    assert left_member({"message": {"chat": {"id": -100}, "text": "hi"}}) is None
+    brain.s.friends_mode = True
+    await brain.handle_payload(upsert("всем привет", sender=OWNER_JID, name="Хозяин"))
+    await brain.handle_payload(upsert("привет", sender=VASYA))
+    await settle(brain)
+    vasya = await brain.db.find_person_by_jid(VASYA)
+    assert await brain.is_trusted(vasya)
+    await brain.member_left(GROUP, VASYA)
+    assert not await brain.is_trusted(vasya)

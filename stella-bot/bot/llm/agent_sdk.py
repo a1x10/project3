@@ -49,7 +49,8 @@ class AgentSdkLLM:
         self.timeout = timeout
         os.makedirs(self.sandbox_dir, exist_ok=True)
 
-    def _options(self, system: str, tools: Sequence[ToolSpec], model: str, max_turns: int) -> Any:
+    def _options(self, system: str, tools: Sequence[ToolSpec], model: str, max_turns: int,
+                 effort: str | None = None) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
 
         sdk_tools = []
@@ -81,18 +82,18 @@ class AgentSdkLLM:
             setting_sources=[],  # не читать ~/.claude, .claude/, CLAUDE.md
             cwd=self.sandbox_dir,
             max_turns=max_turns,
-            effort=self.effort,  # type: ignore[arg-type]
+            effort=effort or self.effort,  # type: ignore[arg-type]
             max_budget_usd=self.max_budget_usd,
             extra_args={"no-session-persistence": None},  # не копить файлы сессий на диске
             env={"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1"},
         )
 
     async def ask(self, *, system: str, prompt: str, tools: Sequence[ToolSpec] = (), model: str | None = None,
-                  max_turns: int = 5, images: Sequence[Image] = ()) -> LLMReply:
+                  max_turns: int = 5, images: Sequence[Image] = (), effort: str | None = None) -> LLMReply:
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, query
 
         model = model or self.default_model
-        options = self._options(system, tools, model, max_turns)
+        options = self._options(system, tools, model, max_turns, effort)
         last_text: list[str] = []
         result: Any = None
         refused = False

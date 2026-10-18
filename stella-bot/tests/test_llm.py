@@ -123,3 +123,17 @@ async def test_switching_llm_rebuilds_when_settings_change(tmp_path):
     s.llm_model, s.llm_effort = "claude-sonnet-5-5", "medium"  # поменяли в панели
     assert (await llm.ask(system="", prompt="")).text == "claude-sonnet-5-5"
     assert made == [("claude-opus-5-5", "high"), ("claude-sonnet-5-5", "medium")]
+
+
+async def test_memory_runs_on_its_own_model_and_effort(tmp_path):
+    """Память о людях — Sonnet на effort medium, хотя чат — Opus на high."""
+    s = make_settings(tmp_path, llm_backend="messages_api", llm_model="claude-opus-5-5")
+    assert (s.llm_memory_model, s.llm_memory_effort, s.llm_effort) == ("claude-sonnet-5-5", "medium", "high")
+    done = NS(stop_reason="end_turn", usage=usage(), stop_details=None, content=[NS(type="text", text="{}")])
+    fake = FakeMessages([done, done])
+    llm = MessagesApiLLM("claude-opus-5-5", effort="high", client=NS(messages=fake, beta=NS(messages=fake)))
+    await llm.ask(system="s", prompt="p", model=s.llm_memory_model, max_turns=1, effort=s.llm_memory_effort)
+    await llm.ask(system="s", prompt="p")
+    assert fake.requests[0]["output_config"] == {"effort": "medium"}
+    assert fake.requests[0]["model"] == "claude-sonnet-5-5"
+    assert fake.requests[1]["output_config"] == {"effort": "high"}

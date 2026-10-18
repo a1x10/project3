@@ -27,7 +27,7 @@ class ChatActions(Protocol):
 
     async def learn_sticker(self, data: bytes, mood: str) -> None: ...
 
-    async def say(self, text: str) -> None: ...
+    async def say(self, text: str, reply: bool = False) -> None: ...
 
 
 @dataclass
@@ -49,8 +49,9 @@ class ToolContext:
     # учесть расходы вне основного вызова модели (песочница с кодом)
     on_cost: Callable[[float], Awaitable[Any]] | None = None
     # в этот ответ попал чужой текст (файл, страница, старая переписка) — опасные действия не выполняем:
-    # там может быть «удали всех из группы», написанное не админом
-    untrusted: bool = False
+    # там может быть «удали всех из группы», написанное не админом. "files" — только из файлов, которые прислал
+    # сам просящий: их можно отдать песочнице (без интернета), остальное — как True
+    untrusted: bool | str = False
     # сколько пузырей её ответа реально ушло (выставляет мозг перед действиями after) — мультик по нему
     # решает, нужно ли самой объявить «делаю, будет через N секунд»
     replied: int = 0
