@@ -259,6 +259,7 @@ class Brain:
         self.admin = AdminAuth(settings)  # вход в панель управления
         self.started_at = time.monotonic()
         self.tunnel_url: str | None = None  # адрес Cloudflare-туннеля к панели, если он запущен
+        self._tunnel_told: str | None = None  # какой адрес туннеля уже присылали владельцу
         self._owner_queue: list[str] = []  # важные сообщения владельцу, пока WhatsApp не на связи
         self.voice_pending: dict[str, int] = {}  # чат -> сколько голосовых сейчас расшифровывается
 
@@ -362,12 +363,12 @@ class Brain:
             resp = await client.get(self.s.tunnel_metrics_url.rstrip("/") + "/quicktunnel")
         host = str((resp.json() or {}).get("hostname") or "").strip() if resp.status_code == 200 else ""
         if not host:
-            if resp.status_code == 200:
-                self.tunnel_url = None  # туннель ответил, что адреса нет
+            self.tunnel_url = None  # туннель ответил, но адреса нет
             return None
         url = host if host.startswith("https://") else f"https://{host}"
-        if url != self.tunnel_url:
-            self.tunnel_url = url
+        self.tunnel_url = url
+        if url != self._tunnel_told:  # владельцу — только новый адрес (не после каждого короткого сбоя)
+            self._tunnel_told = url
             log.info("панель доступна через туннель: %s", url)
             text = f"🔗 Панель Стеллы: {url}/panel/"
             if self.s.panel_public_url:

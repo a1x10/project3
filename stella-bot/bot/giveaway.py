@@ -5,6 +5,9 @@
   ссылку (действует 15 минут). Токен — после «#» в адресе: на сервер он не уходит ни в превью ссылок, ни в логи.
 - Рассылка — только тем, кто сам писал Стелле в личку Telegram: каждому — один раз за розыгрыш, с кнопками
   «Участвовать» и «Не присылать такое» (отписка навсегда); заблокировавшие бота пропускаются.
+- Кнопка у каждого получателя — своя подписанная ссылка (?t=…): по ней заявка привязывается к его Telegram —
+  один человек из рассылки = одна заявка, и победителя можно выбирать только среди пришедших по кнопке
+  (капча — лишь «лежачий полицейский», скрипт её решит, а подпись — нет).
 - Данные — в отдельной SQLite (DATA_DIR/giveaway.db). «Новый розыгрыш» в админке начинает следующий круг —
   прошлые заявки остаются в базе.
 """
@@ -49,6 +52,7 @@ LINK_MINUTES = 15
 HITS_MAX = 50000  # адресов в памяти для ограничения частоты (дальше — забываем самые старые)
 CAPTCHAS_MAX = 20000
 FLOOD_TRIES = 3  # Telegram просит подождать — ждём и шлём этому же человеку ещё раз
+SPIKE_PER_MINUTE = 40  # столько заявок за минуту — похоже на накрутку: сообщаем владельцу
 CAPTCHA_SECONDS = 25
 TIMER_MINUTES = 30
 STOP_DATA = "gw:stop"  # кнопка «Не присылать такое»
@@ -68,7 +72,9 @@ CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline
        "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
        "form-action 'self'; frame-ancestors 'none'")
 
-USERNAME_RE = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{4,31}$")
+# как у Telegram: 5–32 символа, с буквы, без «_» на конце (обрезанная при вставке ссылка не пройдёт)
+USERNAME_RE = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{3,30}[A-Za-z0-9]$")
+INVITE_RE = re.compile(r"(\d{1,15})\.([0-9a-f]{20})", re.ASCII)
 SESSION_RE = re.compile(r"(\d{1,12})\.(\d{1,9})\.([0-9a-f]{64})", re.ASCII)
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-zА-Яа-я]{2,24}$")
 DAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
@@ -107,6 +113,13 @@ CREATE TABLE IF NOT EXISTS optout(chat_jid TEXT PRIMARY KEY, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sent(round INTEGER NOT NULL, chat_jid TEXT NOT NULL, at TEXT NOT NULL,
                                 PRIMARY KEY(round, chat_jid));
 """
+MIGRATIONS = [
+    # чем кончилась отправка: pending (идёт) | sent | blocked (заблокировал бота, удалил аккаунт)
+    "ALTER TABLE sent ADD COLUMN outcome TEXT NOT NULL DEFAULT 'sent'",
+    # заявка по личной кнопке из рассылки: чей это Telegram (одна заявка на человека в розыгрыше)
+    "ALTER TABLE entries ADD COLUMN tg_chat_id INTEGER",
+    "CREATE UNIQUE INDEX IF NOT EXISTS entries_tg ON entries(round, tg_chat_id)",
+]
 
 
 def now_iso() -> str:
@@ -119,7 +132,7 @@ def clean(s: str | None, n: int) -> str:
 
 def normalize_contact(raw: str) -> tuple[str, str, str] | None:
     """Ник Telegram или телефон -> (как показать, ключ для «одна заявка на контакт», тип)."""
-    s = (raw or "").strip()
+    s = re.sub(r"\s", " ", raw or "").strip()  # неразрывные и узкие пробелы (так часто копируется номер) — обычные
     # только обычные цифры: «７７０１…» (широкие, арабские и т.п.) — тот же номер, второй заявки по нему быть не должно
     if re.fullmatch(r"[+0-9 \-()]{10,22}", s):
         digits = re.sub(r"[^0-9]", "", s)
@@ -202,6 +215,8 @@ class Giveaway:
         self._broadcast: asyncio.Task | None = None
         self._start_lock = asyncio.Lock()  # две вкладки нажали «Разослать» разом — уйдёт одна рассылка
         self._url_checked = 0.0
+        self.recent: deque[float] = deque()  # время последних заявок — заметить накрутку
+        self._spike_told = 0.0
 
     # ---------- база ----------
     @contextmanager
@@ -214,6 +229,12 @@ class Giveaway:
                     try:
                         con.execute("PRAGMA journal_mode=WAL")
                         con.executescript(SCHEMA)
+                        for ddl in MIGRATIONS:  # база от прошлой версии — добавить новое (уже есть — пропустить)
+                            try:
+                                con.execute(ddl)
+                            except sqlite3.OperationalError:
+                                pass
+                        con.commit()
                     finally:
                         con.close()
                     self._ready = True
@@ -278,6 +299,29 @@ class Giveaway:
     def use_link(self, token: str) -> bool:
         until = self.links.pop(_hash(token or ""), None)
         return until is not None and until > self.clock()
+
+    def invite(self, chat_id: int) -> str:
+        """Подпись личной ссылки получателя рассылки: «<id чата>.<hmac>» — подделать или подобрать чужую нельзя."""
+        sig = hmac.new(self.secret(), f"invite:{self.round()}:{chat_id}".encode(), hashlib.sha256).hexdigest()[:20]
+        return f"{chat_id}.{sig}"
+
+    def invited_chat(self, token: str | None) -> int | None:
+        m = INVITE_RE.fullmatch(token or "")
+        if not m or not hmac.compare_digest(self.invite(int(m.group(1))), token or ""):
+            return None
+        return int(m.group(1))
+
+    def note_registration(self) -> str | None:
+        """Заявок за минуту подозрительно много — текст для владельца (не чаще раза в 10 минут)."""
+        now = self.clock()
+        self.recent.append(now)
+        while self.recent and now - self.recent[0] > 60:
+            self.recent.popleft()
+        if len(self.recent) >= SPIKE_PER_MINUTE and now - self._spike_told > 600:
+            self._spike_told = now
+            return (f"⚠️ Розыгрыш: {len(self.recent)} заявок за минуту — похоже на накрутку. В админке у пришедших "
+                    "по кнопке из рассылки метка «TG»; выбирай победителя с галочкой «Только из рассылки»")
+        return None
 
     def owner_text(self) -> list[str]:
         """Ответ владельцу на «/розыгрыш»."""
@@ -379,16 +423,19 @@ class Giveaway:
         contact, key, ctype = norm
         token = secrets.token_urlsafe(18)
         rnd = self.round()
+        tg_chat = self.invited_chat(data.invite)  # пришёл по своей кнопке из рассылки
         try:
             with self._lock, self.db() as con:
                 cur = con.execute(
                     "INSERT INTO entries(round,token,first_name,last_name,contact,contact_key,contact_type,"
-                    "captcha_sec,ip,user_agent,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "captcha_sec,ip,user_agent,created_at,tg_chat_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (rnd, token, first, last, contact, key, ctype, round(spent, 1), ip, clean(user_agent, 300),
-                     now_iso()))
-        except sqlite3.IntegrityError:
+                     now_iso(), tg_chat))
+        except sqlite3.IntegrityError as exc:
+            if "tg_chat_id" in str(exc):
+                raise HTTPException(409, "Вы уже участвуете в этом розыгрыше 👍") from None
             raise HTTPException(409, "Этот контакт уже участвует в розыгрыше 👍") from None
-        return {"ok": True, "token": token, "number": cur.lastrowid}
+        return {"ok": True, "token": token, "number": cur.lastrowid, "round": rnd}
 
     def save_email(self, token: str, email: str) -> None:
         e = (email or "").strip()[:254]
@@ -405,16 +452,19 @@ class Giveaway:
             rows = con.execute("SELECT * FROM entries WHERE round=? ORDER BY id DESC", (self.round(),)).fetchall()
         return [_row(r) for r in rows]
 
-    def draw(self, only_with_email: bool, exclude_winners: bool) -> dict[str, Any]:
+    def draw(self, only_with_email: bool, exclude_winners: bool, only_invited: bool = False) -> dict[str, Any]:
         q = "SELECT * FROM entries WHERE round=?"
         if only_with_email:
             q += " AND email IS NOT NULL AND email<>''"
         if exclude_winners:
             q += " AND is_winner=0"
+        if only_invited:
+            q += " AND tg_chat_id IS NOT NULL"
         with self.db() as con:
             pool = con.execute(q, (self.round(),)).fetchall()
         if not pool:
-            raise HTTPException(400, "Нет подходящих участников")
+            raise HTTPException(400, "Нет подходящих участников" + (
+                " — пришедших по кнопке из рассылки нет: сними галочку «Только из рассылки»" if only_invited else ""))
         win = secrets.choice(pool)  # криптостойкий случайный выбор
         with self._lock, self.db() as con:
             con.execute("UPDATE entries SET is_winner=1 WHERE id=?", (win["id"],))
@@ -439,11 +489,17 @@ class Giveaway:
         buf.write("﻿")  # Excel откроет кириллицу правильно
         w = csv.writer(buf, delimiter=";")
         w.writerow(["ID", "Имя", "Фамилия", "Контакт", "Тип", "Почта", "Капча, сек", "IP", "Дата (UTC)", "Победитель",
-                    "Письмо отправлено"])
+                    "Письмо отправлено", "По кнопке из рассылки"])
         for r in rows:
-            w.writerow([csv_safe(v) for v in (
-                r["id"], r["first_name"], r["last_name"], r["contact"], r["contact_type"], r["email"] or "",
-                r["captcha_sec"], r["ip"], r["created_at"], "да" if r["is_winner"] else "", r["email_sent_at"] or "")])
+            # контакт проверен при заявке (+цифры или @ник) — пишем так, чтобы таблица не приняла его за формулу:
+            # Telegram — ссылкой, телефон — tel:+…
+            contact = (f"https://t.me/{r['contact'].lstrip('@')}" if r["contact_type"] == "telegram"
+                       else f"tel:{r['contact']}")
+            w.writerow([*(csv_safe(v) for v in (r["id"], r["first_name"], r["last_name"])), contact,
+                        *(csv_safe(v) for v in (
+                            r["contact_type"], r["email"] or "", r["captcha_sec"], r["ip"], r["created_at"],
+                            "да" if r["is_winner"] else "", r["email_sent_at"] or "",
+                            "да" if r["tg_chat_id"] else ""))])
         return buf.getvalue()
 
     def send_mail(self, entry_id: int, to: str | None, subject: str, body: str) -> str:
@@ -484,16 +540,21 @@ class Giveaway:
     def _tg(self) -> Any:
         return getattr(getattr(self.brain, "evo", None), "tg", None)
 
-    async def recipients(self) -> tuple[list[dict[str, Any]], int, int]:
-        """Кому уйдёт рассылка: личные чаты Telegram, кроме отписавшихся и уже получивших в этом розыгрыше.
-        -> (чаты, сколько отписалось, сколько уже получило)."""
+    async def recipients(self) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """Кому уйдёт рассылка: личные чаты Telegram, кроме отписавшихся и тех, кому в этом розыгрыше уже слали.
+        -> (чаты, счётчики: optout — отписались, sent — получили, blocked — заблокировали бота)."""
         chats = [c for c in await self.brain.db.all_chats(self.s.evolution_instance)
                  if str(c["jid"]).endswith("@tg.chat") and not c["is_group"]]
         with self.db() as con:
             off = {r["chat_jid"] for r in con.execute("SELECT chat_jid FROM optout")}
-            got = {r["chat_jid"] for r in con.execute("SELECT chat_jid FROM sent WHERE round=?", (self.round(),))}
-        todo = [c for c in chats if c["jid"] not in off and c["jid"] not in got]
-        return todo, len([c for c in chats if c["jid"] in off]), len([c for c in chats if c["jid"] in got])
+            done = {r["chat_jid"]: r["outcome"] for r in con.execute(
+                "SELECT chat_jid, outcome FROM sent WHERE round=?", (self.round(),))}
+        todo = [c for c in chats if c["jid"] not in off and c["jid"] not in done]
+        jids = {c["jid"] for c in chats}
+        counts = {"optout": len(off & jids),
+                  "sent": sum(1 for j, o in done.items() if o == "sent" and j in jids),
+                  "blocked": sum(1 for j, o in done.items() if o == "blocked" and j in jids)}
+        return todo, counts
 
     async def fresh_url(self) -> str | None:
         """Адрес страницы, проверенный только что: туннель Cloudflare после перезапуска получает новый адрес, и
@@ -507,9 +568,10 @@ class Giveaway:
 
     async def broadcast_info(self) -> dict[str, Any]:
         tg = self._tg()
-        todo, off, got = await self.recipients() if self.brain is not None else ([], 0, 0)
-        return {"telegram": tg is not None, "url": await self.fresh_url(), "recipients": len(todo), "optout": off,
-                "already": got, "progress": dict(self.progress), "default_text": DEFAULT_TEXT,
+        todo, counts = await self.recipients() if self.brain is not None else ([], {})
+        return {"telegram": tg is not None, "url": await self.fresh_url(), "recipients": len(todo),
+                "optout": counts.get("optout", 0), "already": counts.get("sent", 0),
+                "blocked": counts.get("blocked", 0), "progress": dict(self.progress), "default_text": DEFAULT_TEXT,
                 "default_button": DEFAULT_BUTTON, "timer_minutes": TIMER_MINUTES,
                 "timer_running": bool(self.setting("draw_at"))}
 
@@ -522,14 +584,15 @@ class Giveaway:
         from .telegram import msg_id
 
         cid = int(str(chat["jid"]).split("@", 1)[0])
+        personal = f"{url}?t={self.invite(cid)}"  # своя ссылка: заявка по ней привяжется к этому Telegram
         result = await tg.call("sendMessage", data={"chat_id": cid, "text": text,
-                                                     "reply_markup": self._markup(button, url),
+                                                     "reply_markup": self._markup(button, personal),
                                                      "link_preview_options": {"is_disabled": True}})
         try:
             wa_id = msg_id(cid, result["message_id"])
             self.brain.outbox.remember_sent(wa_id)
             # в истории чата (со ссылкой): ответят «а что за розыгрыш? дай ссылку» — Стелла поймёт и даст настоящую
-            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {url}]",
+            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {personal}]",
                                             wa_message_id=wa_id, sender_name=self.s.bot_name)
         except Exception:
             log.warning("рассылка: ушло, но не записалось в историю чата", exc_info=True)
@@ -569,12 +632,13 @@ class Giveaway:
             if self._broadcast is not None and not self._broadcast.done():
                 raise HTTPException(409, "Рассылка уже идёт")
             tg, url = await self._check(text, button)
-            todo, _, _ = await self.recipients()
+            todo, _ = await self.recipients()
             if not todo:
                 raise HTTPException(400, "Некому отправлять: все уже получили это сообщение, отписались или "
                                          "ещё никто не писал Стелле в личку Telegram")
-            if start_timer and not self.setting("draw_at"):
-                self.start_timer(TIMER_MINUTES)  # только первый раз за розыгрыш; регистрацию не трогаем
+            # таймер — только при первой рассылке круга: идущий отсчёт не двигаем, закрытую регистрацию не открываем
+            if start_timer and not self.setting("draw_at") and self.setting("closed", "0") != "1":
+                self.start_timer(TIMER_MINUTES)
             self.progress = {"state": "running", "total": len(todo), "sent": 0, "blocked": 0, "failed": 0,
                              "started_at": now_iso()}
             self._broadcast = asyncio.ensure_future(self._run_broadcast(tg, todo, text, button, url))
@@ -586,8 +650,12 @@ class Giveaway:
     def _claim(self, rnd: int, jid: str) -> bool:
         """Застолбить человека до отправки: второй запуск (или повтор после сбоя) ему уже не пришлёт."""
         with self._lock, self.db() as con:
-            return con.execute("INSERT OR IGNORE INTO sent(round,chat_jid,at) VALUES(?,?,?)",
+            return con.execute("INSERT OR IGNORE INTO sent(round,chat_jid,at,outcome) VALUES(?,?,?,'pending')",
                                (rnd, jid, now_iso())).rowcount == 1
+
+    def _settle(self, rnd: int, jid: str, outcome: str) -> None:
+        with self._lock, self.db() as con:
+            con.execute("UPDATE sent SET outcome=? WHERE round=? AND chat_jid=?", (outcome, rnd, jid))
 
     def _unclaim(self, rnd: int, jid: str) -> None:
         with self._lock, self.db() as con:
@@ -608,7 +676,9 @@ class Giveaway:
                 wait = getattr(exc, "retry_after", 0) or 0
                 if wait and attempt < FLOOD_TRIES - 1:  # Telegram просит подождать — ждём сколько сказал
                     log.info("рассылка: Telegram просит подождать %s с", wait)
+                    self.progress["waiting"] = min(wait, 300) + 1  # в админке: «пауза», а не «зависла»
                     await asyncio.sleep(min(wait, 300) + 1)
+                    self.progress.pop("waiting", None)
                     continue
                 log.warning("рассылка: не ушло: %s", exc)
                 return "failed"
@@ -629,6 +699,8 @@ class Giveaway:
                 p[outcome] += 1
                 if outcome == "failed":
                     self._unclaim(rnd, chat["jid"])  # временная ошибка — при следующей рассылке попробуем снова
+                else:
+                    self._settle(rnd, chat["jid"], outcome)
                 await asyncio.sleep(SEND_PAUSE)
         finally:
             p["state"] = "done"
@@ -703,6 +775,7 @@ class RegisterIn(BaseModel):
     captcha_id: str
     captcha_answer: str
     website: str | None = ""  # ловушка для ботов: человек это поле не видит
+    invite: str | None = ""  # подпись из личной ссылки рассылки (?t=…)
 
 
 class EmailIn(BaseModel):
@@ -716,6 +789,7 @@ class EnterIn(BaseModel):
 
 class DrawIn(BaseModel):
     only_with_email: bool = False
+    only_invited: bool = False
     exclude_winners: bool = True
 
 
@@ -795,8 +869,12 @@ def build_router(get_giveaway: Callable[[Request], Giveaway | None]) -> APIRoute
     async def register(data: RegisterIn, request: Request) -> dict[str, Any]:
         g = gw(request)
         ip = client_ip(request)
-        g.rate_limit(ip, 60, 60, "reg")
-        return await asyncio.to_thread(g.register, data, ip, request.headers.get("user-agent", ""))
+        g.rate_limit(ip, 10, 600, "reg")  # 10 заявок за 10 минут с одного адреса (IPv6 — с одной сети /64)
+        result = await asyncio.to_thread(g.register, data, ip, request.headers.get("user-agent", ""))
+        alert = g.note_registration()
+        if alert and g.brain is not None:
+            g.brain.spawn(g.brain.tell_owner(alert))
+        return result
 
     @router.post("/api/email")
     async def email(data: EmailIn, request: Request) -> dict[str, bool]:
@@ -840,7 +918,7 @@ def build_router(get_giveaway: Callable[[Request], Giveaway | None]) -> APIRoute
     @router.post("/api/admin/draw")
     async def draw(data: DrawIn, request: Request) -> dict[str, Any]:
         g = admin(request)
-        return await asyncio.to_thread(g.draw, data.only_with_email, data.exclude_winners)
+        return await asyncio.to_thread(g.draw, data.only_with_email, data.exclude_winners, data.only_invited)
 
     @router.post("/api/admin/entries/{eid}/winner")
     async def toggle_winner(eid: int, request: Request) -> dict[str, bool]:

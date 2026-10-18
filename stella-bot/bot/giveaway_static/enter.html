@@ -25,23 +25,28 @@ code{color:var(--acc);font-size:15px}
   <div class="m" id="m"></div>
 </div>
 <script>
-(async () => {
+let busy = false;
+async function run() {
   const m = /[#&]t=([A-Za-z0-9_-]{16,})/.exec(location.hash);
-  if (!m) return;
+  if (!m || busy) return;
+  busy = true;
   history.replaceState(null, '', location.pathname);  // токен больше не нужен в адресной строке
-  document.getElementById('h').textContent = 'Входим…';
+  const h = document.getElementById('h'), msg = document.getElementById('m');
+  h.textContent = 'Входим…'; msg.textContent = '';
   try {
     const r = await fetch('/giveaway/api/admin/enter', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                                         body: JSON.stringify({token: m[1]})});
     if (r.ok) { location.replace('/giveaway/admin'); return; }
     let j = {}; try { j = await r.json() } catch (e) {}
-    document.getElementById('h').textContent = 'Не получилось войти';
-    document.getElementById('m').textContent = j.error || 'Ошибка входа';
+    h.textContent = 'Не получилось войти';
+    msg.textContent = j.error || 'Ошибка входа';
   } catch (e) {
-    document.getElementById('h').textContent = 'Нет связи';
-    document.getElementById('m').textContent = 'Проверь интернет и открой ссылку ещё раз';
-  }
-})();
+    h.textContent = 'Нет связи';
+    msg.textContent = 'Проверь интернет и открой ссылку ещё раз';
+  } finally { busy = false; }
+}
+run();
+addEventListener('hashchange', run);  // вставили новую ссылку в ту же вкладку
 </script>
 </body>
 </html>
