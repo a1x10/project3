@@ -91,6 +91,8 @@ def test_contact_and_csv_rules():
     # тот же номер другими цифрами или через 00 — тот же ключ (одна заявка на контакт)
     assert normalize_contact("+７ ７０１ １２３ ４５ ６７") is None
     assert normalize_contact("007 701 123 45 67")[1] == "phone:77011234567"
+    assert normalize_contact("+7\u00a0701\u2009123\u202f45 67")[1] == "phone:77011234567"  # пробелы из копирования
+    assert normalize_contact("https://t.me/abcdefghijklmnopqrstuvwxyz_") is None  # ссылку обрезало при вставке
     assert csv_safe("=HYPERLINK(\"x\")") == "'=HYPERLINK(\"x\")" and csv_safe("Вася") == "Вася"
 
 
@@ -235,10 +237,14 @@ async def test_broadcast_goes_once_to_telegram_dms_with_buttons(web, brain):
     assert sorted(tg.sent_to()) == [111, 222, 333]
     first = next(d for m, d in tg.calls if m == "sendMessage")
     rows = first["reply_markup"]["inline_keyboard"]
-    assert rows[0] == [{"text": DEFAULT_BUTTON, "url": f"{TUNNEL}/giveaway/"}]
+    assert rows[0][0]["text"] == DEFAULT_BUTTON and rows[0][0]["url"].startswith(f"{TUNNEL}/giveaway/?t=")
+    urls = {d["reply_markup"]["inline_keyboard"][0][0]["url"] for m, d in tg.calls if m == "sendMessage"}
+    assert len(urls) == 3  # у каждого — своя ссылка
     assert rows[1][0]["callback_data"] == STOP_DATA
-    progress = (await web.get("/giveaway/api/admin/broadcast")).json()["progress"]
+    info = (await web.get("/giveaway/api/admin/broadcast")).json()
+    progress = info["progress"]
     assert progress["state"] == "done" and progress["sent"] == 2 and progress["blocked"] == 1
+    assert info["already"] == 2 and info["blocked"] == 1 and info["recipients"] == 0
     state = (await web.get("/giveaway/api/state")).json()
     assert state["draw_at"]  # таймер на 30 минут запустился вместе с рассылкой
 
@@ -313,7 +319,7 @@ async def test_link_is_rechecked_before_sending(web, brain):
     await web.post("/giveaway/api/admin/broadcast", json={"text": "привет", "button": DEFAULT_BUTTON})
     await settle(brain)
     url = next(d for m, d in tg.calls if m == "sendMessage")["reply_markup"]["inline_keyboard"][0][0]["url"]
-    assert url == "https://new-host.trycloudflare.com/giveaway/"
+    assert url.startswith("https://new-host.trycloudflare.com/giveaway/?t=")
 
     async def tunnel_down():
         raise OSError("нет туннеля")
@@ -365,3 +371,74 @@ async def test_broadcast_needs_https_link_and_telegram(web, brain):
     brain.tunnel_url = None
     r = await web.post("/giveaway/api/admin/broadcast", json={"text": "x", "button": "Го"})
     assert r.status_code == 400 and "туннель" in r.json()["error"]
+
+
+# ---------- личная ссылка из рассылки: заявка привязана к Telegram ----------
+async def test_invited_entry_is_bound_to_its_telegram(web, brain):
+    g = brain.giveaway
+    good = g.invite(111)
+    forged = "111." + "0" * 20
+
+    async def reg(contact, invite):
+        cap = (await web.get("/giveaway/api/captcha")).json()
+        g.clock.t += 5
+        return await web.post("/giveaway/api/register", json={
+            "first_name": "Вася", "contact": contact, "consent": True, "captcha_id": cap["id"],
+            "captcha_answer": g.captchas[cap["id"]][0], "invite": invite})
+
+    assert (await reg("@vasya_one", good)).status_code == 200
+    again = await reg("@vasya_two", good)  # тот же человек по своей кнопке, другой контакт
+    assert again.status_code == 409 and "уже участвуете" in again.json()["error"]
+    assert (await reg("@someone_else", forged)).status_code == 200  # подделка — заявка есть, но без привязки
+    assert (await reg("@no_button", "")).status_code == 200
+
+    await login(web, brain)
+    entries = (await web.get("/giveaway/api/admin/entries")).json()["entries"]
+    bound = {e["contact"]: e["tg_chat_id"] for e in entries}
+    assert bound == {"@vasya_one": 111, "@someone_else": None, "@no_button": None}
+    win = (await web.post("/giveaway/api/admin/draw", json={"only_invited": True})).json()
+    assert win["pool"] == 1 and win["winner"]["contact"] == "@vasya_one"
+    r = await web.post("/giveaway/api/admin/draw", json={"only_invited": True})
+    assert r.status_code == 400 and "Только из рассылки" in r.json()["error"]
+    csv = (await web.get("/giveaway/api/admin/export.csv")).text
+    assert "https://t.me/vasya_one" in csv and "'@" not in csv  # контакт — без апострофа
+
+
+async def test_new_round_invites_are_new(brain):
+    g = brain.giveaway
+    old = g.invite(111)
+    g.new_round()
+    assert g.invited_chat(old) is None and g.invited_chat(g.invite(111)) == 111
+
+
+def test_spike_of_registrations_is_reported(brain):
+    g = brain.giveaway
+    g.clock = Clock()
+    texts = [g.note_registration() for _ in range(45)]
+    assert texts.count(None) == 44 and "накрутку" in next(t for t in texts if t)
+
+
+def test_old_database_is_upgraded(settings, tmp_path):
+    import sqlite3
+
+    from bot.giveaway import Giveaway
+
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE entries(id INTEGER PRIMARY KEY AUTOINCREMENT, round INTEGER NOT NULL DEFAULT 1,
+            token TEXT UNIQUE NOT NULL, first_name TEXT NOT NULL, last_name TEXT, contact TEXT NOT NULL,
+            contact_key TEXT NOT NULL, contact_type TEXT NOT NULL, email TEXT, captcha_sec REAL, ip TEXT,
+            user_agent TEXT, created_at TEXT NOT NULL, is_winner INTEGER DEFAULT 0, email_sent_at TEXT,
+            UNIQUE(round, contact_key));
+        CREATE TABLE sent(round INTEGER NOT NULL, chat_jid TEXT NOT NULL, at TEXT NOT NULL,
+                          PRIMARY KEY(round, chat_jid));
+        INSERT INTO sent VALUES(1, '111@tg.chat', 'x');
+    """)
+    con.commit()
+    con.close()
+    g = Giveaway(settings, path=str(path))
+    with g.db() as c:
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(entries)")}
+        outcome = c.execute("SELECT outcome FROM sent").fetchone()["outcome"]
+    assert "tg_chat_id" in cols and outcome == "sent"

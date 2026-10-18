@@ -127,7 +127,7 @@ input.err{border-color:var(--bad)}
     <h2>Ваши данные</h2>
     <div class="f"><label for="fn">Имя</label><input type="text" id="fn" autocomplete="given-name" maxlength="60" placeholder="Как вас зовут"></div>
     <div class="f"><label for="ln">Фамилия <span class="opt">— необязательно</span></label><input type="text" id="ln" autocomplete="family-name" maxlength="60"></div>
-    <div class="f"><label for="ct">Ник в Telegram или телефон</label><input type="text" id="ct" inputmode="text" autocomplete="tel" maxlength="40" placeholder="@username или +7 700 000 00 00">
+    <div class="f"><label for="ct">Ник в Telegram или телефон</label><input type="text" id="ct" inputmode="text" autocomplete="tel" maxlength="64" placeholder="@username или +7 700 000 00 00">
       <div class="hint">По этому контакту свяжемся с победителем</div></div>
     <input class="hp" type="text" id="website" tabindex="-1" autocomplete="off" aria-hidden="true">
     <label class="check"><input type="checkbox" id="consent"> Согласен(на) на обработку моих данных для проведения розыгрыша и связи со мной</label>
@@ -182,15 +182,23 @@ input.err{border-color:var(--bad)}
 
 <script>
 const $ = id => document.getElementById(id);
+// localStorage бывает недоступен (приватный режим, запрет) — тогда помним хотя бы до перезагрузки
+const mem = {};
+const KEYS = ['gw_token','gw_no','gw_done','gw_round'];
 const store = {
-  get(k){ try{ return localStorage.getItem(k) }catch(e){ return null } },
-  set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} },
-  clear(){ try{ ['gw_token','gw_no','gw_done','gw_round'].forEach(k=>localStorage.removeItem(k)) }catch(e){} }
+  get(k){ try{ const v = localStorage.getItem(k); if(v !== null) return v }catch(e){} return k in mem ? mem[k] : null },
+  set(k,v){ mem[k] = String(v); try{ localStorage.setItem(k, String(v)) }catch(e){} },
+  clear(){ KEYS.forEach(k=>{ delete mem[k]; try{ localStorage.removeItem(k) }catch(e){} }) }
 };
+// личная ссылка из рассылки (?t=…): заявка по ней привяжется к своему Telegram
+const invite = (new URLSearchParams(location.search).get('t') || '').slice(0, 64);
 async function api(path, body){
-  const r = await fetch('/giveaway/api/' + path, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {});
+  let r;
+  try{ r = await fetch('/giveaway/api/' + path, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {}) }
+  catch(e){ throw new Error('Нет связи — проверьте интернет и попробуйте ещё раз') }
   let j = {}; try{ j = await r.json() }catch(e){}
-  if(!r.ok) throw new Error(j.error || 'Ошибка сети, попробуйте ещё раз');
+  if(!r.ok) throw new Error(r.status === 422 ? 'Что-то не так с данными — обновите страницу и попробуйте ещё раз'
+                                             : (j.error || 'Ошибка сети, попробуйте ещё раз'));
   return j;
 }
 const STEPS = ['s0','s1','s2','s3','s4'];
@@ -202,32 +210,38 @@ function show(id){
 }
 
 /* ---------- состояние и таймер ---------- */
-let drawAt = null, closed = false, firstLoad = true;
+let drawAt = null, closed = false, round = null, firstLoad = true;
+function restoreStep(){
+  const no = store.get('gw_no');
+  if(no) $('ticketNo').textContent = '#' + no;
+  if(no && (store.get('gw_done') === '1' || closed)) show('s4');   // заявка есть — билет (почта уже не важна)
+  else if(no && store.get('gw_token')) show('s3');
+  else if(closed) show('s0');
+  else if(current === 's0') show('s1');
+}
 async function loadState(){
-  try{
-    const s = await api('state');
-    $('count').textContent = s.count;
-    if(s.project) $('brand').textContent = s.project;
-    if(s.prize && s.prize !== 'Безлимитный ИИ на 35 дней') $('prizeH').textContent = s.prize;  // приз поменяли в админке
-    drawAt = s.draw_at ? new Date(s.draw_at) : null;
-    closed = !!s.closed;
-    // новый розыгрыш — прошлая заявка с этого телефона больше не считается
-    if(store.get('gw_round') && store.get('gw_round') !== String(s.round)){ store.clear(); if(current!=='s1' && !closed) show('s1') }
-    $('live').classList.toggle('off', closed);
-    $('liveT').textContent = closed ? 'Регистрация закрыта' : 'Идёт регистрация';
-    if(closed){ $('tLabel').textContent='Регистрация закрыта'; if(['s1','s2','s3'].includes(current) && !store.get('gw_no')) show('s0') }
-    if(firstLoad){
-      firstLoad = false;
-      if(store.get('gw_done')==='1' && store.get('gw_no')){ $('ticketNo').textContent='#'+store.get('gw_no'); show('s4') }
-      else if(store.get('gw_token') && store.get('gw_no') && !closed){ $('ticketNo').textContent='#'+store.get('gw_no'); show('s3') }
-      else if(closed) show('s0');
-      store.set('gw_round', String(s.round));
-    }
-  }catch(e){}
+  let s;
+  try{ s = await api('state') }catch(e){ return }
+  $('count').textContent = s.count;
+  if(s.project) $('brand').textContent = s.project;
+  if(s.prize && s.prize !== 'Безлимитный ИИ на 35 дней') $('prizeH').textContent = s.prize;  // приз поменяли в админке
+  drawAt = s.draw_at ? new Date(s.draw_at) : null;
+  const wasClosed = closed, roundChanged = round !== null && round !== s.round;
+  closed = !!s.closed; round = s.round;
+  // заявка с прошлого розыгрыша на этом телефоне больше не считается
+  const mine = store.get('gw_round');
+  const stale = mine !== null && mine !== String(s.round);
+  if(stale) store.clear();
+  $('live').classList.toggle('off', closed);
+  $('liveT').textContent = closed ? 'Регистрация закрыта' : 'Идёт регистрация';
+  if(firstLoad || stale || roundChanged){ firstLoad = false; if(!['s2'].includes(current) || stale) restoreStep(); return }
+  if(closed && !wasClosed && ['s1','s2','s3'].includes(current)) restoreStep();
+  else if(!closed && wasClosed && current === 's0') restoreStep();   // регистрацию снова открыли
+  tick();
 }
 function tick(){
-  if(closed && !drawAt){ $('tVal').textContent = '—'; return }
-  if(!drawAt){ $('tVal').textContent = 'скоро'; return }
+  if(closed){ $('tLabel').textContent = 'Регистрация закрыта' }
+  if(!drawAt){ $('tVal').textContent = closed ? '—' : 'скоро'; if(!closed) $('tLabel').textContent='До выбора победителя'; return }
   let d = Math.max(0, Math.floor((drawAt - Date.now())/1000));
   if(d===0){ $('tLabel').textContent='Выбираем победителя'; $('tVal').textContent='00:00'; return }
   if(!closed) $('tLabel').textContent='До выбора победителя';
@@ -238,11 +252,17 @@ loadState(); setInterval(tick,1000); setInterval(loadState,20000);
 
 /* ---------- шаг 1 ---------- */
 const phoneOrTg = v => {
-  const s = v.trim().replace(/^https?:\/\/t\.me\//,'').replace(/^t\.me\//,'');
-  const digits = s.replace(/\D/g,'');
-  if(/^[+\d\s\-()]{10,20}$/.test(s) && digits.length>=10 && digits.length<=15) return true;
-  return /^@?[A-Za-z][A-Za-z0-9_]{4,31}$/.test(s);
+  const s = v.replace(/\s/g,' ').trim().replace(/^https?:\/\/t\.me\//,'').replace(/^t\.me\//,'');
+  if(/^[+0-9 \-()]{10,22}$/.test(s)){
+    let digits = s.replace(/[^0-9]/g,'');
+    if(digits.startsWith('00')) digits = digits.slice(2);
+    return digits.length>=10 && digits.length<=15;
+  }
+  return /^@?[A-Za-z][A-Za-z0-9_]{3,30}[A-Za-z0-9]$/.test(s);
 };
+function contactError(msg){
+  show('s1'); $('ct').classList.add('err'); $('m1').textContent = msg; $('ct').focus();
+}
 $('next1').onclick = () => {
   $('m1').textContent=''; ['fn','ct'].forEach(i=>$(i).classList.remove('err'));
   if($('fn').value.trim().length<2){ $('fn').classList.add('err'); $('m1').textContent='Укажите имя'; return }
@@ -250,6 +270,7 @@ $('next1').onclick = () => {
   if(!$('consent').checked){ $('m1').textContent='Отметьте согласие на обработку данных'; return }
   show('s2'); loadCaptcha();
 };
+['fn','ln','ct'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); $('next1').click() } }));
 
 /* ---------- шаг 2: вопрос на время ---------- */
 let cap = null, chosen = null, timer = null;
@@ -272,7 +293,7 @@ async function loadCaptcha(keepMsg){
     bar.style.transform = `scaleX(${left/total})`;
     $('bar').classList.toggle('low', left < 7);
     $('tleft').textContent = `Осталось ${Math.ceil(left)} сек`;
-    if(left<=0){ clearInterval(timer); $('capBox').style.display='none'; $('expired').style.display='block' }
+    if(left<=0){ clearInterval(timer); $('m2').textContent=''; $('capBox').style.display='none'; $('expired').style.display='block' }
   };
   upd(); timer = setInterval(upd, 250);
 }
@@ -284,28 +305,30 @@ $('confirm').onclick = async () => {
   try{
     const r = await api('register',{
       first_name:$('fn').value, last_name:$('ln').value, contact:$('ct').value,
-      consent:$('consent').checked, captcha_id:cap.id, captcha_answer:chosen, website:$('website').value
+      consent:$('consent').checked, captcha_id:cap.id, captcha_answer:chosen, website:$('website').value, invite
     });
     clearInterval(timer);
-    store.set('gw_token', r.token); store.set('gw_no', r.number);
+    store.set('gw_token', r.token); store.set('gw_no', r.number); store.set('gw_round', r.round);
     $('ticketNo').textContent = '#'+r.number;
     show('s3'); loadState();
   }catch(e){
-    $('m2').textContent = e.message;
-    if(/уже участвует/.test(e.message)){ setTimeout(()=>show('s1'),1800) }
-    else if(/закрыта/.test(e.message)){ closed = true; setTimeout(()=>show('s0'),1800) }
-    else setTimeout(()=>loadCaptcha(true), 1400);
+    clearInterval(timer);
+    if(/уже участвует/.test(e.message)) contactError(e.message + ' Если ник или номер введён с ошибкой — исправьте.');
+    else if(/ник в Telegram|номер телефона/.test(e.message)) contactError(e.message);
+    else if(/закрыта/.test(e.message)){ $('m2').textContent = e.message; closed = true; setTimeout(restoreStep, 1800) }
+    else { $('m2').textContent = e.message; setTimeout(()=>loadCaptcha(true), 1400) }
   }finally{ $('confirm').textContent='Подтвердить участие' }
 };
 
 /* ---------- шаг 3 ---------- */
 $('saveEm').onclick = async () => {
-  const v=$('em').value.trim(); $('m3').textContent='';
+  const v=$('em').value.trim(); $('m3').textContent=''; $('em').classList.remove('err');
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ $('em').classList.add('err'); $('m3').textContent='Проверьте адрес почты'; return }
   $('saveEm').disabled=true;
   try{ await api('email',{token:store.get('gw_token'),email:v}); done(true) }
   catch(e){ $('m3').textContent=e.message } finally{ $('saveEm').disabled=false }
 };
+$('em').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); $('saveEm').click() } });
 $('skip').onclick = () => done(false);
 function done(withMail){
   $('doneText').textContent = withMail
