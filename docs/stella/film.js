@@ -592,7 +592,7 @@
         fitBlock(title, e.P ? e.W - 2 * e.g : Math.min(e.W * 0.78, 1100), e.H * (e.P ? 0.2 : 0.17));
         const bw = e.P ? e.W - 2 * e.g : Math.min(e.W * 0.84, 1100);
         const bh = e.P ? e.H * 0.5 : Math.min(e.H * 0.5, bw * 0.42);
-        css(box, { width: f(bw, 1) + "px", height: f(bh, 1) + "px", fontSize: f(e.P ? clamp(e.W * 0.036, 12, 16) : clamp(bw * 0.018, 12, 20), 1) + "px" });
+        css(box, { width: f(bw, 1) + "px", height: f(bh, 1) + "px", fontSize: f(e.P ? clamp(e.W * 0.036, 12, 22) : clamp(bw * 0.02, 12, 22), 1) + "px" });
         col.style.gap = f(e.P ? e.H * 0.05 : e.H * 0.07, 1) + "px";
         sv.setAttribute("viewBox", `0 0 ${f(bw, 1)} ${f(bh, 1)}`);
         const pt = (k) => [pos[k][0] * bw, pos[k][1] * bh];

@@ -214,7 +214,7 @@
   background: #fff;
 }
 
-.fs {
+:where(.film-stage) .fs {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -222,11 +222,11 @@
   overflow: hidden;
 }
 
-.fs.on {
+:where(.film-stage) .fs.on {
   display: block;
 }
 
-.fs-c {
+:where(.film-stage) .fs-c {
   position: absolute;
   inset: 0;
   display: flex;
@@ -236,44 +236,44 @@
 }
 
 /* фоны кадров */
-.bg-ink {
+:where(.film-stage) .bg-ink {
   background: var(--ink);
 }
 
-.bg-red {
+:where(.film-stage) .bg-red {
   background: radial-gradient(ellipse 80% 70% at 50% 50%, #ff4a46, var(--red) 60%, #e8302d);
 }
 
-.bg-paper {
+:where(.film-stage) .bg-paper {
   background: radial-gradient(ellipse 80% 70% at 50% 45%, #f4f3ef, var(--paper) 65%, #dcdbd6);
 }
 
-.bg-clear {
+:where(.film-stage) .bg-clear {
   background: transparent;
 }
 
-.bg-glow {
+:where(.film-stage) .bg-glow {
   background: radial-gradient(ellipse 80vmin 58vmin at 50% 50%, rgba(255, 61, 58, 0.5), rgba(255, 61, 58, 0.13) 55%, transparent 100%), var(--ink);
 }
 
-.bg-glowl {
+:where(.film-stage) .bg-glowl {
   background: radial-gradient(ellipse 62vmin 72vmin at 14% 52%, rgba(255, 61, 58, 0.55), rgba(255, 61, 58, 0.1) 60%, transparent 100%), var(--ink);
 }
 
-.bg-dots::before,
-.bg-grid::before {
+:where(.film-stage) .bg-dots::before,
+:where(.film-stage) .bg-grid::before {
   content: "";
   position: absolute;
   inset: 0;
   background-position: center;
 }
 
-.bg-dots::before {
+:where(.film-stage) .bg-dots::before {
   background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1.4px);
   background-size: 22px 22px;
 }
 
-.bg-grid::before {
+:where(.film-stage) .bg-grid::before {
   background-image: linear-gradient(rgba(255, 255, 255, 0.075) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.075) 1px, transparent 1px);
   background-size: 72px 72px;
@@ -282,7 +282,7 @@
 }
 
 /* ───────────── типографика кадров ───────────── */
-.tb {
+:where(.film-stage) .tb {
   position: relative;
   isolation: isolate;
   display: flex;
@@ -292,25 +292,25 @@
   line-height: 0.98;
 }
 
-.tb.al {
+:where(.film-stage) .tb.al {
   align-items: flex-start;
 }
 
-.ln {
+:where(.film-stage) .ln {
   display: block;
   width: max-content;
   white-space: nowrap;
   transform-origin: 50% 50%;
 }
 
-.tw {
+:where(.film-stage) .tw {
   font-family: var(--f-wide);
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: -0.015em;
 }
 
-.tc {
+:where(.film-stage) .tc {
   font-family: var(--f-cond);
   font-weight: 700;
   text-transform: uppercase;
@@ -318,49 +318,49 @@
   line-height: 0.94;
 }
 
-.w {
+:where(.film-stage) .w {
   color: #fff;
 }
 
-.k {
+:where(.film-stage) .k {
   color: var(--ink);
 }
 
-.r {
+:where(.film-stage) .r {
   color: var(--red);
 }
 
-.w .r {
+:where(.film-stage) .w .r {
   text-shadow: 0 0 0.25em rgba(255, 61, 58, 0.6);
 }
 
-.ch,
-.wd {
+:where(.film-stage) .ch,
+:where(.film-stage) .wd {
   display: inline-block;
   white-space: pre;
 }
 
-.ty {
+:where(.film-stage) .ty {
   visibility: hidden;
 }
 
-.ty.on {
+:where(.film-stage) .ty.on {
   visibility: visible;
 }
 
-.col {
+:where(.film-stage) .col {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-.mbw {
+:where(.film-stage) .mbw {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.cap-mono {
+:where(.film-stage) .cap-mono {
   font-family: var(--f-mono);
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -369,7 +369,7 @@
   white-space: nowrap;
 }
 
-.cap-mono.k {
+:where(.film-stage) .cap-mono.k {
   color: rgba(10, 10, 11, 0.78);
 }
 
@@ -395,7 +395,7 @@
 }
 
 /* 2. полосы скорости */
-.speed {
+:where(.film-stage) .speed {
   position: absolute;
   left: 0;
   width: 70%;
@@ -403,7 +403,7 @@
 }
 
 /* 3. красный мазок */
-.smear {
+:where(.film-stage) .smear {
   position: absolute;
   left: -7%;
   right: -7%;
@@ -414,7 +414,7 @@
   pointer-events: none;
 }
 
-.smear i {
+:where(.film-stage) .smear i {
   position: absolute;
   left: 0;
   right: 0;
@@ -422,26 +422,26 @@
   background: linear-gradient(90deg, rgba(255, 61, 58, 0), var(--red) 9%, var(--red) 82%, rgba(255, 61, 58, 0.15));
 }
 
-.smear i:nth-child(1) {
+:where(.film-stage) .smear i:nth-child(1) {
   top: 0;
   height: 48%;
 }
 
-.smear i:nth-child(2) {
+:where(.film-stage) .smear i:nth-child(2) {
   top: 34%;
   height: 30%;
   left: 5%;
   opacity: 0.9;
 }
 
-.smear i:nth-child(3) {
+:where(.film-stage) .smear i:nth-child(3) {
   top: 62%;
   height: 22%;
   right: 12%;
   opacity: 0.85;
 }
 
-.smear i:nth-child(4) {
+:where(.film-stage) .smear i:nth-child(4) {
   top: 88%;
   height: 7%;
   left: 22%;
@@ -450,7 +450,7 @@
 }
 
 /* 4. ОКЕЙ. */
-.okdot {
+:where(.film-stage) .okdot {
   display: inline-block;
   width: 0.2em;
   height: 0.2em;
@@ -460,7 +460,7 @@
   box-shadow: 0 0 0.12em rgba(255, 61, 58, 0.9), 0 0 0.4em rgba(255, 61, 58, 0.6);
 }
 
-.ha {
+:where(.film-stage) .ha {
   position: absolute;
   right: -0.22em;
   top: -0.6em;
@@ -470,18 +470,18 @@
 }
 
 /* 6. экструзия */
-.stack {
+:where(.film-stage) .stack {
   position: relative;
 }
 
-.stack > .ghost {
+:where(.film-stage) .stack > .ghost {
   position: absolute;
   left: 0;
   top: 0;
 }
 
 /* 6b. вопрос */
-.qq {
+:where(.film-stage) .qq {
   position: absolute;
   line-height: 0.8;
 }
@@ -713,22 +713,22 @@
   text-shadow: 0 0 0.6em rgba(255, 255, 255, 0.25);
 }
 
-.pc {
+:where(.film-stage) .pc {
   visibility: hidden;
 }
 
-.pc.on {
+:where(.film-stage) .pc.on {
   visibility: visible;
 }
 
-.chip {
+:where(.film-stage) .chip {
   --k: 0;
   position: relative;
   z-index: 0;
   white-space: nowrap;
 }
 
-.chip::before {
+:where(.film-stage) .chip::before {
   content: "";
   position: absolute;
   inset: -0.06em -0.2em;
@@ -1127,18 +1127,18 @@
   color: rgba(255, 255, 255, 0.86);
 }
 
-.sel {
+:where(.film-stage) .sel {
   position: relative;
   display: inline-block;
 }
 
-.sel-box {
+:where(.film-stage) .sel-box {
   position: absolute;
   inset: -0.06em -0.12em -0.02em;
   border: 1px solid #fff;
 }
 
-.sel-h {
+:where(.film-stage) .sel-h {
   position: absolute;
   width: 0.16em;
   height: 0.16em;
@@ -1146,22 +1146,22 @@
   border: 1px solid var(--ink);
 }
 
-.sel-a {
+:where(.film-stage) .sel-a {
   left: -0.2em;
   top: -0.14em;
 }
 
-.sel-b {
+:where(.film-stage) .sel-b {
   right: -0.2em;
   top: -0.14em;
 }
 
-.sel-c {
+:where(.film-stage) .sel-c {
   left: -0.2em;
   bottom: -0.1em;
 }
 
-.sel-d {
+:where(.film-stage) .sel-d {
   right: -0.2em;
   bottom: -0.1em;
 }
