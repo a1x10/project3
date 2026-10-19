@@ -63,7 +63,7 @@ class Settings:
     # поиск в интернете (выполняется на стороне Anthropic, к серверу доступа не даёт)
     llm_web_search: bool = field(default_factory=lambda: _bool("LLM_WEB_SEARCH", True))
     llm_max_turns: int = field(default_factory=lambda: _int("LLM_MAX_TURNS", 5))
-    daily_budget_usd: float = field(default_factory=lambda: _float("DAILY_BUDGET_USD", 12.0))
+    daily_budget_usd: float = field(default_factory=lambda: _float("DAILY_BUDGET_USD", 0.0))
     # сколько ответов модель готовит одновременно (каждый — отдельный процесс; больше — нужна память и лимиты API)
     llm_concurrency: int = field(default_factory=lambda: _int("LLM_CONCURRENCY", 3))
 

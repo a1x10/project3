@@ -156,6 +156,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         initiative_per_week=0,
         tunnel_metrics_url="",  # без настоящего туннеля Cloudflare
         sandbox_ultra="off",  # проект — одним запуском (ультра-режим проверяется отдельно)
+        daily_budget_usd=12.0,  # бюджет задан — чтобы проверять, как он работает (в .env по умолчанию 0 — без него)
     )
     values.update(overrides)
     for k, v in values.items():
