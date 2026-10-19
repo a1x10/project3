@@ -110,6 +110,10 @@ class Outbox:
         return text, mentioned, everyone
 
     # ---------- отправка ----------
+    async def send_now(self, chat: dict[str, Any], text: str) -> str | None:
+        """Одно сообщение сразу (без «печатает…»); ошибку отправки — наверх (её надо показать тому, кто просил)."""
+        return await self._send_text(chat, text, 0)
+
     async def _send_text(self, chat: dict[str, Any], text: str, delay_ms: int,
                          quoted: Incoming | None = None, people: list[Person] | None = None,
                          prefer_lid: bool = False) -> str | None:

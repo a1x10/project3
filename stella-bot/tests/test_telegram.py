@@ -427,3 +427,23 @@ async def test_after_giveaway_broadcast_stella_knows_it_was_her(tbrain, api):
     assert "рассылка владельца бота о розыгрыше" in prompt  # и в самой переписке видно, что это за сообщение
     await feed_tg(tbrain, tg_update("привет", chat_id=5550003, chat_type="private", user_id=5550003, first="Оля"))
     assert "отправил через тебя владелец бота" not in tbrain.llm.calls[-1]["prompt"]  # кому не слали — без этого
+
+
+async def test_write_to_person_in_telegram_needs_them_to_have_written_first(tbrain, api):
+    # Вася писал в группе — бот его знает, но в личку Telegram первым бот писать не может
+    await feed_tg(tbrain, tg_update("всем привет", user_id=VASYA_TG))
+    api.fail["sendMessage"] = (403, {"ok": False, "error_code": 403,
+                                     "description": "Forbidden: bot can't initiate conversation with a user"})
+    outs = []
+
+    async def talk(tools, prompt):
+        try:
+            outs.append(await tools["write_to_person"].handler({"who": "Вася", "text": "Привет! Я Стелла…"}))
+        except Exception as exc:
+            outs.append(f"ERR {exc}")
+        return "ок"
+
+    tbrain.llm.queue = [talk]
+    await feed_tg(tbrain, tg_update("стелла напиши Васе", chat_id=OWNER_TG, chat_type="private", user_id=OWNER_TG,
+                                    first="Я"))
+    assert "первым бот писать не может" in outs[0]

@@ -600,6 +600,21 @@ class DB:
             ).all()
             return [_person(r) for r in rows]
 
+    async def search_all_people(self, query: str, limit: int = 5) -> list[Person]:
+        """Поиск по имени/нику/номеру среди всех, кого Стелла знает (во всех чатах)."""
+        q = norm(query).lstrip("@")
+        if not q:
+            return []
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(select(people))).all()
+        found = []
+        for p in (_person(r) for r in rows):
+            names = [norm(p.push_name), norm(p.nickname or ""), p.phone or ""]
+            if any(n and (n == q or q in n) for n in names):
+                found.append(p)
+        found.sort(key=lambda p: 0 if q in (norm(p.push_name), norm(p.nickname or "")) else 1)
+        return found[:limit]
+
     async def search_people(self, chat_id: int, query: str, limit: int = 5) -> list[Person]:
         """Поиск по имени/нику/номеру среди тех, кто писал в этот чат."""
         q = norm(query).lstrip("@")
