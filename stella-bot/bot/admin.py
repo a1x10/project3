@@ -33,8 +33,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .db import OWNER_SENDER, chat_paused
-from .util import mask_phone, utcnow
+from .db import OWNER_SENDER, Person, chat_paused
+from .plans import get_plan, set_plan, used_today
+from .util import mask_phone, phone_of, utcnow
 
 if TYPE_CHECKING:
     from .brain import Brain
@@ -260,6 +261,13 @@ EDITABLE: list[dict[str, Any]] = [
      "min": 1, "max": 10},
     {"key": "owner_takeover_minutes", "label": "Молчать, когда ты пишешь сам с её телефона, мин",
      "type": "number", "min": 0, "max": 1440},
+    {"key": "free_replies_per_day", "label": "Подписки: бесплатных ответов человеку в день", "type": "number",
+     "min": 0, "max": 10000, "hint": "0 — без лимита. Подписку или свой лимит человеку выдаёшь во вкладке «Люди»; "
+     "тебе и админам — всегда без лимита"},
+    {"key": "limit_message", "label": "Подписки: что писать, когда лимит кончился", "type": "text", "max_len": 600,
+     "hint": "{support} — подставится контакт техподдержки, {limit} — сколько сообщений было можно"},
+    {"key": "support_contact", "label": "Подписки: контакт техподдержки", "type": "text", "max_len": 200,
+     "hint": "@username, ссылка или номер — его Стелла даст тем, у кого кончился лимит"},
 ]
 EDITABLE_KEYS = {e["key"]: e for e in EDITABLE}
 OVERRIDES_KV = "settings_override"
@@ -281,7 +289,7 @@ def coerce(desc: dict[str, Any], value: Any) -> Any:
         if value not in desc["options"]:
             raise ValueError("нет такого варианта")
         return value
-    return str(value)[:200]
+    return str(value)[:desc.get("max_len", 200)]
 
 
 async def load_overrides(brain: "Brain") -> dict[str, Any]:
@@ -339,6 +347,23 @@ class AboutBody(BaseModel):
 
 class ProfileBody(BaseModel):
     fields: dict[str, str]
+
+
+class PlanBody(BaseModel):
+    kind: str = Field(pattern="^(free|unlimited|limit)$")  # бесплатно / подписка без лимита / свой лимит
+    days: int = Field(default=0, ge=0, le=3650)  # 0 — навсегда
+    limit: int = Field(default=0, ge=0, le=10000)  # ответов в сутки (для kind=limit)
+
+
+async def plan_info(brain: "Brain", p: Person) -> dict[str, Any]:
+    """Подписка человека для панели: что выдано, до когда, сколько можно и сколько уже сегодня."""
+    plan = await get_plan(brain.db, p.id, expired=True)
+    until = plan.get("until") if plan else None
+    ended = bool(until and time.time() >= float(until))
+    return {"kind": plan["kind"] if plan and not ended else "free", "until": until,
+            "ended": ended, "limit": plan.get("limit") if plan else None,
+            "daily": await brain.reply_limit(p), "used_today": await used_today(brain.db, p.id),
+            "admin": brain.s.is_admin(phone_of(p.jid) or p.phone)}
 
 
 LOCKS_KV = "panel_locks"
@@ -569,7 +594,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
             out.append({
                 "id": p.id, "ref": p.ref, "name": p.name, "push_name": p.push_name, "nickname": p.nickname,
                 "phone_masked": mask_phone(p.phone) if p.phone else mask_phone(p.jid),
-                "msg_count": msg_count,
+                "msg_count": msg_count, "plan": await plan_info(brain, p),
                 "profile": await brain.db.get_profile(p.id, chat_id),
                 "facts": await brain.db.get_facts(p.id, chat_id, 200),
             })
@@ -580,6 +605,21 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         await chat_or_404(request, chat_id)
         if person_id not in {p.id for p, _ in await brain.db.members_with_counts(chat_id)}:
             raise HTTPException(404, detail="нет такого человека в этом чате")
+
+    @router.put("/chats/{chat_id}/people/{person_id}/plan")
+    async def put_plan(chat_id: int, person_id: int, body: PlanBody, request: Request,
+                       _: str = Depends(require_session)) -> dict[str, Any]:
+        brain = get_brain(request)
+        await member_or_404(request, chat_id, person_id)
+        person = await brain.db.get_person(person_id)
+        if person is None:
+            raise HTTPException(404, detail="нет такого человека")
+        if body.kind == "limit" and body.limit < 1:
+            raise HTTPException(400, detail="свой лимит — хотя бы 1 сообщение в день")
+        await set_plan(brain.db, person_id, body.kind, days=body.days, limit=body.limit)
+        brain._limit_told.pop(person_id, None)
+        log.warning("панель: подписка %s — %s%s", person.ref, body.kind, f" на {body.days} дн." if body.days else "")
+        return {"ok": True, "plan": await plan_info(brain, person)}
 
     @router.put("/chats/{chat_id}/people/{person_id}/profile")
     async def set_profile(chat_id: int, person_id: int, body: ProfileBody, request: Request,

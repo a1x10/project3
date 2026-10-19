@@ -2,6 +2,7 @@
 
 import asyncio
 import secrets
+import time
 
 import httpx
 import pytest
@@ -161,6 +162,33 @@ async def test_chat_actions_and_settings(panel, brain):
     log = (await panel.get("/admin/api/log", headers=h)).json()["lines"]
     assert any("настройки" in line["text"] for line in log)
     await settle(brain)
+
+
+async def test_subscriptions_from_panel(panel, brain):
+    await brain.handle_payload(upsert("я петя", sender=PETYA, name="Петя"))
+    await settle(brain)
+    h = auth((await login(panel)).json()["token"])
+    cid = next(c for c in (await panel.get("/admin/api/chats", headers=h)).json()["chats"] if c["is_group"])["id"]
+    r = await panel.put("/admin/api/settings", json={"free_replies_per_day": 10, "support_contact": "@help",
+                                                     "limit_message": "Лимит кончился. " + "о" * 500}, headers=h)
+    assert r.status_code == 200 and brain.s.free_replies_per_day == 10 and len(brain.s.limit_message) > 500
+
+    people = (await panel.get(f"/admin/api/chats/{cid}/people", headers=h)).json()["people"]
+    petya = next(p for p in people if p["name"] == "Петя")
+    assert petya["plan"]["kind"] == "free" and petya["plan"]["daily"] == 10
+    path = f"/admin/api/chats/{cid}/people/{petya['id']}/plan"
+    r = await panel.put(path, json={"kind": "unlimited", "days": 30}, headers=h)
+    plan = r.json()["plan"]
+    assert plan["kind"] == "unlimited" and plan["daily"] == 0 and plan["until"] > time.time() + 29 * 86400
+    plan = (await panel.put(path, json={"kind": "limit", "limit": 3}, headers=h)).json()["plan"]
+    assert plan["kind"] == "limit" and plan["daily"] == 3 and plan["until"] is None
+    assert (await panel.put(path, json={"kind": "limit", "limit": 0}, headers=h)).status_code == 400
+    assert (await panel.put(path, json={"kind": "vip"}, headers=h)).status_code == 422
+    assert (await panel.put(path, json={"kind": "unlimited", "days": -1}, headers=h)).status_code == 422
+    assert (await panel.put(f"/admin/api/chats/{cid}/people/99999/plan", json={"kind": "free"},
+                            headers=h)).status_code == 404
+    assert (await panel.put(path, json={"kind": "free"}, headers=h)).json()["plan"]["kind"] == "free"
+    assert (await panel.put(path, json={"kind": "free"})).status_code == 401
 
 
 async def test_tunnel_exposes_only_the_panel(panel):

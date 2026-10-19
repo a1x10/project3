@@ -41,6 +41,10 @@ def _digits(value: str) -> str:
     return "".join(ch for ch in value if ch.isdigit())
 
 
+DEFAULT_LIMIT_MESSAGE = ("Вы достигли лимита сообщений на сегодня 🙏 Чтобы общаться без ограничений, купите подписку — "
+                         "вся информация у техподдержки: {support}")
+
+
 @dataclass
 class Settings:
     # --- модель ---
@@ -199,6 +203,13 @@ class Settings:
     telegram_allowed_chats: list[str] = field(default_factory=lambda: _list("TELEGRAM_ALLOWED_CHATS"))
     # бота в Telegram может найти кто угодно по @username: в личке у каждого (кроме владельца) — лимит в сутки
     telegram_dm_per_day: int = field(default_factory=lambda: _int("TELEGRAM_DM_PER_DAY", 0))
+
+    # --- подписки (выдаются в панели: «Люди» → человек → «Подписка») ---
+    # сколько ответов в сутки Стелла даёт человеку без подписки; 0 — без лимита (владельцу и админам — всегда)
+    free_replies_per_day: int = field(default_factory=lambda: _int("FREE_REPLIES_PER_DAY", 0))
+    # что она пишет, когда лимит кончился; {support} — контакт техподдержки, {limit} — сколько было можно
+    limit_message: str = field(default_factory=lambda: _str("LIMIT_MESSAGE") or DEFAULT_LIMIT_MESSAGE)
+    support_contact: str = field(default_factory=lambda: _str("SUPPORT_CONTACT"))  # @username, ссылка или номер
 
     # --- «как человек» ---
     reply_delay_min: float = field(default_factory=lambda: _float("REPLY_DELAY_MIN", 2))

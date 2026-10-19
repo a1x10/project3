@@ -348,6 +348,9 @@ dl { margin: 0; }
 .person-head[aria-expanded="true"] .chev { transform: rotate(-135deg); margin-bottom: -4px; }
 .person-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 
+.plan-status { margin: 0 0 10px; font-weight: 600; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.plan-grid [hidden] { display: none; }
 .kv-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 44px; gap: 6px; margin-bottom: 6px; }
 .kv-row .btn { min-width: 44px; padding: 0; }
 .facts { margin: 0 0 10px; padding-left: 20px; }
