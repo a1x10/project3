@@ -525,3 +525,12 @@ async def test_project_runs_in_ultra_mode_by_default(brain):
     await brain.handle_payload(upsert("стелла сделай ещё", chat=OWNER_JID, sender=OWNER_JID))
     await settle(brain, timeout=10)
     assert len(client.requests) == before + 1 and "ультра" not in outs[-1]
+
+
+async def test_no_daily_budget_when_zero(brain):
+    from datetime import date
+
+    brain.s.daily_budget_usd = 0  # 0 — без ограничения
+    await brain.db.kv_add(f"spend:{date.today().isoformat()}", 10_000)
+    await brain.refresh_spend()
+    assert not brain.over_budget()
