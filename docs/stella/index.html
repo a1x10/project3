@@ -48,11 +48,304 @@
 <!-- FILM:END -->
 
 <!-- LANDING:START — остальная страница (владелец: landing.js / landing.css) -->
-<main id="landing" class="landing">
-  <section id="what" class="section">
-    <h2>Что умеет Стелла</h2>
+<header id="lp-bar" class="lp-bar">
+  <div class="lp-bar__in">
+    <a class="lp-bar__logo" href="#film" aria-label="Стелла — в начало страницы"><svg class="lp-bar__star" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 6c2 14 6 22 26 26-20 4-24 12-26 26-2-14-6-22-26-26 20-4 24-12 26-26z"/></svg><span>Стелла</span></a>
+    <nav class="lp-bar__nav" aria-label="Разделы">
+      <a href="#what">Умения</a>
+      <a href="#chat">Пример</a>
+      <a href="#start">Как начать</a>
+      <a href="#plan">Подписка</a>
+      <a href="#faq">Вопросы</a>
+    </nav>
+    <a class="btn btn-red lp-bar__btn" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Написать</a>
+  </div>
+  <div class="lp-bar__laser" aria-hidden="true"></div>
+</header>
+
+<main id="landing" class="lp">
+
+  <!-- 01 · Что умеет -->
+  <section id="what" class="lp-sec lp-what" aria-labelledby="what-title">
+    <div class="lp-ghost" aria-hidden="true" data-allow-overflow data-drift="-0.35">Стелла ✦ Стелла ✦ Стелла</div>
+    <div class="lp-glow lp-glow--tl" aria-hidden="true" data-allow-overflow></div>
+    <div class="lp-wrap">
+      <p class="lp-hud" aria-hidden="true"><span>✦ 01</span><i></i><span>умения</span><span class="lp-rec">14</span></p>
+      <h2 id="what-title" class="lp-h2 lp-fill" data-fx="letters"><span class="lp-line">Что умеет</span> <span class="lp-line lp-red">Стелла<span class="lp-laser" aria-hidden="true"></span></span></h2>
+      <p class="lp-lead">Пишешь ей как подруге — «Стелла, …» — а она отвечает, помнит, рисует и собирает сайты, игры и&nbsp;мультики. Прямо в&nbsp;чате.</p>
+
+      <ul class="lp-grid">
+        <li class="lp-card lp-card--wide lp-card--red" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M10 7h28a5 5 0 0 1 5 5v15a5 5 0 0 1-5 5H23l-9 8v-8h-4a5 5 0 0 1-5-5V12a5 5 0 0 1 5-5z"/><circle class="i-dot" cx="16" cy="19.5" r="2.6"/><circle class="i-dot" cx="24" cy="19.5" r="2.6"/><circle class="i-dot" cx="32" cy="19.5" r="2.6"/></svg></span>
+          <h3 class="lp-card__t">Пишет как человек</h3>
+          <p class="lp-card__d">Простыми словами, несколькими короткими сообщениями, со&nbsp;своим настроением. А&nbsp;на&nbsp;серьёзное «ты живая?» честно ответит: она&nbsp;ИИ.</p>
+          <p class="lp-typing" aria-hidden="true"><span class="lp-typing__b"><i></i><i></i><i></i></span>Стелла печатает…</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><circle cx="22" cy="17" r="7.5"/><path d="M8 41c1.8-8.5 7.6-13 14-13s12.2 4.5 14 13"/><path class="i-spark" d="M38 5l1.8 4.7L44.5 11.5 39.8 13.3 38 18l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg></span>
+          <h3 class="lp-card__t">Помнит всех</h3>
+          <p class="lp-card__d">Факты о каждом в чате и&nbsp;ники. Спроси — расскажет.</p>
+          <p class="lp-chip">Стелла, кто это?</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M7 11h20M7 19h14M7 27h17M7 35h10"/><path class="i-spin" d="M33.5 41a8.5 8.5 0 1 0-7.6-4.7"/><path d="M23.5 32.5l2.4 3.8 3.9-2.2"/></svg></span>
+          <h3 class="lp-card__t">Перескажет чат</h3>
+          <p class="lp-card__d">Пропустил кучу сообщений? Вот главное — коротко.</p>
+          <p class="lp-chip">Стелла, что я пропустил?</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico lp-ico--wave" aria-hidden="true"><svg viewBox="0 0 48 48"><path class="i-bar" d="M7 20v8"/><path class="i-bar" d="M13.5 14v20"/><path class="i-bar" d="M20 8v32"/><path class="i-bar" d="M26.5 15v18"/><path class="i-bar" d="M33 11v26"/><path class="i-bar" d="M39.5 18v12"/></svg></span>
+          <h3 class="lp-card__t">Голосовые</h3>
+          <p class="lp-card__d">Понимает голосовые и&nbsp;может ответить голосом.</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M6 16v-5a5 5 0 0 1 5-5h5M32 6h5a5 5 0 0 1 5 5v5M42 32v5a5 5 0 0 1-5 5h-5M16 42h-5a5 5 0 0 1-5-5v-5"/><circle cx="24" cy="24" r="7.5"/><circle class="i-rec" cx="24" cy="24" r="2.6"/></svg></span>
+          <h3 class="lp-card__t">Видит фото</h3>
+          <p class="lp-card__d">И&nbsp;стикеры. Сфоткай домашку и&nbsp;напиши «Стелла, реши».</p>
+        </li>
+        <li class="lp-card lp-card--wide lp-card--paper" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="5" y="8" width="38" height="32" rx="5"/><path d="M5 16h38"/><path class="i-code" d="M19 23l-5 5 5 5M29 23l5 5-5 5M26.5 21l-5 14"/></svg></span>
+          <h3 class="lp-card__t">Сайты, игры, викторины</h3>
+          <p class="lp-card__d">И&nbsp;открытки с&nbsp;3D и&nbsp;анимацией. Готовая страница приходит файлом прямо в&nbsp;чат — за&nbsp;минуты.</p>
+          <p class="lp-chip">Стелла, сделай викторину про котов</p>
+          <p class="lp-file" aria-hidden="true"><span class="lp-file__i">&lt;/&gt;</span>викторина.html</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><g class="i-bob"><path d="M14 19l-2-11 8.5 6h7L36 8l-2 11c1.6 2.4 2.5 5.1 2.5 8 0 7.5-5.6 12.5-12.5 12.5S11.5 34.5 11.5 27c0-2.9.9-5.6 2.5-8z"/><circle class="i-fill" cx="19" cy="26" r="1.8"/><circle class="i-fill" cx="29" cy="26" r="1.8"/><path d="M22 31.5c1.3 1 2.7 1 4 0"/></g><path class="i-motion" d="M2 22h4M1 28h5M42 22h4M42 28h5"/></svg></span>
+          <h3 class="lp-card__t">Мультики</h3>
+          <p class="lp-card__d">Кот, лиса или зайка танцуют, машут и&nbsp;говорят.</p>
+          <p class="lp-chip">Стелла, сделай мультик, как кот танцует</p>
+        </li>
+        <li class="lp-card lp-card--paper" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M11 6h26a5 5 0 0 1 5 5v17L28 42H11a5 5 0 0 1-5-5V11a5 5 0 0 1 5-5z"/><path d="M42 28H33a5 5 0 0 0-5 5v9"/><circle class="i-fill" cx="17.5" cy="19" r="2"/><circle class="i-fill" cx="28.5" cy="19" r="2"/><path d="M16.5 26.5c2 2.6 4.4 3.8 7.5 3.8"/></svg></span>
+          <h3 class="lp-card__t">Стикеры и&nbsp;мемы</h3>
+          <p class="lp-card__d">Рисует стикеры, картинки, открытки и&nbsp;мемы.</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M13 13V9a3 3 0 0 1 3-3h24a3 3 0 0 1 3 3v19a3 3 0 0 1-3 3h-4"/><rect x="5" y="13" width="31" height="23" rx="3"/><path class="i-bars" d="M12 30v-5M18 30v-9M24 30v-6M30 30v-11"/><path d="M20.5 36v6M14 42h13"/></svg></span>
+          <h3 class="lp-card__t">Презентации и&nbsp;документы</h3>
+          <p class="lp-card__d">PowerPoint + PDF, Word, Excel, видео-слайдшоу. И&nbsp;читает твои файлы.</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="5" y="6" width="38" height="26" rx="6"/><path class="i-fill" d="M20.5 13v12l10-6z"/><path class="i-drop" d="M24 35v9M19.5 39.5L24 44l4.5-4.5"/></svg></span>
+          <h3 class="lp-card__t">Видео по&nbsp;ссылке</h3>
+          <p class="lp-card__d">Кинь ссылку на&nbsp;TikTok или YouTube — видео придёт прямо в&nbsp;чат.</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><circle cx="21" cy="21" r="14"/><path d="M7 21h28M21 7c-4.4 4-6 9-6 14s1.6 10 6 14M21 7c4.4 4 6 9 6 14s-1.6 10-6 14"/><path class="i-red" d="M32 32l10 10"/></svg></span>
+          <h3 class="lp-card__t">Свежие новости</h3>
+          <p class="lp-card__d">Ищет в&nbsp;интернете новости и&nbsp;факты — по&nbsp;твоему вопросу.</p>
+        </li>
+        <li class="lp-card" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><circle cx="24" cy="26" r="15"/><path class="i-hand" d="M24 17v9l6 4"/><path d="M6 12l7-6M42 12l-7-6M13 41l-3 4M35 41l3 4"/></svg></span>
+          <h3 class="lp-card__t">Напоминания и&nbsp;опросы</h3>
+          <p class="lp-card__d">«Напомни завтра в&nbsp;8» — напомнит. Опрос в&nbsp;группу — соберёт.</p>
+        </li>
+        <li class="lp-card lp-card--red" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="4" y="9" width="40" height="30" rx="6"/><path d="M17.3 9v30M30.7 9v30"/><path class="i-fill i-reel" d="M10.6 19.5l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2zM24 19.5l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2zM37.4 19.5l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z"/></svg></span>
+          <h3 class="lp-card__t">Бананы и&nbsp;розыгрыши</h3>
+          <p class="lp-card__d">Казино на&nbsp;игрушечные бананы 🍌 — они ненастоящие. И&nbsp;розыгрыши для&nbsp;чата.</p>
+        </li>
+        <li class="lp-card lp-card--last" data-reveal>
+          <span class="lp-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M9 8h30a4 4 0 0 1 4 4v17a4 4 0 0 1-4 4H23l-9 8v-8H9a4 4 0 0 1-4-4V12a4 4 0 0 1 4-4z"/><path class="i-fill i-zap" d="M26 11.5l-8 10.5h6l-2.5 8 8.5-11h-6z"/></svg></span>
+          <h3 class="lp-card__t">Оживляет группу</h3>
+          <p class="lp-card__d">Когда в&nbsp;чате тихо, сама подкинет вопрос, анекдот или&nbsp;опрос.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 02 · Живой пример -->
+  <section id="chat" class="lp-sec lp-chat" aria-labelledby="chat-title">
+    <div class="lp-glow lp-glow--chat" aria-hidden="true" data-allow-overflow></div>
+    <div class="lp-wrap lp-chat__grid">
+      <div class="lp-chat__copy">
+        <p class="lp-hud" aria-hidden="true"><span>✦ 02</span><i></i><span>пример</span><span class="lp-rec">rec</span></p>
+        <h2 id="chat-title" class="lp-h2 lp-stack" data-fx="column"><span class="lp-line"><span class="lp-pre" aria-hidden="true">›_</span>Пишешь.</span> <span class="lp-line lp-red"><span class="lp-pre" aria-hidden="true">✦</span>Она делает.</span> <span class="lp-line"><span class="lp-pre" aria-hidden="true">▶</span>Готово.</span></h2>
+        <p class="lp-lead">Обычный вечер в&nbsp;групповом чате. Никаких команд и&nbsp;меню — просто «Стелла, …» своими словами.</p>
+        <ul class="lp-ticks">
+          <li>отвечает несколькими короткими сообщениями</li>
+          <li>помнит, о&nbsp;чём говорили</li>
+          <li>файлы присылает прямо в&nbsp;чат</li>
+        </ul>
+      </div>
+
+      <figure class="lp-vf">
+        <figcaption class="lp-vf__cap"><span class="lp-vf__rec" aria-hidden="true">● rec</span><span class="lp-vf__tc" aria-hidden="true">00:00:00</span><span class="sr-only">Пример переписки со Стеллой в групповом чате</span></figcaption>
+        <div class="tg" id="tg">
+          <div class="tg-head" aria-hidden="true">
+            <span class="tg-back">‹</span>
+            <span class="tg-ava tg-ava--grp">Д</span>
+            <span class="tg-who"><b>Дача в субботу</b><span class="tg-status" data-idle="5 участников">5 участников</span></span>
+          </div>
+          <div class="tg-log">
+            <ol class="tg-feed">
+              <li class="tg-sys"><span>142 непрочитанных сообщения</span></li>
+              <li class="tg-msg tg-in tg-last"><span class="tg-ava tg-ava--l" aria-hidden="true">Л</span><p class="tg-b"><b class="tg-name tg-name--l">Лёша</b><span class="tg-t">Тогда в субботу у меня на даче. Мангал мой</span><span class="tg-meta" aria-hidden="true">20:41</span></p></li>
+              <li class="tg-msg tg-in tg-last"><span class="tg-ava tg-ava--m" aria-hidden="true">М</span><p class="tg-b"><b class="tg-name tg-name--m">Маша</b><span class="tg-t">Кто что везёт?</span><span class="tg-meta" aria-hidden="true">20:44</span></p></li>
+              <li class="tg-msg tg-in tg-last"><span class="tg-ava tg-ava--d" aria-hidden="true">Д</span><p class="tg-b"><b class="tg-name tg-name--d">Дима</b><span class="tg-t">Мясо на мне. В этот раз не сожгу, клянусь</span><span class="tg-meta" aria-hidden="true">20:58</span></p></li>
+              <li class="tg-msg tg-in tg-last"><span class="tg-ava tg-ava--m" aria-hidden="true">М</span><p class="tg-b"><b class="tg-name tg-name--m">Маша</b><span class="tg-t">Короче, всё решили, да? 🔥</span><span class="tg-meta" aria-hidden="true">20:59</span></p></li>
+              <li class="tg-msg tg-out" data-step="me"><p class="tg-b"><span class="sr-only">Ты: </span><span class="tg-t">Стелла, что я пропустил?</span><span class="tg-meta" aria-hidden="true">21:04 <span class="tg-tick">✓✓</span></span></p></li>
+              <li class="tg-msg tg-in" data-step="st" data-typing="1300"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><p class="tg-b"><b class="tg-name">Стелла</b><span class="tg-t">Коротко: в субботу едете к Лёше на дачу, жарите шашлыки 🔥</span><span class="tg-meta" aria-hidden="true">21:04</span></p></li>
+              <li class="tg-msg tg-in tg-cont" data-step="st" data-typing="700"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><p class="tg-b"><span class="sr-only">Стелла: </span><span class="tg-t">Дима отвечает за мясо и клянётся ничего не сжечь</span><span class="tg-meta" aria-hidden="true">21:04</span></p></li>
+              <li class="tg-msg tg-in tg-cont tg-last" data-step="st" data-typing="700"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><p class="tg-b"><span class="sr-only">Стелла: </span><span class="tg-t">А с тебя хлеб 😄</span><span class="tg-meta" aria-hidden="true">21:04</span></p></li>
+              <li class="tg-msg tg-out" data-step="me"><p class="tg-b"><span class="sr-only">Ты: </span><span class="tg-t">Стелла, напомни в пятницу в 18:00 про шашлыки</span><span class="tg-meta" aria-hidden="true">21:05 <span class="tg-tick">✓✓</span></span></p></li>
+              <li class="tg-msg tg-in tg-last" data-step="st" data-typing="900"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><p class="tg-b"><b class="tg-name">Стелла</b><span class="tg-t">Готово, напомню ⏰</span><span class="tg-meta" aria-hidden="true">21:05</span></p></li>
+              <li class="tg-msg tg-out" data-step="me"><p class="tg-b"><span class="sr-only">Ты: </span><span class="tg-t">Стелла, сделай открытку маме</span><span class="tg-meta" aria-hidden="true">21:06 <span class="tg-tick">✓✓</span></span></p></li>
+              <li class="tg-msg tg-in tg-last" data-step="st" data-typing="900"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><p class="tg-b"><b class="tg-name">Стелла</b><span class="tg-t">Делаю, будет через пару минут</span><span class="tg-meta" aria-hidden="true">21:06</span></p></li>
+              <li class="tg-sys" data-step="sys"><span>…пара минут спустя</span></li>
+              <li class="tg-msg tg-in tg-last" data-step="st" data-typing="1100"><span class="tg-ava tg-ava--st" aria-hidden="true">✦</span><div class="tg-b tg-b--file"><b class="tg-name">Стелла</b>
+                <div class="tg-card" aria-hidden="true"><span class="tg-card__burst"></span><span class="tg-card__txt">Мамочка,<br>ты лучшая</span><span class="tg-card__star">✦</span></div>
+                <p class="tg-file"><span class="tg-file__i" aria-hidden="true">&lt;/&gt;</span><span class="tg-file__n"><span class="sr-only">Стелла прислала файл: </span>открытка.html<span class="tg-file__m">HTML-открытка с анимацией</span></span></p>
+                <span class="tg-meta" aria-hidden="true">21:08</span></div></li>
+              <li class="tg-msg tg-in tg-last" data-step="other"><span class="tg-ava tg-ava--m" aria-hidden="true">М</span><p class="tg-b"><b class="tg-name tg-name--m">Маша</b><span class="tg-t">Ого, она сама это сделала?! 😍</span><span class="tg-meta" aria-hidden="true">21:08</span></p></li>
+            </ol>
+          </div>
+          <div class="tg-input" aria-hidden="true">
+            <svg class="tg-input__clip" viewBox="0 0 24 24"><path d="M16.5 7.5l-7.2 7.2a2 2 0 0 0 2.8 2.8l7.5-7.5a4 4 0 0 0-5.7-5.7L6.4 11.8a6 6 0 0 0 8.5 8.5l5.6-5.6"/></svg>
+            <span class="tg-field"><span class="tg-typed"></span><span class="tg-ph">Сообщение</span></span>
+            <span class="tg-send"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 17-3-7z"/></svg></span>
+          </div>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 03 · Как начать -->
+  <section id="start" class="lp-sec lp-start" aria-labelledby="start-title">
+    <div class="lp-wrap">
+      <p class="lp-hud lp-hud--ink" aria-hidden="true"><span>✦ 03</span><i></i><span>как начать</span><span class="lp-rec">3 шага</span></p>
+      <h2 id="start-title" class="lp-h2 lp-fill" data-fx="slam"><span class="lp-line">Как</span> <span class="lp-line">начать<span class="lp-red">.</span></span></h2>
+      <ol class="lp-steps">
+        <li class="lp-step" data-reveal>
+          <span class="lp-step__n" aria-hidden="true">01</span>
+          <h3 class="lp-step__t">Открой бота</h3>
+          <p class="lp-step__d">Стелла в&nbsp;Telegram — <a class="lp-handle" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">@stella_ai_beta_bot</a></p>
+          <p class="lp-field" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5l17-7-3.2 15.2-5.3-4.3-2.8 2.9-.4-4.6z"/></svg><span>t.me/stella_ai_beta_bot</span></p>
+        </li>
+        <li class="lp-step" data-reveal>
+          <span class="lp-step__n" aria-hidden="true">02</span>
+          <h3 class="lp-step__t">Напиши «Стелла, привет»</h3>
+          <p class="lp-step__d">Или добавь её в&nbsp;группу к&nbsp;друзьям — и&nbsp;зови по&nbsp;имени.</p>
+          <p class="lp-field" aria-hidden="true"><b>›</b><span>Стелла, привет<span class="lp-caret"></span></span></p>
+        </li>
+        <li class="lp-step" data-reveal>
+          <span class="lp-step__n" aria-hidden="true">03</span>
+          <h3 class="lp-step__t">Проси что угодно</h3>
+          <p class="lp-step__d">Своими словами, как подругу. Без&nbsp;команд и&nbsp;кнопок.</p>
+          <p class="lp-tags" aria-hidden="true"><span>нарисуй</span><span>напомни</span><span>перескажи</span><span>сделай сайт</span></p>
+        </li>
+      </ol>
+      <p class="lp-start__cta"><a class="btn btn-red" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Написать Стелле</a></p>
+    </div>
+  </section>
+
+  <!-- бегущая строка -->
+  <div class="lp-marq" aria-hidden="true" data-allow-overflow>
+    <div class="lp-tape lp-tape--ink"><div class="lp-tape__skew"><div class="lp-tape__track lp-tape__track--rev">
+      <span>пишет ✦ помнит ✦ рисует ✦ делает ✦ напоминает ✦ пересказывает ✦ </span><span>пишет ✦ помнит ✦ рисует ✦ делает ✦ напоминает ✦ пересказывает ✦ </span>
+    </div></div></div>
+    <div class="lp-tape lp-tape--red"><div class="lp-tape__skew"><div class="lp-tape__track">
+      <span>Одно сообщение <b>✦</b> Одно сообщение <b>✦</b> Одно сообщение <b>✦</b> </span><span>Одно сообщение <b>✦</b> Одно сообщение <b>✦</b> Одно сообщение <b>✦</b> </span>
+    </div></div></div>
+  </div>
+
+  <!-- 04 · Подписка -->
+  <section id="plan" class="lp-sec lp-plan" aria-labelledby="plan-title">
+    <div class="lp-glow lp-glow--plan" aria-hidden="true" data-allow-overflow></div>
+    <div class="lp-wrap">
+      <p class="lp-hud" aria-hidden="true"><span>✦ 04</span><i></i><span>подписка</span><span class="lp-rec">∞</span></p>
+      <h2 id="plan-title" class="lp-h2 lp-fill" data-fx="stretch"><span class="lp-line">Подписка</span></h2>
+      <p class="lp-lead">Начать можно бесплатно — со&nbsp;всеми умениями. Подписка нужна, когда хочется болтать без&nbsp;остановки.</p>
+      <div class="lp-plans">
+        <article class="lp-plan-card" data-reveal>
+          <div class="lp-plan-card__top"><p class="lp-plan-card__tag">с первого сообщения</p><svg class="lp-day" viewBox="0 0 48 48" aria-hidden="true"><path d="M39 24a15 15 0 1 1-4.4-10.6"/><path d="M36 6v8h-8"/><path class="lp-day__s" d="M24 17l1.6 4.4L30 23l-4.4 1.6L24 29l-1.6-4.4L18 23l4.4-1.6z"/></svg></div>
+          <h3 class="lp-plan-card__t">Бесплатно</h3>
+          <p class="lp-plan-card__big">Каждый день — лимит сообщений.</p>
+          <ul class="lp-plan-card__list">
+            <li>все умения — сразу</li>
+            <li>лимит обновляется каждый день</li>
+            <li>Telegram и&nbsp;WhatsApp</li>
+          </ul>
+          <a class="btn btn-red" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Написать Стелле</a>
+        </article>
+        <article class="lp-plan-card lp-plan-card--red" data-reveal>
+          <div class="lp-plan-card__top"><p class="lp-plan-card__tag">без лимита</p><svg class="lp-inf" viewBox="1 11 46 26" aria-hidden="true"><path class="lp-inf__base" pathLength="100" d="M24 24C30 14 44 14 44 24S30 34 24 24 4 14 4 24s14 10 20 0z"/><path class="lp-inf__beam" pathLength="100" d="M24 24C30 14 44 14 44 24S30 34 24 24 4 14 4 24s14 10 20 0z"/></svg></div>
+          <h3 class="lp-plan-card__t">Подписка</h3>
+          <p class="lp-plan-card__big">Без лимита — общайся сколько хочешь.</p>
+          <ul class="lp-plan-card__list">
+            <li>никакого дневного лимита</li>
+            <li>все те же умения</li>
+            <li>как оформить — расскажет техподдержка</li>
+          </ul>
+          <a class="btn lp-btn-ink" data-link="support" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Узнать про подписку</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 · Вопросы -->
+  <section id="faq" class="lp-sec lp-faq" aria-labelledby="faq-title">
+    <div class="lp-wrap">
+      <p class="lp-hud lp-hud--ink" aria-hidden="true"><span>✦ 05</span><i></i><span>вопросы</span><span class="lp-rec">faq</span></p>
+      <h2 id="faq-title" class="lp-h2 lp-ask" data-fx="rise"><span class="lp-line lp-ask__s">Прежде чем</span> <span class="lp-line">ты</span> <span class="lp-line lp-red">спросишь</span><span class="lp-ask__q" aria-hidden="true">?</span></h2>
+      <div class="lp-faq__list">
+        <details class="lp-q" data-reveal>
+          <summary><span>Она живая?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>Нет. Стелла — искусственный интеллект. Общается по-человечески, у&nbsp;неё бывает настроение, но&nbsp;на&nbsp;серьёзный вопрос «ты живая?» она честно скажет, что она ИИ.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Это бесплатно?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>Да: каждый день есть бесплатный лимит сообщений, и&nbsp;все умения доступны сразу. Хочешь общаться без&nbsp;лимита — есть подписка. Как её оформить, расскажет <a data-link="support" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">техподдержка</a>.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Где она работает?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>В&nbsp;Telegram — в&nbsp;личке и&nbsp;в&nbsp;группах — и&nbsp;в&nbsp;WhatsApp. Проще всего начать в&nbsp;Telegram: <a data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">@stella_ai_beta_bot</a>.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Как добавить её в&nbsp;группу?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>Добавь @stella_ai_beta_bot в&nbsp;группу, как обычного участника, и&nbsp;обращайся по&nbsp;имени: «Стелла, …». А&nbsp;когда в&nbsp;чате тихо, она может и&nbsp;сама подкинуть вопрос, анекдот или опрос.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Что она помнит обо&nbsp;мне?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>То, что ты пишешь в&nbsp;чатах с&nbsp;ней: факты и&nbsp;ники — чтобы понимать, кто есть кто. Поэтому на&nbsp;«Стелла, кто это?» она ответит по&nbsp;делу.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Что она не&nbsp;умеет?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>Честно: снять «кино» по&nbsp;описанию — нет. Её мультики — это короткие анимации: кот, лиса или зайка танцуют, машут, говорят. И&nbsp;она может ошибаться — важное лучше проверить.</p></div>
+        </details>
+        <details class="lp-q" data-reveal>
+          <summary><span>Сколько ждать ответа?</span><i class="lp-q__x" aria-hidden="true"></i></summary>
+          <div class="lp-q__a"><p>Обычный ответ приходит сразу. Сайт, игра или презентация — за&nbsp;минуты: Стелла напишет, что взялась за&nbsp;дело, и&nbsp;пришлёт файл, когда всё будет готово.</p></div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 · Финальный призыв -->
+  <section id="go" class="lp-sec lp-final" aria-labelledby="go-title">
+    <div class="lp-embers" aria-hidden="true" data-allow-overflow><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="lp-wrap">
+      <p class="lp-hud" aria-hidden="true"><span>✦ 06</span><i></i><span>твой ход</span><span class="lp-rec">live</span></p>
+      <h2 id="go-title" class="lp-mega" data-fx="slam"><span class="lp-line">Напиши</span> <span class="lp-line">ей<span class="lp-dot">.</span><span class="lp-beam" aria-hidden="true" data-allow-overflow></span></span></h2>
+      <p class="lp-final__sub">Одно сообщение — и&nbsp;готово.</p>
+      <p class="lp-final__cta"><a class="btn btn-red lp-btn-xl" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Написать Стелле</a><span class="lp-final__h">@stella_ai_beta_bot · Telegram</span></p>
+    </div>
   </section>
 </main>
+
+<footer class="lp-foot">
+  <div class="lp-wrap lp-foot__in">
+    <p class="lp-foot__logo"><span class="star" aria-hidden="true">✦</span> Стелла — ИИ в&nbsp;Telegram и&nbsp;WhatsApp</p>
+    <p class="lp-foot__note">Стелла — искусственный интеллект: может ошибаться, проверяй важное.</p>
+    <nav class="lp-foot__links" aria-label="Ссылки в подвале">
+      <a data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Telegram-бот</a>
+      <a data-link="support" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Подписка и&nbsp;поддержка</a>
+      <a href="#film">Наверх ↑</a>
+    </nav>
+  </div>
+  <p class="lp-foot__giant" aria-hidden="true" data-allow-overflow>Стелла</p>
+</footer>
 <!-- LANDING:END -->
 
 </body>
