@@ -9,6 +9,10 @@
 - quick — ответ сразу, если задача успевает за SANDBOX_QUICK_SECONDS (не держим очередь ответов бота); не успела —
   доделывается в фоне. project — сразу в фоне. В фоне — до SANDBOX_PROJECT_TIMEOUT, результат и файлы приходят
   ответом на просьбу.
+- ultra — максимальная мощность для программирования, как ultracode в Claude Code: план с требованиями и тестами →
+  код → независимый строгий ревьюер (свежий взгляд, проверяет запуском, пытается сломать) → исправления, и так
+  кругами, пока ревьюер не скажет «готово» (SANDBOX_ULTRA_ROUNDS). По умолчанию так идёт каждый project
+  (SANDBOX_ULTRA=projects). Свой потолок денег (SANDBOX_ULTRA_MAX_USD) и времени (SANDBOX_ULTRA_TIMEOUT).
 - Деньги: дневной бюджет (DAILY_BUDGET_USD) и SANDBOX_PER_DAY — для всех, кроме владельца; потолок одного запуска
   SANDBOX_MAX_RUN_USD — для всех. Потраченное записывается при любом исходе (и когда время вышло).
 - Доступ — владельцу, а в режиме друзей (FRIENDS_MODE) — и своим (ctx.is_admin); остальные о нём не узнают.
@@ -19,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -51,6 +56,7 @@ WEB_RETRY_AFTER = 3600  # API не принял поиск — час без н�
 # сколько держим в уме из дневного бюджета, пока запуск идёт (расход записывается по итогу)
 QUICK_RESERVE_USD = 1.0
 PROJECT_RESERVE_USD = 5.0
+ULTRA_RESERVE_USD = 15.0
 CONTINUE = "Ответ оборвался по длине. Продолжай с того места, где остановилась; сделанное не повторяй."
 NO_WEB = "\n\n(Поиск и чтение страниц в интернете в этот раз выключены — обходись без них.)"
 SYSTEM = """Ты — сильный инженер уровня senior и работаешь как Claude Code: у тебя Linux-контейнер (bash, Python 3 с \
@@ -74,6 +80,63 @@ pandas, numpy, matplotlib, scikit-learn, openpyxl, python-docx, python-pptx, pil
 Длинный код в ответ не вставляй — он в файлах."""
 
 
+ULTRA_BUILD = """РЕЖИМ МАКСИМАЛЬНОГО КАЧЕСТВА. После тебя работу проверит независимый строгий ревьюер, потом ты \
+исправишь найденное — делай сразу так, чтобы ему нечего было найти.
+1. Сначала создай PLAN.md: все требования задачи пронумерованным чек-листом (ничего не упусти и не додумывай \
+лишнего), архитектура, как проверишь каждое требование.
+2. Делай по плану. Пиши автотесты (pytest и т.п.) на основную логику, граничные случаи и плохие входные данные; \
+гоняй их, пока всё не пройдёт.
+3. В конце пройди чек-лист PLAN.md и проверь каждое требование запуском. Итоговые файлы — в рабочую папку \
+(проект из нескольких файлов — zip с README и тестами).
+
+ЗАДАЧА:
+"""
+
+REVIEW_SYSTEM = """Ты — строгий независимый ревьюер уровня staff engineer, как отдельный проверяющий агент в Claude \
+Code. У тебя Linux-контейнер (bash, Python 3 и библиотеки), а ещё поиск и чтение страниц в интернете (web_search, \
+web_fetch); у самого контейнера интернета нет. В контейнере — работа другого инженера по задаче (её пришлют): файлы \
+в рабочей папке, требования и план — в PLAN.md, если есть. Твоя цель — найти, что НЕ работает, сделано не так или \
+не сделано. Сам ничего в проекте не исправляй и не переписывай.
+
+КАК ПРОВЕРЯЕШЬ
+1. Найди все файлы проекта (ls -la, find), прочитай код и PLAN.md.
+2. Сверь КАЖДОЕ требование задачи: сделано ли и работает ли — запуском, а не на глаз.
+3. Запусти тесты проекта. Свои проверки (граничные случаи, пустые и плохие входные данные, большие объёмы) пиши \
+во временную папку /tmp, не трогая проект.
+4. Ищи: падения и необработанные ошибки, неверные результаты, то, что не запускается по README, дыры \
+безопасности (инъекции, секреты в коде), для сайта или игры — что index.html открывается и работает без ошибок.
+Каждую проблему подтверди запуском. К стилю и вкусовщине не придирайся.
+
+ОТВЕТ — строго в таком виде:
+ПРОБЛЕМЫ:
+1. [критично] или [важно] или [мелочь] что не так — как воспроизвести — что ожидалось
+(если проблем нет — «нет»)
+ВЕРДИКТ: ГОТОВО — если критичных и важных проблем нет; иначе ВЕРДИКТ: ИСПРАВИТЬ"""
+
+
+def review_task(task: str) -> str:
+    return f"ЗАДАЧА, которую делали:\n{task}\n\nПроверь работу в контейнере."
+
+
+def fix_task(task: str, review: str) -> str:
+    return (f"Ты продолжаешь свой проект в этом контейнере (файлы и PLAN.md — в рабочей папке).\n\nЗАДАЧА:\n{task}"
+            f"\n\nНезависимый ревьюер проверил работу и нашёл:\n{review[-6000:]}\n\nИсправь все критичные и важные "
+            "проблемы (мелочи — если это просто). Каждое исправление подтверди запуском и тестом, прогони все тесты. "
+            "В конце сохрани итоговые файлы результата в рабочую папку заново (обновлённые версии) и коротко "
+            "по-русски: что исправлено и как пользоваться.")
+
+
+def review_verdict(text: str) -> tuple[str, list[str]]:
+    """Ответ ревьюера -> (done | fix | unclear, критичные и важные проблемы)."""
+    issues = [line.strip() for line in text.splitlines() if re.search(r"\[(критично|важно)\]", line, re.IGNORECASE)]
+    m = re.search(r"ВЕРДИКТ:\s*(ГОТОВО|ИСПРАВИТЬ)", text, re.IGNORECASE)
+    if issues:
+        return "fix", issues
+    if m and m.group(1).upper() == "ГОТОВО":
+        return "done", []
+    return ("fix", []) if m else ("unclear", [])
+
+
 class SandboxError(Exception):
     def __init__(self, message: str, cost_usd: float = 0.0):
         super().__init__(message)
@@ -88,6 +151,7 @@ class SandboxResult:
     cost_usd: float = 0.0
     container_id: str | None = None
     unfinished: str = ""  # почему остановилась раньше конца (потолок денег или шагов)
+    file_ids: list[str] = field(default_factory=list)  # файлы результата в хранилище Anthropic (ещё не скачанные)
 
 
 @dataclass
@@ -134,16 +198,82 @@ class CodeSandbox:
         return self._client
 
     async def run(self, task: str, inputs: list[InputFile] | None = None, container: str | None = None,
-                  timeout: float | None = None, *, web: bool = True, progress: Progress | None = None) -> SandboxResult:
+                  timeout: float | None = None, *, web: bool = True, progress: Progress | None = None,
+                  max_usd: float | None = None, model: str | None = None, effort: str | None = None) -> SandboxResult:
         """web=False — без поиска и чтения страниц (например, в задаче чужой текст из файла). progress — снаружи
-        видно, сколько потрачено, даже если запуск оборвётся."""
+        видно, сколько потрачено, даже если запуск оборвётся. max_usd — потолок этого запуска (иначе общий).
+        model/effort — своя модель для этого запуска (режим Flash), иначе SANDBOX_MODEL/SANDBOX_EFFORT."""
         progress = progress if progress is not None else Progress(container_id=container)
+        engine = (model or self.model, effort or self.effort)
+        return await self._limited(self._run(task, inputs or [], container, web, progress, max_usd=max_usd,
+                                             engine=engine), timeout, progress)
+
+    async def run_ultra(self, task: str, inputs: list[InputFile] | None = None, container: str | None = None,
+                        timeout: float | None = None, *, web: bool = True, progress: Progress | None = None,
+                        rounds: int = 3, max_usd: float | None = None) -> SandboxResult:
+        """Максимальная мощность для программирования: план и тесты → код → независимый ревьюер → исправления,
+        кругами, пока ревьюер не скажет «готово» (rounds — сколько раз проверять)."""
+        progress = progress if progress is not None else Progress(container_id=container)
+        return await self._limited(self._ultra(task, inputs or [], container, web, progress, max(1, rounds), max_usd),
+                                   timeout, progress)
+
+    async def _limited(self, work: Any, timeout: float | None, progress: Progress) -> SandboxResult:
         limit = timeout or self.timeout
         try:
-            return await asyncio.wait_for(self._run(task, inputs or [], container, web, progress), timeout=limit)
+            return await asyncio.wait_for(work, timeout=limit)
         except asyncio.TimeoutError as exc:
             raise SandboxError(f"не успела за {_minutes(limit)} — сделанное осталось в песочнице: скажи «продолжи», "
                                "и я доделаю", progress.cost_usd) from exc
+
+    async def _ultra(self, task: str, inputs: list[InputFile], container: str | None, web: bool, progress: Progress,
+                     rounds: int, max_usd: float | None) -> SandboxResult:
+        ceiling = self.max_run_usd if max_usd is None else max_usd
+
+        def broke() -> bool:
+            return bool(ceiling) and progress.cost_usd >= ceiling
+
+        build = await self._run(ULTRA_BUILD + task, inputs, container, web, progress, max_usd=ceiling,
+                                download=False)
+        file_ids, text, unfinished = list(build.file_ids), build.text, build.unfinished
+        stdout = [build.stdout] if build.stdout else []
+        reviews, fixed, remaining, unclear = 0, 0, [], False
+        for i in range(rounds):
+            if unfinished or broke():
+                break
+            review = await self._run(review_task(task), [], progress.container_id, web, progress,
+                                     system=REVIEW_SYSTEM, max_usd=ceiling, download=False)
+            reviews += 1
+            verdict, issues = review_verdict(review.text)
+            log.info("песочница (ультра): проверка %d — %s, проблем %d", reviews, verdict, len(issues))
+            if verdict != "fix":
+                remaining, unclear = [], verdict == "unclear" or bool(review.unfinished)
+                break
+            remaining = issues or ["ревьюер просит исправить (подробности — в его отчёте)"]
+            if i == rounds - 1 or broke():
+                break  # больше кругов нет — что осталось, скажем человеку
+            fix = await self._run(fix_task(task, review.text), [], progress.container_id, web, progress,
+                                  max_usd=ceiling, download=False)
+            fixed += len(issues)
+            file_ids += fix.file_ids
+            text = fix.text or text
+            if fix.stdout:
+                stdout.append(fix.stdout)
+            if fix.unfinished:
+                unfinished = fix.unfinished
+        if broke() and not unfinished and remaining:
+            unfinished = f"потрачено ${progress.cost_usd:.2f} — это потолок ультра-режима (SANDBOX_ULTRA_MAX_USD)"
+        note = f"🔍 Ультра-режим: независимых проверок — {reviews}, исправлено проблем — {fixed}."
+        if remaining:
+            note += "\nРевьюер ещё видит:\n" + "\n".join(f"• {x[:300]}" for x in remaining[:4])
+            note += "\nНапиши «продолжи» — доделаю."
+        elif unclear:
+            note += " Последняя проверка не дала ясного ответа."
+        elif reviews:
+            note += " Последняя проверка: готово ✅"
+        files = await self._download(self.client(), file_ids)
+        out = "\n".join(stdout).strip()
+        return SandboxResult(text=f"{text}\n\n{note}".strip(), stdout=out[-4000:], files=files,
+                             cost_usd=progress.cost_usd, container_id=progress.container_id, unfinished=unfinished)
 
     async def _upload(self, client: Any, inputs: list[InputFile]) -> list[tuple[str, str]]:
         ids = []
@@ -156,12 +286,14 @@ class CodeSandbox:
         return ids
 
     async def _run(self, task: str, inputs: list[InputFile], container: str | None, web: bool,
-                   progress: Progress) -> SandboxResult:
+                   progress: Progress, *, system: str = SYSTEM, max_usd: float | None = None,
+                   download: bool = True, engine: tuple[str, str] | None = None) -> SandboxResult:
         import anthropic
 
         from .llm.messages_api import estimate_cost
 
         client = self.client()
+        engine = engine or (self.model, self.effort)
         web = web and time.time() >= self.web_off_until
         uploaded = await self._upload(client, inputs)
         text = task
@@ -179,8 +311,9 @@ class CodeSandbox:
         container_id = container
         try:
             for step in range(MAX_CONTINUATIONS + 1):
-                resp, container_id, web = await self._step(client, messages, container_id, web, progress)
-                progress.cost_usd += estimate_cost(self.model, resp.usage)
+                resp, container_id, web = await self._step(client, messages, container_id, web, progress, system,
+                                                           engine)
+                progress.cost_usd += estimate_cost(engine[0], resp.usage)
                 container_id = getattr(getattr(resp, "container", None), "id", None) or container_id
                 progress.container_id = container_id
                 if resp.stop_reason == "refusal":
@@ -206,7 +339,8 @@ class CodeSandbox:
                 if step == MAX_CONTINUATIONS:
                     unfinished = "задача оказалась очень длинной"
                     break
-                if self.max_run_usd and progress.cost_usd >= self.max_run_usd:
+                ceiling = self.max_run_usd if max_usd is None else max_usd
+                if ceiling and progress.cost_usd >= ceiling:
                     unfinished = (f"потрачено ${progress.cost_usd:.2f} — это потолок одного запуска "
                                   "(SANDBOX_MAX_RUN_USD)")
                     break
@@ -229,13 +363,15 @@ class CodeSandbox:
                     await client.files.delete(fid)
                 except Exception:
                     pass
-        files = await self._download(client, list(dict.fromkeys(file_ids))[-MAX_FILES:])
+        files = await self._download(client, file_ids) if download else []
         out = "\n".join(stdout).strip()
         return SandboxResult(text=(texts[-1] if texts else ""), stdout=out[-4000:], files=files,
-                             cost_usd=progress.cost_usd, container_id=container_id, unfinished=unfinished)
+                             cost_usd=progress.cost_usd, container_id=container_id, unfinished=unfinished,
+                             file_ids=list(dict.fromkeys(file_ids)))
 
     async def _step(self, client: Any, messages: list[dict[str, Any]], container: str | None, web: bool,
-                    progress: Progress) -> tuple[Any, str | None, bool]:
+                    progress: Progress, system: str = SYSTEM,
+                    engine: tuple[str, str] | None = None) -> tuple[Any, str | None, bool]:
         """Шаг с запасными ходами: API не принял поиск в интернете — без него (если его ещё не было в этой работе:
         иначе история без инструмента не сойдётся); контейнер истёк — в новом. -> (ответ, контейнер, с поиском ли)."""
         import anthropic
@@ -243,7 +379,7 @@ class CodeSandbox:
         while True:
             tools = [CODE_TOOL, *(WEB_TOOLS if web else [])]
             try:
-                resp = await self._call(client, messages, container, tools, progress)
+                resp = await self._call(client, messages, container, tools, progress, system, engine)
             except anthropic.APIStatusError as exc:
                 if web and exc.status_code == 400 and _web_rejected(exc) and not _has_web_blocks(messages):
                     log.warning("песочница: поиск в интернете не принят (%s) — час без него", _message(exc)[:200])
@@ -257,7 +393,8 @@ class CodeSandbox:
             return resp, container, web
 
     async def _call(self, client: Any, messages: list[dict[str, Any]], container: str | None,
-                    tools: list[dict[str, Any]], progress: Progress) -> Any:
+                    tools: list[dict[str, Any]], progress: Progress, system: str = SYSTEM,
+                    engine: tuple[str, str] | None = None) -> Any:
         """Один шаг потоком (на effort max модель думает долго — без потока SDK не даёт больше ~21k токенов).
         Перегрузка, обрыв потока или связи — ещё попытки. Оборванная попытка тоже стоит денег — учитываем оценкой.
         Контейнер истёк — сигнал начать в новом."""
@@ -265,9 +402,10 @@ class CodeSandbox:
 
         from .html_studio import _partial_cost
 
+        model, effort = engine or (self.model, self.effort)
         kwargs: dict[str, Any] = {
-            "model": self.model, "max_tokens": SANDBOX_MAX_TOKENS, "system": SYSTEM, "messages": messages,
-            "tools": tools, "output_config": {"effort": self.effort},
+            "model": model, "max_tokens": SANDBOX_MAX_TOKENS, "system": system, "messages": messages,
+            "tools": tools, "output_config": {"effort": effort},
             # каждый шаг заново отправляет всю растущую историю — из кеша она в 10 раз дешевле
             "cache_control": {"type": "ephemeral"},
         }
@@ -299,20 +437,30 @@ class CodeSandbox:
         raise SandboxError("песочница недоступна", progress.cost_usd)
 
     async def _download(self, client: Any, file_ids: list[str]) -> list[MediaFile]:
-        files = []
-        for fid in file_ids:
+        """Файлы результата. Один и тот же файл переписывали (исправления) — берём последнюю версию; не больше
+        MAX_FILES (самые свежие)."""
+        latest: dict[str, tuple[str, Any]] = {}
+        for fid in dict.fromkeys(file_ids):
             try:
                 meta = await client.files.retrieve_metadata(fid)
-                if (getattr(meta, "size_bytes", 0) or 0) > MAX_FILE_BYTES:
-                    continue
+            except Exception:
+                log.warning("не удалось узнать файл из песочницы", exc_info=True)
+                continue
+            name = os.path.basename(getattr(meta, "filename", "") or "") or "result"
+            if name in (".", ".."):
+                name = "result"
+            latest.pop(name, None)  # в конец: порядок — по последней версии
+            latest[name] = (fid, meta)
+        files = []
+        for name, (fid, meta) in list(latest.items())[-MAX_FILES:]:
+            if (getattr(meta, "size_bytes", 0) or 0) > MAX_FILE_BYTES:
+                continue
+            try:
                 resp = await client.files.download(fid)
                 data = await resp.read()
             except Exception:
                 log.warning("не удалось скачать файл из песочницы", exc_info=True)
                 continue
-            name = os.path.basename(getattr(meta, "filename", "") or "") or "result"
-            if name in (".", ".."):
-                name = "result"
             mime = getattr(meta, "mime_type", "") or "application/octet-stream"
             kind = "image" if mime in ("image/png", "image/jpeg") else "document"
             files.append(MediaFile(kind, data, mime, name[:80]))
@@ -408,7 +556,11 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
             raise ToolError("за один ответ — один запуск")
         if untrusted and not files_only:
             raise ToolError("в этом ответе был чужой текст — код запускаю только по отдельной просьбе")
-        project = str(args.get("mode") or "quick") == "project"
+        mode = str(args.get("mode") or "quick")
+        ultra_setting = str(getattr(settings, "sandbox_ultra", "projects") or "projects").lower()
+        # ультра: если попросили (mode=ultra) или каждый проект (SANDBOX_ULTRA=projects); off — выключен
+        ultra = ultra_setting != "off" and (mode == "ultra" or (mode == "project" and ultra_setting == "projects"))
+        project = mode in ("project", "ultra")
         person = ctx.sender.id if ctx.sender else 0
         if (ctx.chat_id, person) in BUSY:
             raise ToolError("твоя прошлая задача ещё делается — дождись результата")
@@ -436,13 +588,17 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
             if saved and saved[0] and time.time() - saved[1] < CONTAINER_DAYS * 86400:
                 container = saved[0]
 
-        max_run = float(getattr(settings, "sandbox_max_run_usd", 0) or 0)
-        sandbox.max_run_usd = max_run
-        reserve = PROJECT_RESERVE_USD if project else QUICK_RESERVE_USD
+        if ultra:
+            max_run = float(getattr(settings, "sandbox_ultra_max_usd", 30) or 0)
+            reserve = ULTRA_RESERVE_USD
+            limit = float(getattr(settings, "sandbox_ultra_timeout", 3600))
+        else:
+            max_run = float(getattr(settings, "sandbox_max_run_usd", 0) or 0)
+            reserve = PROJECT_RESERVE_USD if project else QUICK_RESERVE_USD
+            limit = float(getattr(settings, "sandbox_project_timeout", 1800))
         reserve = min(reserve, max_run) if max_run else reserve
         html_studio.STATE.reserved_usd += reserve
         progress = Progress(container_id=container)
-        limit = float(getattr(settings, "sandbox_project_timeout", 1800))
 
         async def settle() -> None:
             html_studio.STATE.reserved_usd = max(0.0, html_studio.STATE.reserved_usd - reserve)
@@ -454,8 +610,13 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         async def job() -> SandboxResult:
             """Сам запуск. Деньги и контейнер записываются при любом исходе: готово, ошибка, вышло время, отмена."""
             try:
-                result = await sandbox.run(task[:20000], inputs, container, timeout=limit, web=not files_only,
-                                           progress=progress)
+                if ultra:
+                    result = await sandbox.run_ultra(
+                        task[:20000], inputs, container, timeout=limit, web=not files_only, progress=progress,
+                        rounds=int(getattr(settings, "sandbox_ultra_rounds", 3) or 3), max_usd=max_run)
+                else:
+                    result = await sandbox.run(task[:20000], inputs, container, timeout=limit, web=not files_only,
+                                               progress=progress, max_usd=max_run)
             finally:
                 await asyncio.shield(settle())
             log.info("песочница: %.4f$, файлов %d", result.cost_usd, len(result.files))
@@ -463,7 +624,7 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
 
         runner = asyncio.ensure_future(job())
         if project:
-            return background(runner, limit)
+            return background(runner, limit, ultra=ultra)
         wait = min(float(getattr(settings, "sandbox_quick_seconds", 150)),
                    max(30.0, float(getattr(settings, "llm_timeout", 600)) - 240))
         try:
@@ -498,7 +659,8 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
             parts.append(f"файлы ({len(result.files)}) уйдут в чат сразу после твоего сообщения")
         return "\n".join(parts)
 
-    def background(runner: "asyncio.Future[SandboxResult]", limit: float, moved: bool = False) -> str:
+    def background(runner: "asyncio.Future[SandboxResult]", limit: float, moved: bool = False,
+                   ultra: bool = False) -> str:
         """Работа идёт в фоне: её ответ уходит сразу, результат и файлы — потом, ответом на просьбу."""
         actions = ctx.actions
         person = ctx.sender.id if ctx.sender else 0
@@ -544,6 +706,12 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         if moved:
             return ("задача оказалась долгой — доделываю её в песочнице в фоне (до " + _minutes(limit) + "): результат "
                     "и файлы придут отдельным сообщением. Скажи коротко своими словами, что ещё делаешь и пришлёшь.")
+        if ultra:
+            rounds = int(getattr(settings, "sandbox_ultra_rounds", 3) or 3)
+            return ("проект запущен в ультра-режиме (Opus на максимуме, как ultracode: план и тесты → код → "
+                    f"независимая проверка → исправления, до {rounds} кругов; в фоне до {_minutes(limit)}): результат "
+                    "и файлы придут отдельным сообщением. Скажи коротко своими словами, что взялась по-серьёзному и "
+                    "пришлёшь, когда будет готово и проверено.")
         return ("проект запущен в песочнице (Opus, в фоне, до " + _minutes(limit) + "): результат и файлы придут "
                 "отдельным сообщением. Скажи коротко своими словами, что взялась и пришлёшь, когда будет готово.")
 
@@ -554,12 +722,14 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         "интернете документацию и свежие данные; сделать файлы любого формата (до 10). Контейнер помнит проект этого "
         "человека в этом чате до 25 дней — «продолжи», «поправь» работают. mode: quick — ответ сразу (посчитать, "
         "график, небольшой скрипт; не успеет за пару минут — сама доделает в фоне); project — большая работа в фоне "
-        "до получаса (приложение, сайт, анализ большого файла), результат придёт отдельным сообщением. use_files — "
+        "(приложение, сайт, игра, бот, анализ большого файла), результат придёт отдельным сообщением; ultra — "
+        "максимальная мощность для программирования, как ultracode: план и тесты, код, независимая проверка и "
+        "исправления кругами (дольше и дороже; когда просят «максимально», «ультра», серьёзную программу). use_files — "
         "взять присланные или процитированные файлы и фото. new_project — начать с чистого контейнера. task — "
         "подробное задание словами (со всеми деталями из чата) или с кодом.",
         {"type": "object", "properties": {
             "task": {"type": "string"},
-            "mode": {"type": "string", "enum": ["quick", "project"]},
+            "mode": {"type": "string", "enum": ["quick", "project", "ultra"]},
             "use_files": {"type": "boolean"},
             "new_project": {"type": "boolean"},
         }, "required": ["task"]},

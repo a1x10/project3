@@ -155,6 +155,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         llm_switch_at=None,
         initiative_per_week=0,
         tunnel_metrics_url="",  # без настоящего туннеля Cloudflare
+        sandbox_ultra="off",  # проект — одним запуском (ультра-режим проверяется отдельно)
     )
     values.update(overrides)
     for k, v in values.items():

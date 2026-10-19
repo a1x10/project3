@@ -444,3 +444,84 @@ async def test_sandbox_result_blocks_dangerous_tools_in_the_same_reply(brain):
     await brain.handle_payload(upsert("стелла найди обзор", chat=GROUP, sender=OWNER_JID, name="Хозяин"))
     await settle(brain)
     assert errors and "чужой текст" in errors[0]
+
+
+# ---------- ультра-режим: план → код → независимая проверка → исправления ----------
+def reply(text, files=(), container="cnt_U"):
+    return NS(stop_reason="end_turn", usage=usage(), container=NS(id=container),
+              content=[result_block("ok\n", files=files), NS(type="text", text=text)])
+
+
+async def test_ultra_builds_reviews_and_fixes_until_clean():
+    from bot.sandbox import REVIEW_SYSTEM, SYSTEM
+
+    blobs = {"v1": ("app.zip", "application/zip", b"v1"), "v2": ("app.zip", "application/zip", b"v2"),
+             "log": ("report.txt", "text/plain", b"r")}
+    client = FakeClient([
+        reply("сделала приложение", files=["v1", "log"]),
+        reply("ПРОБЛЕМЫ:\n1. [критично] падает на пустом вводе — запустить без аргументов — ожидалась подсказка\n"
+              "2. [мелочь] опечатка в README\nВЕРДИКТ: ИСПРАВИТЬ"),
+        reply("исправила пустой ввод, добавила тест", files=["v2"]),
+        reply("ПРОБЛЕМЫ: нет\nВЕРДИКТ: ГОТОВО"),
+    ], blobs)
+    res = await CodeSandbox(client=client).run_ultra("сделай консольное приложение", rounds=3)
+    systems = [r["system"] for r in client.requests]
+    assert systems == [SYSTEM, REVIEW_SYSTEM, SYSTEM, REVIEW_SYSTEM]
+    assert "PLAN.md" in client.requests[0]["messages"][0]["content"][0]["text"]
+    assert "[критично] падает на пустом вводе" in client.requests[2]["messages"][0]["content"][0]["text"]
+    assert all(r["container"] == "cnt_U" for r in client.requests[1:])  # всё — в одном контейнере проекта
+    assert {f.filename: f.data for f in res.files} == {"app.zip": b"v2", "report.txt": b"r"}  # последняя версия
+    assert "исправила пустой ввод" in res.text and "проверок — 2" in res.text and "готово ✅" in res.text
+    assert res.cost_usd > 0 and not res.unfinished
+
+
+async def test_ultra_reports_what_is_left_after_last_round():
+    client = FakeClient([
+        reply("сделала"),
+        reply("1. [важно] не сохраняет настройки — перезапуск — ожидалось сохранение\nВЕРДИКТ: ИСПРАВИТЬ"),
+    ])
+    res = await CodeSandbox(client=client).run_ultra("сделай", rounds=1)
+    assert len(client.requests) == 2 and "ещё видит" in res.text and "не сохраняет настройки" in res.text
+
+
+async def test_ultra_stops_at_its_cost_ceiling():
+    client = FakeClient([reply("сделала"), reply("1. [критично] x\nВЕРДИКТ: ИСПРАВИТЬ")])
+    await CodeSandbox(client=client).run_ultra("сделай", rounds=3, max_usd=0.000001)
+    assert len(client.requests) == 1  # после сборки потолок уже достигнут — дальше не идём
+
+
+def test_review_verdicts():
+    from bot.sandbox import review_verdict
+
+    assert review_verdict("ПРОБЛЕМЫ: нет\nВЕРДИКТ: ГОТОВО") == ("done", [])
+    assert review_verdict("1. [мелочь] опечатка\nВЕРДИКТ: ГОТОВО") == ("done", [])
+    assert review_verdict("1. [Критично] падает\nВЕРДИКТ: ГОТОВО")[0] == "fix"  # противоречие — исправляем
+    assert review_verdict("я устал")[0] == "unclear"
+
+
+async def test_project_runs_in_ultra_mode_by_default(brain):
+    brain.s.sandbox_ultra = "projects"
+    brain.sandbox._client = client = FakeClient([
+        reply("сделала игру", files=["f"]), reply("ПРОБЛЕМЫ: нет\nВЕРДИКТ: ГОТОВО")],
+        {"f": ("index.html", "text/html", b"<html>")}, delay=0.05)
+    outs = []
+
+    async def talk(tools, prompt):
+        outs.append(await tools["run_code"].handler({"task": "сделай игру змейка", "mode": "project"}))
+        return "взялась по-серьёзному"
+
+    brain.llm.queue = [talk]
+    await brain.handle_payload(upsert("стелла сделай игру", chat=OWNER_JID, sender=OWNER_JID, msg_id="U1"))
+    await settle(brain, timeout=10)
+    assert "ультра-режиме" in outs[0] and len(client.requests) == 2
+    result = next(m for m in brain.evo.sent if "сделала игру" in (m.get("text") or ""))
+    assert "готово ✅" in result["text"] and result["quoted"]["key"]["id"] == "U1"
+    assert brain.evo.sent[-1]["filename"] == "index.html"
+
+    brain.s.sandbox_ultra = "off"  # выключили — обычный проект одним запуском
+    client.responses.append(reply("сделала"))
+    brain.llm.queue = [talk]
+    before = len(client.requests)
+    await brain.handle_payload(upsert("стелла сделай ещё", chat=OWNER_JID, sender=OWNER_JID))
+    await settle(brain, timeout=10)
+    assert len(client.requests) == before + 1 and "ультра" not in outs[-1]
