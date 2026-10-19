@@ -15,6 +15,13 @@
   const motion = !reduced && hasIO;
 
   root.classList.add("lp-js");
+
+  // ссылки «поддержки»: пока контакт техподдержки не задан (Stella.CONFIG.SUPPORT), они ведут к самой Стелле,
+  // и в HTML у них честные подписи («Спросить Стеллу про подписку»); задан — подписи «Техподдержка» из data-sup-label
+  const S = window.Stella;
+  if (S && S.CONFIG && String(S.CONFIG.SUPPORT || "").trim()) {
+    for (const a of document.querySelectorAll("a[data-sup-label]")) a.textContent = a.dataset.supLabel;
+  }
   if (motion) root.classList.add("lp-motion");
 
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
@@ -216,6 +223,29 @@
   window.addEventListener("resize", onScroll, { passive: true });
   requestAnimationFrame(frame);
 
+  /* ───────── шапка: подсветка текущего раздела ───────── */
+
+  if (bar && hasIO) {
+    const links = new Map();
+    for (const a of $$(".lp-bar__nav a[href^='#']", bar)) {
+      const sec = document.getElementById(a.getAttribute("href").slice(1));
+      if (sec) links.set(sec, a);
+    }
+    const spy = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const a = links.get(e.target);
+          if (!a) continue;
+          a.classList.toggle("is-cur", e.isIntersecting);
+          if (e.isIntersecting) a.setAttribute("aria-current", "location");
+          else a.removeAttribute("aria-current");
+        }
+      },
+      { rootMargin: "-45% 0px -54% 0px" }
+    );
+    for (const sec of links.keys()) spy.observe(sec);
+  }
+
   /* ───────── свечение карточек за пальцем/курсором ───────── */
 
   if (mq("(hover: hover)").matches) {
@@ -277,22 +307,79 @@
     let run = 0;
     let clock = 0;
 
+    // переписка идёт только пока чат на экране (и вкладка видна): ушёл — пауза, вернулся — продолжает
+    let inView = false;
+    let waiters = [];
+    const canRun = () => inView && !document.hidden;
+    const flush = () => {
+      if (!canRun()) return;
+      const w = waiters;
+      waiters = [];
+      for (const f of w) f();
+    };
+    const gate = () => (canRun() ? Promise.resolve() : new Promise((res) => waiters.push(res)));
+    const pause = async (ms) => {
+      await gate();
+      await wait(ms);
+      await gate();
+    };
+    new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) inView = e.isIntersecting;
+        flush();
+        syncClock();
+      },
+      { threshold: 0.2 }
+    ).observe(box);
+    document.addEventListener("visibilitychange", () => {
+      flush();
+      syncClock();
+    });
+
     function setStatus(text, typing) {
       if (!status) return;
       status.textContent = text;
       status.classList.toggle("is-typing", !!typing);
     }
 
-    function startClock() {
-      const t0 = performance.now();
-      clearInterval(clock);
+    // таймкод «записи»: тикает, только пока переписка идёт и видна; ушёл с экрана — таймер остановлен совсем
+    let clockOn = false;
+    let clockMs = 0;
+    let clockLast = 0;
+    const pad = (n) => String(n).padStart(2, "0");
+    function drawClock() {
+      const s = Math.floor(clockMs / 1000);
+      tc.textContent = pad(Math.floor(s / 60)) + ":" + pad(s % 60) + ":" + pad(Math.floor((clockMs % 1000) / 40));
+    }
+    function syncClock() {
       if (!tc) return;
-      const pad = (n) => String(n).padStart(2, "0");
-      clock = setInterval(() => {
-        const ms = performance.now() - t0;
-        const s = Math.floor(ms / 1000);
-        tc.textContent = pad(Math.floor(s / 60)) + ":" + pad(s % 60) + ":" + pad(Math.floor((ms % 1000) / 40));
-      }, 80);
+      const want = clockOn && canRun();
+      if (want && !clock) {
+        clockLast = performance.now();
+        clock = setInterval(() => {
+          const now = performance.now();
+          clockMs += now - clockLast;
+          clockLast = now;
+          drawClock();
+        }, 80);
+      } else if (!want && clock) {
+        clockMs += performance.now() - clockLast;
+        clearInterval(clock);
+        clock = 0;
+        drawClock();
+      }
+    }
+    function startClock() {
+      clearInterval(clock);
+      clock = 0;
+      clockMs = 0;
+      clockOn = true;
+      if (tc) drawClock();
+      syncClock();
+    }
+    function stopClock() {
+      clockOn = false;
+      syncClock();
     }
 
     // FLIP: лента прижата к низу; когда она растёт, плавно «подъезжает» вверх
@@ -325,10 +412,10 @@
       const step = Math.max(16, Math.min(42, 1100 / chars.length));
       for (let i = 1; i <= chars.length; i++) {
         typed.textContent = chars.slice(0, i).join("");
-        await wait(step);
+        await pause(step);
         if (id !== run) return false;
       }
-      await wait(240);
+      await pause(240);
       if (send) send.classList.add("is-press");
       await wait(170);
       if (send) send.classList.remove("is-press");
@@ -350,7 +437,7 @@
       const id = ++run;
       reset();
       startClock();
-      await wait(500);
+      await pause(500);
       for (const li of steps) {
         if (id !== run) return;
         const kind = li.dataset.step;
@@ -358,14 +445,14 @@
           const t = $(".tg-t", li);
           if (!(await typeInto(t ? t.textContent : "", id))) return;
           flip(() => li.classList.add("is-shown"));
-          await wait(520);
+          await pause(520);
         } else if (kind === "st") {
           const ms = Number(li.dataset.typing) || 0;
           if (ms > 0) {
             const bubble = typingBubble();
             flip(() => li.before(bubble));
             setStatus("Стелла печатает…", true);
-            await wait(ms);
+            await pause(ms);
             if (id !== run) return;
             flip(() => {
               bubble.remove();
@@ -375,14 +462,16 @@
           } else {
             flip(() => li.classList.add("is-shown"));
           }
-          await wait(420);
+          await pause(420);
         } else {
           flip(() => li.classList.add("is-shown"));
-          await wait(kind === "sys" ? 900 : 600);
+          await pause(kind === "sys" ? 900 : 600);
         }
       }
-      clearInterval(clock);
-      if (id === run) replay.hidden = false;
+      if (id === run) {
+        stopClock();
+        replay.hidden = false;
+      }
     }
 
     replay.addEventListener("click", () => {

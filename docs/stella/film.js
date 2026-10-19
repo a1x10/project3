@@ -447,7 +447,9 @@
     let fs = 100;
     return {
       layout(e) {
-        fs = fitBlock(tb, tw(e) * 0.9, e.H * 0.42);
+        // «ХА» висит справа от точки — освобождаем под него место (блок чуть левее центра)
+        fs = fitBlock(tb, tw(e) * (e.P ? 0.84 : 0.86), e.H * 0.42);
+        tb.style.marginRight = "0.42em";
       },
       update(lt, p) {
         const q = seg(lt, 0, 0.38);
@@ -546,10 +548,10 @@
     let fs1 = 100;
     return {
       layout(e) {
-        fs1 = e.P ? Math.min(e.W * 1.15, e.H * 0.6) : e.H * 0.92;
+        fs1 = e.P ? Math.min(e.W * 0.98, e.H * 0.52) : e.H * 0.92; // на телефоне «?» целиком в кадре
         q1.style.fontSize = f(fs1, 1) + "px";
         q2.style.fontSize = f(fs1 * 0.42, 1) + "px";
-        q1.style.left = e.P ? "60%" : "62%";
+        q1.style.left = e.P ? "55%" : "62%";
         q1.style.top = e.P ? "46%" : "50%";
         q2.style.left = e.P ? "24%" : "34%";
         q2.style.top = e.P ? "66%" : "62%";
@@ -592,7 +594,7 @@
         fitBlock(title, e.P ? e.W - 2 * e.g : Math.min(e.W * 0.78, 1100), e.H * (e.P ? 0.2 : 0.17));
         const bw = e.P ? e.W - 2 * e.g : Math.min(e.W * 0.84, 1100);
         const bh = e.P ? e.H * 0.5 : Math.min(e.H * 0.5, bw * 0.42);
-        css(box, { width: f(bw, 1) + "px", height: f(bh, 1) + "px", fontSize: f(e.P ? clamp(e.W * 0.036, 12, 22) : clamp(bw * 0.02, 12, 22), 1) + "px" });
+        css(box, { width: f(bw, 1) + "px", height: f(bh, 1) + "px", fontSize: f(e.P ? clamp(e.W * 0.041, 13, 22) : clamp(bw * 0.02, 12, 22), 1) + "px" });
         col.style.gap = f(e.P ? e.H * 0.05 : e.H * 0.07, 1) + "px";
         sv.setAttribute("viewBox", `0 0 ${f(bw, 1)} ${f(bh, 1)}`);
         const pt = (k) => [pos[k][0] * bw, pos[k][1] * bh];
@@ -675,7 +677,7 @@
   });
 
   /* 9. Логотип: «Стелла» широким курсивом, лазер насквозь, искры, звезда */
-  scene("logo", 2.6, { bg: "glow dots", flash: "red" }, (c) => {
+  scene("logo", 2.3, { bg: "glow dots", flash: "red", out: "zoom" }, (c) => {
     const star = h("span", { class: "lg-star" }, icon("star"));
     const word = h("span", { class: "lg-word", text: "Стелла" });
     const skew = h("span", { class: "lg-skew" }, word);
@@ -687,7 +689,7 @@
     let fs = 100;
     return {
       layout(e) {
-        fs = fitBlock(row, e.P ? (e.W - 2 * e.g) * 0.9 : Math.min(e.W * 0.64, 980), e.H * 0.3);
+        fs = fitBlock(row, e.P ? (e.W - 2 * e.g) * 0.92 : Math.min(e.W * 0.64, 980), e.H * 0.3);
         cap.style.fontSize = f(clamp(fs * 0.14, 13, 24), 1) + "px";
         const r = rel(word);
         const rs = rel(star);
@@ -699,10 +701,13 @@
         const rv = clamp((hx - geo.x) / geo.w);
         css(word, { clipPath: rv >= 1 ? "none" : `inset(-40% ${f((1 - rv) * 100, 2)}% -40% -10%)` });
         const sk = E.back(seg(lt, 0.8, 1.12));
-        css(star, { transform: `rotate(${f((1 - sk) * -200, 1)}deg) scale(${f(Math.max(0, sk))})` });
+        // звезда: влёт с поворотом, потом мерцает
+        const tw8 = lt > 1.12 ? 1 + 0.16 * Math.max(0, Math.sin((lt - 1.12) * 9)) ** 3 : 1;
+        css(star, { transform: `rotate(${f((1 - sk) * -200 + Math.max(0, lt - 1.12) * 40, 1)}deg) scale(${f(Math.max(0, sk) * tw8)})` });
         const ck = E.out4(seg(lt, 1.0, 1.4));
-        css(cap, { opacity: f(ck), transform: `translateY(${f((1 - ck) * 16, 1)}px)` });
-        css(col, { transform: `scale(${f(1 + 0.05 * E.io2(p))})` });
+        css(cap, { opacity: f(ck), transform: `translateY(${f((1 - ck) * 16, 1)}px)`, letterSpacing: f(0.12 + 0.1 * (1 - ck), 3) + "em" });
+        // медленный наезд камеры всё время сцены — кадр не стоит на месте
+        css(col, { transform: `scale(${f(0.97 + 0.11 * E.io2(p))})` });
       },
       draw(gc, lt, p, e) {
         embers(gc, e, lt, 9, 18, 0.9);
@@ -724,16 +729,19 @@
   });
 
   /* 10. «ВСЁ, ЧТО / НУЖНО —» — по слову из размытия */
-  scene("vsyo", 1.4, { bg: "ink dots", out: "smear" }, (c) => {
+  scene("vsyo", 1.4, { bg: "ink dots", out: "smear" }, (c, e0) => {
     const w = (t, cls) => h("span", { class: "wd" + (cls ? " " + cls : ""), text: t });
     const ws = [w("ВСЁ,"), w("ЧТО"), w("НУЖНО"), w("—", "r")];
-    const l1 = h("span", { class: "ln" }, ws[0], " ", ws[1]);
-    const l2 = h("span", { class: "ln" }, ws[2], " ", ws[3]);
-    const tb = TB([l1, l2], "tw w");
+    // вертикальный кадр — три строки «в разгон», крупно; горизонтальный — две
+    const lines = e0.P
+      ? [h("span", { class: "ln" }, ws[0]), h("span", { class: "ln" }, ws[1]), h("span", { class: "ln" }, ws[2], " ", ws[3])]
+      : [h("span", { class: "ln" }, ws[0], " ", ws[1]), h("span", { class: "ln" }, ws[2], " ", ws[3])];
+    const tb = TB(lines, "tw w");
     c.append(tb);
     return {
       layout(e) {
-        fitBlock(tb, tw(e) * 0.92, e.H * 0.5);
+        if (e.P) fitJustify(tb, tw(e) * 0.94, e.H * 0.56, 1.45);
+        else fitBlock(tb, tw(e) * 0.92, e.H * 0.5);
       },
       update(lt, p) {
         ws.forEach((el, i) => {
@@ -786,7 +794,7 @@
       )
     );
     const head = h("div", { class: "pr-head" }, h("span", { class: "pr-av" }, icon("star")), h("span", { class: "pr-name", text: "Стелла" }), h("span", { class: "pr-on", text: "в сети" }));
-    const box = h("div", { class: "pr-box" }, head, txt, enter);
+    const box = h("div", { class: "pr-box" }, h("i", { class: "pr-sh" }), head, txt, enter);
     const glow = h("i", { class: "pr-glow" });
     c.append(glow, box);
     const type = typer(chars);
@@ -895,18 +903,19 @@
     c.append(col);
     const m1 = mblur(l1);
     const m2 = mblur(l2);
-    // [t, w, h, radius, rot, x, y] — размеры в em
+    // [t, w, h, radius, rot, x, y] — размеры в em; фигура крупная, чтобы «морфинг» читался за словами
     const K = [
-      [0.0, 0.1, 0.1, 0.05, 0, 0, 0],
-      [0.22, 2.3, 1.7, 0.04, -8, 0.7, -0.1],
-      [0.5, 1.6, 1.6, 0.8, 0, -0.9, 0.1],
-      [0.8, 3.8, 0.72, 0.36, 5, 0, 0.5],
-      [1.1, 1.8, 1.8, 0.18, 45, 1.3, -0.2],
-      [1.4, 1.9, 1.9, 0.5, 90, 1.2, -0.1],
+      [0.0, 0.2, 0.2, 0.1, 0, 0, 0],
+      [0.2, 3.6, 2.3, 0.05, -6, 0.25, 0.05],
+      [0.46, 2.3, 2.3, 1.15, 0, -1.25, 0.1],
+      [0.74, 5.2, 0.95, 0.48, 4, 0, 0.55],
+      [1.04, 2.4, 2.4, 0.22, 45, 1.45, -0.2],
+      [1.4, 2.7, 2.7, 1.35, 90, 1.25, 0],
     ];
     return {
       layout(e) {
-        fitBlock(tb, tw(e) * (e.P ? 0.96 : 0.66), e.H * 0.5);
+        if (e.P) fitJustify(tb, tw(e) * 0.94, e.H * 0.5, 1.5);
+        else fitBlock(tb, tw(e) * 0.66, e.H * 0.5);
         cap.style.fontSize = f(e.P ? clamp(e.W * 0.038, 12, 17) : clamp(e.H * 0.026, 13, 20), 1) + "px";
         col.style.gap = f(e.H * 0.045, 1) + "px";
       },
@@ -941,9 +950,10 @@
     const cw = h("div", { class: "cb-wrap" }, cube);
     const d3 = h("span", { class: "cb-3d", text: "3D" });
     const row = h("div", { class: "cb-row" }, d3, cw);
-    const mlt = LL("МУЛЬТИКИ", "cb-word");
+    // «3D» — про открытки, мультики — отдельно (не «3D-мультики»: так не обещаем)
+    const mlt = LL("*И* МУЛЬТИКИ", "cb-word");
     const tb = h("div", { class: "tb tw k cb-tb" }, row, mlt.el);
-    const cap = h("div", { class: "cap-mono k", text: "кот, лиса и зайка — танцуют и машут" });
+    const cap = h("div", { class: "cap-mono k", text: "3D-открытки · кот и лиса танцуют" });
     const col = h("div", { class: "col" }, tb, cap);
     c.append(col);
     const mb = mblur(cw);
@@ -996,10 +1006,17 @@
     return {
       layout(e) {
         sv.setAttribute("viewBox", `0 0 ${e.W} ${e.H}`);
-        const fs = e.P ? e.W * 0.098 : Math.min(e.H * 0.15, e.W * 0.085);
-        G = { W: e.W, H: e.H, y1: e.H * (e.P ? 0.42 : 0.42), y2: e.H * (e.P ? 0.57 : 0.64), a1: e.H * (e.P ? 0.06 : 0.11), a2: e.H * (e.P ? 0.04 : 0.07), fs };
+        const fs = e.P ? e.W * 0.103 : Math.min(e.H * 0.15, e.W * 0.085);
+        G = { W: e.W, H: e.H, y1: e.H * (e.P ? 0.4 : 0.42), y2: e.H * (e.P ? 0.56 : 0.64), a1: e.H * (e.P ? 0.085 : 0.11), a2: e.H * (e.P ? 0.05 : 0.07), fs };
         t1.setAttribute("font-size", f(fs, 1));
-        t2.setAttribute("font-size", f(clamp(fs * 0.3, 13, 26), 1));
+        let fs2 = clamp(fs * 0.3, 13, 26);
+        t2.setAttribute("font-size", f(fs2, 1));
+        // подпись на кривой не должна уезжать за край узкого экрана (320 px): не влезает — шрифт меньше
+        const tl = t2.getComputedTextLength ? t2.getComputedTextLength() : 0;
+        if (tl > e.W * 0.84) {
+          fs2 = Math.max(10, (fs2 * e.W * 0.84) / tl);
+          t2.setAttribute("font-size", f(fs2, 1));
+        }
       },
       update(lt) {
         const amp = 1 - 0.45 * E.out3(seg(lt, 0, 1.3));
@@ -1195,8 +1212,9 @@
       layout(e) {
         fs = e.P ? fitJustify(tb, tw(e), e.H * 0.5, 2) : fitJustify(tb, Math.min(e.W * 0.56, 820), e.H * 0.7, 2);
         bs = e.P ? e.W * 1.15 : e.H * 1.05;
-        css(burst, { width: f(bs, 1) + "px", height: f(bs, 1) + "px", left: e.P ? "64%" : "70%", top: e.P ? "64%" : "50%" });
-        css(tb, { left: f(e.P ? e.g : e.W * 0.07, 1) + "px", top: e.P ? "34%" : "50%" });
+        // вертикальный кадр: звезда заходит под «СЕРЬЁЗНО?!», как в референсе (текст — поверх взрыва)
+        css(burst, { width: f(bs, 1) + "px", height: f(bs, 1) + "px", left: e.P ? "68%" : "70%", top: e.P ? "55%" : "50%" });
+        css(tb, { left: f(e.P ? e.g : e.W * 0.07, 1) + "px", top: e.P ? "40%" : "50%" });
       },
       update(lt, p) {
         const k = E.back(seg(lt, 0.04, 0.34));
@@ -1229,23 +1247,26 @@
     const in2 = h("span", { class: "pd-in" }, "КАК ДЕЛАТЬ ", sel);
     const l2 = h("span", { class: "ln pd-mask pd-l2" }, in2);
     const ty = LL("по-старому", "pd-l3", "ty");
-    const tb = TB([l1, l2, ty.el], "w al pd-tb");
+    const tb = TB([l1, l2, ty.el], "w al pd-tb" + (e0.P ? " pd-p" : ""));
     c.append(tb);
     const type = typer(ty.chars);
     return {
       layout(e) {
-        fitBlock(tb, tw(e) * (e.P ? 1 : 0.86), e.H * 0.62);
+        fitBlock(tb, tw(e) * (e.P ? 0.98 : 0.86), e.H * 0.62);
       },
       update(lt, p) {
         const k1 = E.out5(seg(lt, 0.04, 0.42));
         css(in1, { transform: `translateY(${f((1 - k1) * 110, 2)}%)` });
         const k2 = E.out5(seg(lt, 0.3, 0.66));
         css(in2, { transform: `translateY(${f((1 - k2) * 110, 2)}%)` });
+        // у второй строки overflow: visible (рамке выделения и курсору нужно место), поэтому маска —
+        // clip-path по нижней кромке строки, пока строка выезжает; после — без обрезки
+        css(l2, { clipPath: k2 < 1 ? "inset(-1em -2em 0 -2em)" : "none" });
         const ks = E.back(seg(lt, 0.86, 1.06));
         css(selBox, { opacity: f(clamp(ks * 2)), transform: `scale(${f(1.25 - 0.25 * clamp(ks))})` });
         handles.forEach((hd) => css(hd, { opacity: f(clamp(ks * 2)) }));
         const kc = E.io3(seg(lt, 0.5, 0.88));
-        css(cursor, { transform: `translate(${f(lerp(3.2, 0.2, kc), 3)}em,${f(lerp(2.4, -0.2, kc), 3)}em) scale(${lt > 0.86 && lt < 0.96 ? 0.85 : 1})`, opacity: f(seg(lt, 0.45, 0.6)) });
+        css(cursor, { transform: `translate(${f(lerp(3.2, 0.2, kc), 3)}em,${f(lerp(2.4, -0.2, kc), 3)}em) scale(${lt > 0.86 && lt < 0.96 ? 0.85 : 1})`, opacity: f(seg(lt, 0.62, 0.74)) });
         type(seg(lt, 1.05, 1.6) * ty.chars.length);
         css(tb, { transform: `scale(${f(1 + 0.04 * p)})` });
       },
@@ -1336,11 +1357,19 @@
     const ldots = h("span", { class: "zh-ld", text: "..." });
     const fillEl = h("i", { class: "zh-fill" });
     const barEl = h("div", { class: "zh-bar" }, fillEl);
+    // песочные часы: верхний песок убывает, нижний растёт, потом часы переворачиваются
+    const sandTop = svg("path", { d: "M7.2 7h9.6c-.8 3-2.6 5-4.8 7.4C9.8 12 8 10 7.2 7Z", fill: "#ff3d3a" });
+    const sandBot = svg("path", { d: "M6.6 28.4c.6-3.6 2.8-5.6 5.4-7.2 2.6 1.6 4.8 3.6 5.4 7.2Z", fill: "#ff3d3a" });
+    const stream = svg("path", { d: "M12 15.5v12", stroke: "#ff3d3a", "stroke-width": "1.2", "stroke-dasharray": "1.6 1.4" });
+    sandTop.style.transformOrigin = "12px 14px";
+    sandBot.style.transformOrigin = "12px 28.4px";
     const glass = svg(
       "svg",
       { viewBox: "0 0 24 32", class: "zh-glass", "aria-hidden": "true" },
-      svg("path", { d: "M3 2h18M3 30h18M5 2c0 8 7 10 7 14S5 22 5 30M19 2c0 8-7 10-7 14s7 6 7 14", fill: "none", stroke: "#fff", "stroke-width": "2", "stroke-linecap": "round" }),
-      svg("path", { d: "M8 27c1-3 3-4 4-5 1 1 3 2 4 5Z", fill: "#ff3d3a" })
+      sandTop,
+      stream,
+      sandBot,
+      svg("path", { d: "M3 2h18M3 30h18M5.5 2.5c0 7.5 6.5 9.5 6.5 13.5S5.5 22 5.5 29.5M18.5 2.5c0 7.5-6.5 9.5-6.5 13.5s6.5 6 6.5 13.5", fill: "none", stroke: "#fff", "stroke-width": "2.4", "stroke-linecap": "round" })
     );
     const timer = h("span", { class: "zh-timer", text: "04:06:18" });
     const eta = h("div", { class: "zh-eta" }, glass, h("div", { class: "zh-etac" }, h("span", { class: "zh-etal", text: "ОСТАЛОСЬ" }), timer));
@@ -1351,6 +1380,7 @@
     const two = (v) => String(v).padStart(2, "0");
     return {
       layout(e) {
+        box.classList.toggle("zh-p", e.P);
         const fs = fitBlock(title, tw(e) * (e.P ? 1 : 0.72), e.H * 0.3);
         box.style.fontSize = f(fs, 2) + "px";
         title.style.fontSize = "1em";
@@ -1358,7 +1388,18 @@
       update(lt, p) {
         const q = seg(lt, 0, 0.36);
         const k = E.out4(q);
-        css(title, { transform: `scale(${f(1.25 - 0.25 * k)})`, filter: q < 1 ? `blur(${f((1 - k) * 0.1, 3)}em)` : "none", opacity: f(clamp(q * 3)) });
+        // «шахматка прозрачности» ползёт рывками (12 кадров/с) — буквы как будто ещё не отрисованы
+        const cs = Math.floor(lt * 12) / 12;
+        css(title, {
+          transform: `scale(${f(1.25 - 0.25 * k)})`,
+          filter: q < 1 ? `blur(${f((1 - k) * 0.1, 3)}em)` : "",
+          opacity: f(clamp(q * 3)),
+          backgroundPosition: `${f(cs * 0.24, 3)}em 0`,
+        });
+        const sand = seg(lt, 0.5, 1.2);
+        css(sandTop, { transform: `scaleY(${f(1 - 0.8 * sand)})` });
+        css(sandBot, { transform: `scaleY(${f(0.25 + 0.75 * sand)})` });
+        css(stream, { opacity: lt > 0.5 && lt < 1.2 ? "1" : "0", strokeDashoffset: f(-lt * 12, 2) });
         const k2 = E.out3(seg(lt, 0.3, 0.6));
         css(row, { opacity: f(k2) });
         css(barEl, { opacity: f(k2) });
@@ -1469,9 +1510,9 @@
       },
       update(lt, p) {
         css(vline, { transform: `scaleY(${f(E.out3(seg(lt, 0, 0.5)))})` });
-        css(node, { transform: `translateY(${f(lerp(-1.4, 1.1, E.io2(seg(lt, 0.1, 1.5))), 3)}em)` });
+        css(node, { transform: `translateY(${f(lerp(-1.4, 1.1, E.io2(seg(lt, 0.03, 1.4))), 3)}em)` });
         rows.forEach((r, i) => {
-          const t0 = 0.1 + i * 0.42;
+          const t0 = 0.03 + i * 0.4;
           const ki = E.back(seg(lt, t0, t0 + 0.25));
           css(r.ic, { transform: `scale(${f(Math.max(0, ki))})` });
           const q = seg(lt, t0 + 0.06, t0 + 0.4);
@@ -1512,8 +1553,9 @@
         frame.style.fontSize = f(clamp(fw / 24, 13, 34), 1) + "px";
       },
       update(lt, p) {
-        const kf = E.out5(seg(lt, 0.25, 0.65));
-        css(frame, { transform: `rotateY(${f((1 - E.out3(seg(lt, 0.25, 1.4))) * 22, 2)}deg) scale(${f(0.35 + 0.65 * kf)})`, opacity: f(clamp(seg(lt, 0.25, 0.4))) });
+        // рамка влетает сразу со склейки (без пустой паузы после «столбика»)
+        const kf = E.out5(seg(lt, 0, 0.42));
+        css(frame, { transform: `rotateY(${f((1 - E.out3(seg(lt, 0, 1.2))) * 22, 2)}deg) scale(${f(0.35 + 0.65 * kf)})`, opacity: f(clamp(seg(lt, 0, 0.12))) });
         const tk = E.back(seg(lt, 0, 0.3));
         const pulse = lt < 0.5 ? 1 + 0.12 * Math.sin(lt * 20) : 1;
         css(tri, { transform: `scale(${f(Math.max(0, tk) * pulse)})` });
@@ -1550,7 +1592,8 @@
       svg("path", { d: "M24 42l4-9 4 9 4-9 4 9", class: "id-fil" }),
       svg("path", { d: "M22 66h20M23 72h18M27 78h10", class: "id-base" })
     );
-    const aTxt = h("div", { class: "id-txt" }, h("span", { class: "id-s", text: "ОТ ПЕРВОЙ" }), h("span", { class: "id-b tw", text: "ИДЕИ" }));
+    const aWord = h("span", { class: "id-b tw", text: "ИДЕИ" });
+    const aTxt = h("div", { class: "id-txt" }, h("span", { class: "id-s", text: "ОТ ПЕРВОЙ" }), aWord);
     const A = h("div", { class: "id-a" }, h("span", { class: "id-bw" }, bulb), aTxt);
     const fileIc = h("i", { class: "id-file-ic" });
     const file = h("div", { class: "id-file" }, fileIc, h("span", { text: "открытка.html" }));
@@ -1562,13 +1605,25 @@
     const halo = bulb.querySelector(".id-halo");
     let pa = { x: 0, y: 0 };
     let pb = { x: 0, y: 0 };
+    let ly = 0;
+    let bc = { x: 0, y: 0 };
+    const zoom = (p) => 1 + 0.05 * E.io2(p);
     return {
       layout(e) {
-        fitBlock(box, tw(e) * (e.P ? 1 : 0.78), e.H * (e.P ? 0.66 : 0.74));
+        // низкий горизонтальный экран (телефон боком): блок ниже ростом, чтобы карточка файла не упиралась в кнопки
+        fitBlock(box, tw(e) * (e.P ? 1 : 0.78), e.H * (e.P ? 0.66 : e.H < 600 ? 0.6 : 0.74));
+        css(box, { transform: "none" });
+        css(aTxt, { transform: "none" });
+        css(file, { transform: "none" });
         const ra = rel(bulb);
         const rb = rel(file);
+        const rw = rel(aWord);
+        const rx = rel(box);
+        bc = { x: rx.cx, y: rx.cy };
         pa = { x: ra.cx, y: ra.cy - ra.h * 0.12 };
         pb = { x: rb.x + rb.w * 0.1, y: rb.cy };
+        // лазер идёт горизонтально под «ИДЕИ» (как линия под IDEA в ролике), а не наискось через «ФАЙЛА»
+        ly = rw.y + rw.h * 0.98;
       },
       update(lt, p) {
         const fl = lt < 0.4 ? [0, 1, 0.15, 1, 0.4, 1, 1, 1][Math.floor(lt * 20) % 8] : 1;
@@ -1582,15 +1637,23 @@
         mbB(qb > 0 && qb < 1 ? 50 * (1 - qb) ** 3 : 0);
         const kf = E.back(seg(lt, 1.22, 1.5));
         css(file, { transform: `rotate(${f((1 - clamp(kf)) * -12, 2)}deg) scale(${f(Math.max(0, kf))})` });
-        css(box, { transform: `scale(${f(1 + 0.05 * E.io2(p))})` });
+        css(box, { transform: `scale(${f(zoom(p))})` });
       },
       draw(gc, lt, p, e) {
         embers(gc, e, lt, 133, 16, 0.75);
-        if (lt > 0.62) {
-          const k = E.io2(seg(lt, 0.62, 1.2));
-          laser(gc, pa.x, pa.y, pb.x, pb.y, k, { tail: 1, alpha: 1 - 0.6 * seg(lt, 1.3, 2.2), w: 2.4, head: k < 1 ? 24 : 12 });
+        // точки привязки следуют за медленным наездом блока
+        const z = zoom(p);
+        const X = (x) => bc.x + (x - bc.x) * z;
+        const Y = (y) => bc.y + (y - bc.y) * z;
+        const x0 = X(pa.x);
+        const yl = Y(ly);
+        const x1 = e.W * 1.06;
+        if (lt > 0.5) {
+          const k = E.io2(seg(lt, 0.5, 1.05));
+          laser(gc, x0, yl, x1, yl, k, { tail: 1, alpha: 1 - 0.55 * seg(lt, 1.2, 2.2), w: 2.2, head: k < 1 ? 24 : 0.01 });
         }
-        sparks(gc, lt, 1.2, pb.x, pb.y, 1201, 20, { scale: Math.min(e.W, e.H) / 900, g: 500 });
+        sparks(gc, lt, 0.5, x0, yl, 1200, 14, { scale: Math.min(e.W, e.H) / 900, g: 500 });
+        sparks(gc, lt, 1.26, X(pb.x), Y(pb.y), 1201, 22, { scale: Math.min(e.W, e.H) / 900, g: 500 });
       },
     };
   });
@@ -1631,6 +1694,8 @@
 
   /* 23. Финал = #hero: логотип собирается лазером, искры, подпись и кнопки */
   scene("final", 2.4, { bg: "clear", flash: "red", hero: true }, () => {
+    // лазер стартует прямо со склейки и сразу быстро (замедляется к краю) — без «пустого» красного кадра
+    const finalLaser = (t) => E.out2(seg(t, 0.02, 0.85));
     const logo = hero.querySelector(".hero-logo");
     const kick = hero.querySelector(".hero-kicker");
     const tag = hero.querySelector(".hero-tag");
@@ -1642,6 +1707,9 @@
       if (clean) return;
       for (const el of all) unstyle(el, ["opacity", "transform", "clip-path"]);
       unstyle(hero, ["--laser"]);
+      // применить стили сейчас, пока у кнопок ещё transition: none (класс film--done ставится позже),
+      // иначе после seek/«Пропустить» кнопки доезжают CSS-переходом и кадр не повторяем
+      if (btns[0]) void getComputedStyle(btns[0]).transform;
       clean = true;
     };
     return {
@@ -1659,10 +1727,11 @@
           return;
         }
         clean = false;
-        const kx = E.io2(seg(lt, 0.12, 0.9));
+        const kx = finalLaser(lt);
         const hx = lerp(-0.08 * env.W, 1.08 * env.W, kx);
-        const rv = clamp((hx - geo.x) / geo.w);
-        if (logo) css(logo, { clipPath: `inset(-40% ${f((1 - rv) * 100, 2)}% -40% -12%)` });
+        // слева от слова — звезда ✦ (::before): её тоже открывает лазер, поэтому окно начинается левее слова
+        const rv = clamp((hx - geo.x) / geo.w, -0.16, 1);
+        if (logo) css(logo, { clipPath: rv >= 1 ? "none" : `inset(-40% ${f((1 - rv) * 100, 2)}% -40% -16%)` });
         css(hero, { "--laser": String(f(kx)) });
         if (kick) {
           const k = E.out4(seg(lt, 0.8, 1.2));
@@ -1683,10 +1752,10 @@
         if (lt < 1.2) {
           const x0 = -0.08 * e.W;
           const x1 = 1.08 * e.W;
-          const kx = E.io2(seg(lt, 0.12, 0.9));
-          if (lt > 0.12) laser(gc, x0, geo.cy, x1, geo.cy, kx, { tail: 0.25, alpha: 1 - seg(lt, 0.9, 1.2), w: 2.4, head: 30 });
-          [0.32, 0.45, 0.58, 0.7].forEach((t0, i) => {
-            const kk = E.io2(seg(t0, 0.12, 0.9));
+          const kx = finalLaser(lt);
+          if (lt > 0.02) laser(gc, x0, geo.cy, x1, geo.cy, kx, { tail: 0.25, alpha: 1 - seg(lt, 0.9, 1.2), w: 2.4, head: 30 });
+          [0.12, 0.24, 0.38, 0.55].forEach((t0, i) => {
+            const kk = finalLaser(t0);
             sparks(gc, lt, t0, lerp(x0, x1, kk), geo.cy, 610 + i, 18, { scale: Math.min(e.W, e.H) / 700 });
           });
         }
@@ -1792,8 +1861,10 @@
       css(b.c, { transform: "none", opacity: "1", filter: "none" });
       if (b.inst.layout) b.inst.layout(env);
     }
-    const lt = clamp(tt - s.start, 0, s.dur);
-    const p = lt / s.dur;
+    // на самом конце — ровно последний кадр (p = 1): иначе из-за округления DURATION финал не «отпускает» #hero
+    const done = tt >= DURATION - 1e-4;
+    const lt = done ? s.dur : clamp(tt - s.start, 0, s.dur);
+    const p = done ? 1 : lt / s.dur;
     if (b.inst.update) b.inst.update(lt, p, env);
     applyOut(s, b, lt);
 
@@ -1813,8 +1884,7 @@
       }
     }
 
-    const done = tt >= DURATION - 1e-4;
-    css(barFill, { transform: `scaleX(${f(tt / DURATION, 4)})` });
+    css(barFill,{ transform: `scaleX(${f(tt / DURATION, 4)})` });
     film.classList.toggle("film--done", done);
     if (replayBtn.hidden === done) replayBtn.hidden = !done;
     if (skipBtn.hidden !== done) skipBtn.hidden = done;

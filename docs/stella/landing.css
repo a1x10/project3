@@ -86,6 +86,7 @@
   display: inline-flex;
   align-items: center;
   gap: 9px;
+  min-height: 44px;
   color: var(--white);
   text-decoration: none;
   font-family: var(--f-wide);
@@ -142,13 +143,18 @@
   color: var(--white);
 }
 
-.lp-bar__nav a:hover::after {
+.lp-bar__nav a:hover::after,
+.lp-bar__nav a.is-cur::after {
   transform: scaleX(1);
+}
+
+.lp-bar__nav a.is-cur {
+  color: var(--white);
 }
 
 .lp-bar__btn.btn {
   margin-left: auto;
-  min-height: 40px;
+  min-height: 44px;
   padding: 9px 18px;
   font-size: 13px;
 }
@@ -302,6 +308,7 @@
 /* ───────── 01 · что умеет ───────── */
 
 .lp-what {
+  padding-bottom: clamp(64px, 8vw, 112px);
   background-color: var(--ink);
   background-image: radial-gradient(rgba(255, 255, 255, 0.085) 1px, transparent 1.3px);
   background-size: 22px 22px;
@@ -454,7 +461,7 @@
   margin: 4px 0 0;
   font-family: var(--f-wide);
   font-weight: 800;
-  font-size: clamp(13px, 1.05vw + 9px, 20px);
+  font-size: clamp(15px, 0.8vw + 11px, 20px);
   line-height: 1.15;
   letter-spacing: -0.01em;
   -webkit-hyphens: auto;
@@ -504,6 +511,7 @@
 
 .lp-chip::before {
   content: "› ";
+  content: "› " / "";
   color: var(--red);
   font-weight: 700;
 }
@@ -711,6 +719,7 @@
 /* ───────── 02 · живой чат ───────── */
 
 .lp-chat {
+  padding-top: clamp(64px, 8vw, 112px);
   background:
     radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1.3px) 0 0 / 22px 22px,
     linear-gradient(180deg, var(--ink) 0%, #0e0e11 100%);
@@ -774,6 +783,7 @@
 
 .lp-ticks li::before {
   content: "✦";
+  content: "✦" / "";
   margin-right: 10px;
   color: var(--red);
 }
@@ -1218,8 +1228,8 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
-  padding: 8px 14px;
+  min-height: 44px;
+  padding: 8px 16px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   background: rgba(10, 10, 11, 0.82);
@@ -1263,8 +1273,92 @@
 }
 
 #start-title .lp-line:nth-child(1) {
-  --em: 2.78;
+  --em: 4.5;
   --max: 180px;
+}
+
+/* красный 3D-куб, как кадр «3D ■» из ролика */
+.lp-cube {
+  --s: clamp(54px, 13cqi, 150px);
+  position: absolute;
+  top: 0;
+  right: calc(var(--s) * 0.22);
+  width: var(--s);
+  height: var(--s);
+  perspective: calc(var(--s) * 5);
+  pointer-events: none;
+}
+
+.lp-cube::after {
+  content: "";
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  bottom: -34%;
+  height: 18%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(10, 10, 11, 0.3), transparent);
+}
+
+.lp-cube__r {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform: rotateX(-24deg) rotateY(38deg);
+  animation: lp-cube 9s linear infinite;
+}
+
+.lp-cube__r i {
+  position: absolute;
+  inset: 0;
+  background: var(--red);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.lp-cube__r i:nth-child(1) {
+  transform: translateZ(calc(var(--s) / 2));
+  background: linear-gradient(135deg, #ff5a50, #ff3d3a 60%, #f0302c);
+}
+
+.lp-cube__r i:nth-child(2) {
+  transform: rotateY(90deg) translateZ(calc(var(--s) / 2));
+  background: linear-gradient(135deg, #e3302d, #c8102e);
+}
+
+.lp-cube__r i:nth-child(3) {
+  transform: rotateY(180deg) translateZ(calc(var(--s) / 2));
+  background: linear-gradient(135deg, #c8102e, #9e0c22);
+}
+
+.lp-cube__r i:nth-child(4) {
+  transform: rotateY(-90deg) translateZ(calc(var(--s) / 2));
+  background: linear-gradient(135deg, #ff7a70, #ff4a42);
+}
+
+.lp-cube__r i:nth-child(5) {
+  transform: rotateX(90deg) translateZ(calc(var(--s) / 2));
+  background: linear-gradient(135deg, #ffa49b, #ff6a61);
+}
+
+.lp-cube__r i:nth-child(6) {
+  transform: rotateX(-90deg) translateZ(calc(var(--s) / 2));
+  background: #8f0c1f;
+}
+
+@container (min-width: 1100px) {
+  .lp-cube {
+    --s: 150px;
+    top: 32px;
+  }
+}
+
+@keyframes lp-cube {
+  from {
+    transform: rotateX(-24deg) rotateY(38deg);
+  }
+  to {
+    transform: rotateX(-24deg) rotateY(398deg);
+  }
 }
 
 #start-title .lp-line:nth-child(2) {
@@ -1304,12 +1398,13 @@
 
 .lp-step__n {
   font-family: var(--f-wide);
-  font-weight: 900;
+  font-weight: 700;
   font-size: clamp(64px, 9vw, 120px);
   line-height: 0.85;
-  letter-spacing: -0.04em;
+  /* 700 и разрядка: у «3» открытые просветы, цифры не слипаются — контур читается, а не «0Є» */
+  letter-spacing: 0.02em;
   color: var(--paper);
-  -webkit-text-stroke: 4px var(--ink);
+  -webkit-text-stroke: 3px var(--ink);
   paint-order: stroke fill;
 }
 
@@ -1336,12 +1431,20 @@
 }
 
 .lp-handle {
+  position: relative;
   color: var(--red-deep);
   font-weight: 700;
   text-decoration: none;
   border-bottom: 2px solid currentColor;
   display: inline-block;
   white-space: nowrap;
+}
+
+/* ссылка внутри строки: зона нажатия больше самой надписи (≥ 44px в высоту), вид не меняется */
+.lp-handle::after {
+  content: "";
+  position: absolute;
+  inset: -9px -4px;
 }
 
 .lp-field {
@@ -1362,6 +1465,17 @@
 
 .lp-field b {
   color: #ff8a87;
+}
+
+.lp-field--link {
+  min-height: 44px;
+  text-decoration: none;
+  transition: transform 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out);
+}
+
+.lp-field--link:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 18px 40px -14px rgba(46, 61, 128, 1);
 }
 
 .lp-field svg {
@@ -1408,7 +1522,19 @@
 }
 
 .lp-start__cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
   margin: clamp(30px, 4vw, 50px) 0 0;
+}
+
+.lp-start__note {
+  font-family: var(--f-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(10, 10, 11, 0.62);
 }
 
 @media (min-width: 900px) {
@@ -1506,9 +1632,15 @@
   margin-left: -60vmax;
 }
 
-#plan-title .lp-line {
-  --em: 7.7;
-  --max: 170px;
+#plan-title .lp-line:nth-child(1) {
+  --em: 4.72;
+  --max: 150px;
+}
+
+#plan-title .lp-line:nth-child(2) {
+  --em: 8.45;
+  --max: 150px;
+  margin-top: 0.04em;
 }
 
 .lp-plans {
@@ -1590,6 +1722,7 @@
 
 .lp-plan-card__list li::before {
   content: "✦";
+  content: "✦" / "";
   flex: none;
   color: var(--red);
 }
@@ -1607,6 +1740,11 @@
   background: var(--ink);
   color: var(--white);
   box-shadow: 0 12px 30px -12px rgba(10, 10, 11, 0.9);
+}
+
+/* на красной карточке красная рамка фокуса не видна */
+.lp-plan-card--red :focus-visible {
+  outline-color: var(--ink);
 }
 
 .lp-btn-ink:hover {
@@ -1707,9 +1845,84 @@
   pointer-events: none;
 }
 
-.lp-faq__list {
+.lp-faq__grid {
+  display: grid;
+  gap: 36px;
   margin: clamp(40px, 6vw, 72px) 0 0;
+}
+
+.lp-faq__list {
+  min-width: 0;
   border-top: 2px solid var(--ink);
+}
+
+.lp-faq__aside {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 26px 24px 26px;
+  overflow: hidden;
+  border-radius: 26px;
+  background:
+    radial-gradient(90% 70% at 100% 0%, rgba(255, 61, 58, 0.34), transparent 70%),
+    radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1.3px) 0 0 / 18px 18px,
+    var(--ink);
+  color: var(--paper);
+  box-shadow: 0 30px 70px -36px rgba(10, 10, 11, 0.7);
+}
+
+.lp-faq__k {
+  margin: 0;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lp-faq__t {
+  margin: 0;
+  font-family: var(--f-wide);
+  font-weight: 800;
+  font-size: clamp(22px, 1.2vw + 15px, 30px);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+
+.lp-faq__d {
+  margin: 0;
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: rgba(236, 235, 231, 0.72);
+}
+
+.lp-faq__cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin: 8px 0 0;
+}
+
+.lp-faq__sup {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--paper);
+  text-decoration: underline;
+  text-decoration-color: rgba(236, 235, 231, 0.35);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+  transition: text-decoration-color 0.2s, color 0.2s;
+}
+
+.lp-faq__sup:hover {
+  color: var(--white);
+  text-decoration-color: var(--red);
 }
 
 .lp-q {
@@ -1791,9 +2004,32 @@
 }
 
 @media (min-width: 980px) {
-  .lp-faq__list {
-    max-width: 880px;
-    margin-left: auto;
+  .lp-faq__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+    gap: clamp(40px, 5vw, 80px);
+    align-items: start;
+  }
+  .lp-faq__aside {
+    position: sticky;
+    top: 92px;
+    padding: 30px 28px;
+  }
+}
+
+/* телефон: «ТЫ» — крупно, «?» — огромный в правом верхнем углу, «СПРОСИШЬ» — во всю ширину */
+@container (max-width: 700px) {
+  .lp-ask {
+    --F: calc(100cqi * 0.975 / 7.8);
+  }
+  .lp-ask .lp-line:nth-child(2) {
+    font-size: calc(var(--F) * 2.1);
+    line-height: 0.84;
+  }
+  .lp-ask__q {
+    top: -0.1em;
+    bottom: auto;
+    right: 0.04em;
+    font-size: calc(var(--F) * 3.05);
   }
 }
 
@@ -1937,25 +2173,31 @@
 .lp-foot__links {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 24px;
-  margin-top: 6px;
+  gap: 0 24px;
+  margin-top: -4px;
   font-size: 14.5px;
 }
 
 .lp-foot__links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: rgba(255, 255, 255, 0.82);
-  text-decoration: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
-  transition: color 0.2s, border-color 0.2s;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.25);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+  transition: color 0.2s, text-decoration-color 0.2s;
 }
 
 .lp-foot__links a:hover {
   color: var(--white);
-  border-color: var(--red);
+  text-decoration-color: var(--red);
 }
 
 .lp-foot__giant {
-  margin: 34px 0 0;
+  margin: calc(34px - 0.16em) 0 0;
+  padding-top: 0.16em;
   padding-bottom: env(safe-area-inset-bottom);
   font-family: var(--f-wide);
   font-weight: 900;
@@ -1968,8 +2210,8 @@
   color: #1a0c0d;
   -webkit-text-stroke: 2px rgba(255, 61, 58, 0.55);
   paint-order: stroke fill;
-  -webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
-  mask-image: linear-gradient(180deg, #000 35%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 45%, transparent 100%);
   user-select: none;
 }
 
@@ -2017,6 +2259,7 @@
 .lp-js .lp-sec:not(.is-live) .lp-inf__beam,
 .lp-js .lp-sec:not(.is-live) .lp-day,
 .lp-js .lp-sec:not(.is-live) .lp-embers i,
+.lp-js .lp-sec:not(.is-live) .lp-cube__r,
 .lp-js .lp-marq:not(.is-live) .lp-tape__track {
   animation-play-state: paused;
 }
@@ -2111,6 +2354,35 @@
 
 .lp-motion .lp-step.is-in::before {
   animation: lp-sweep 1.1s var(--ease-out) calc(var(--d, 0ms) + 200ms) both;
+}
+
+.lp-motion [data-fx]:not(.is-in) .lp-cube {
+  opacity: 0;
+}
+
+.lp-motion [data-fx].is-in .lp-cube {
+  animation: lp-cube-in 1.2s var(--ease-out) 0.35s both;
+}
+
+@keyframes lp-cube-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-90%) scale(0.35) rotate(-40deg);
+    filter: blur(8px);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(6%) scale(1.06, 0.92);
+    filter: none;
+  }
+  70% {
+    transform: translateY(-3%) scale(0.98, 1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
 .lp-motion .lp-step.is-in .lp-step__n {
@@ -2475,7 +2747,8 @@
   .lp-inf__beam,
   .lp-day,
   .tg-card__burst,
-  .tg-card__star {
+  .tg-card__star,
+  .lp-cube__r {
     animation: none !important;
   }
   .lp-embers {
