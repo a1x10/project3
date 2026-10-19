@@ -55,6 +55,8 @@ def test_ad_site_is_static_and_safe():
                 files[os.path.relpath(os.path.join(root, name), AD)] = read(root, name)
     assert {"common.js", "film.js", "landing.js", "base.css", "film.css", "landing.css", "fonts.css"} <= set(files)
     for name, code in files.items():
+        code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)  # комментарии могут упоминать запретные слова
+        code = re.sub(r"(?m)^\s*//.*$", "", code)
         if name.endswith(".js"):
             for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
                         "setAttribute(\"style\"", "setAttribute('style'", "fetch(", "XMLHttpRequest", "WebSocket"):
