@@ -447,3 +447,11 @@ async def test_write_to_person_in_telegram_needs_them_to_have_written_first(tbra
     await feed_tg(tbrain, tg_update("стелла напиши Васе", chat_id=OWNER_TG, chat_type="private", user_id=OWNER_TG,
                                     first="Я"))
     assert "первым бот писать не может" in outs[0]
+
+
+async def test_no_dm_limit_when_zero(tbrain, api):
+    tbrain.s.telegram_dm_per_day = 0  # 0 — без лимита
+    tbrain.llm.queue = [f"ответ {i}" for i in range(5)]
+    for i in range(5):
+        await feed_tg(tbrain, tg_update(f"сообщение {i}", chat_id=VASYA_TG, chat_type="private", user_id=VASYA_TG))
+    assert sum((b.get("text") or "").startswith("ответ") for b in api.sent()) == 5

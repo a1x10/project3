@@ -475,7 +475,8 @@ class Brain:
         if not self._allowed(inc):
             self._decision(inc, "чат не разрешён (ALLOWED_GROUPS / ALLOW_DMS)")
             return
-        if (inc.is_dm and inc.chat_jid.endswith("@tg.chat") and not self.s.is_owner(phone_of(inc.sender_jid))
+        if (self.s.telegram_dm_per_day > 0 and inc.is_dm and inc.chat_jid.endswith("@tg.chat")
+                and not self.s.is_owner(phone_of(inc.sender_jid))
                 and not await self.is_trusted(await self.db.find_person_by_jid(inc.sender_jid),
                                               phone_of(inc.sender_jid))):
             key = f"tgdm:{inc.sender_jid}:{date.today().isoformat()}"
@@ -620,6 +621,8 @@ class Brain:
                 (f"viddl:all:{today}", dl.GLOBAL_DAY)]
         if not owner:
             keys.append((f"viddl:p:{person}:{today}", dl.PER_SENDER_DAY))
+        if self.s.video_dl_per_day <= 0:  # 0 — без дневных лимитов (очередь закачек остаётся)
+            keys = []
         reject = ""
         async with dl.limit_lock():  # проверка и учёт — разом, иначе ссылки подряд проскочат лимит
             for key, limit in keys:

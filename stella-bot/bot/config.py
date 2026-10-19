@@ -69,10 +69,11 @@ class Settings:
 
     # --- что она делает сама: стикеры, картинки, документы, презентации, таблицы, видео ---
     media_enabled: bool = field(default_factory=lambda: _bool("MEDIA_ENABLED", True))
-    media_per_day: int = field(default_factory=lambda: _int("MEDIA_PER_DAY", 40))  # на чат в сутки
+    # дневные лимиты: 0 — без лимита (так по умолчанию: ботом пользуются свои; от трат — DAILY_BUDGET_USD)
+    media_per_day: int = field(default_factory=lambda: _int("MEDIA_PER_DAY", 0))  # на чат в сутки
     # мультики с движением (make_cartoon): рисуются на сервере в отдельном процессе, по одному за раз
     anim_enabled: bool = field(default_factory=lambda: _bool("ANIM_ENABLED", True))
-    anim_per_day: int = field(default_factory=lambda: _int("ANIM_PER_DAY", 8))  # на чат в сутки (владельцу — без лимита)
+    anim_per_day: int = field(default_factory=lambda: _int("ANIM_PER_DAY", 0))  # на чат в сутки (владельцу — без лимита)
     # HTML-страницы (make_html): игры, открытки, викторины, сайты. Пишет их отдельный вызов модели («студия»)
     # с дизайн-промптом и максимальным обдумыванием, потом доводит по скриншотам из браузера («арт-директор»):
     # ~5–15 минут и ~1–3 $ за страницу на Opus 5.5 (effort max). Быстрее и дешевле: HTML_EFFORT=high
@@ -89,12 +90,12 @@ class Settings:
     html_polish_effort: str = field(default_factory=lambda: _str("HTML_POLISH_EFFORT", "max"))
     # презентации тоже делает студия (слайды рисуются в браузере -> PowerPoint + PDF); false — простые из списка
     deck_studio: bool = field(default_factory=lambda: _bool("DECK_STUDIO", True))
-    html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 4))  # на чат в сутки (админам — без лимита)
-    html_per_day_total: int = field(default_factory=lambda: _int("HTML_PER_DAY_TOTAL", 20))  # на всех (кроме владельца)
+    html_per_day: int = field(default_factory=lambda: _int("HTML_PER_DAY", 0))  # на чат в сутки (админам — без лимита)
+    html_per_day_total: int = field(default_factory=lambda: _int("HTML_PER_DAY_TOTAL", 0))  # на всех (кроме владельца)
     html_concurrency: int = field(default_factory=lambda: _int("HTML_CONCURRENCY", 2))
     # видео по ссылке: скинули TikTok/YouTube — скачивает (yt-dlp) и присылает ответом на это сообщение
     video_dl_enabled: bool = field(default_factory=lambda: _bool("VIDEO_DL_ENABLED", True))
-    video_dl_per_day: int = field(default_factory=lambda: _int("VIDEO_DL_PER_DAY", 30))  # на чат в сутки
+    video_dl_per_day: int = field(default_factory=lambda: _int("VIDEO_DL_PER_DAY", 0))  # на чат в сутки
     video_dl_max_seconds: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_SECONDS", 300))  # длиннее — не качает
     video_dl_max_mb: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_MB", 30))
     # cookies.txt (формат Netscape) от аккаунта YouTube — если ютуб на сервере просит «войти»; пусто — data/cookies.txt
@@ -117,7 +118,7 @@ class Settings:
     # большая задача (mode=project) делается в фоне не дольше стольких секунд
     sandbox_project_timeout: float = field(default_factory=lambda: _float("SANDBOX_PROJECT_TIMEOUT", 1800))
     # запусков в сутки на человека (владельцу — без лимита)
-    sandbox_per_day: int = field(default_factory=lambda: _int("SANDBOX_PER_DAY", 30))
+    sandbox_per_day: int = field(default_factory=lambda: _int("SANDBOX_PER_DAY", 0))
     # quick-задача ждёт ответа не дольше стольких секунд (не держим очередь ответов бота) — дальше доделывает в фоне
     sandbox_quick_seconds: float = field(default_factory=lambda: _float("SANDBOX_QUICK_SECONDS", 150))
     # потолок расходов одного запуска, $ (дальше — останавливается, «продолжи» доделает); 0 — без потолка
@@ -127,7 +128,7 @@ class Settings:
     sandbox_ultra: str = field(default_factory=lambda: _str("SANDBOX_ULTRA", "projects"))
     # «напиши человеку от своего лица» по просьбе владельца: не больше стольких сообщений в сутки (за массовые
     # сообщения WhatsApp банит номер)
-    outreach_per_day: int = field(default_factory=lambda: _int("OUTREACH_PER_DAY", 20))
+    outreach_per_day: int = field(default_factory=lambda: _int("OUTREACH_PER_DAY", 0))
     sandbox_ultra_rounds: int = field(default_factory=lambda: _int("SANDBOX_ULTRA_ROUNDS", 3))  # сколько проверок
     sandbox_ultra_max_usd: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_MAX_USD", 30))
     sandbox_ultra_timeout: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_TIMEOUT", 3600))
@@ -197,7 +198,7 @@ class Settings:
     # какие группы Telegram (id вида -100…); пусто — любые, куда добавили бота
     telegram_allowed_chats: list[str] = field(default_factory=lambda: _list("TELEGRAM_ALLOWED_CHATS"))
     # бота в Telegram может найти кто угодно по @username: в личке у каждого (кроме владельца) — лимит в сутки
-    telegram_dm_per_day: int = field(default_factory=lambda: _int("TELEGRAM_DM_PER_DAY", 40))
+    telegram_dm_per_day: int = field(default_factory=lambda: _int("TELEGRAM_DM_PER_DAY", 0))
 
     # --- «как человек» ---
     reply_delay_min: float = field(default_factory=lambda: _float("REPLY_DELAY_MIN", 2))

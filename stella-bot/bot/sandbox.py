@@ -568,7 +568,8 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
         day_key = f"sandbox:{person}:{today}"
         if not owner:  # владелец платит сам; остальным — дневные лимиты
             used = await db.kv_get(day_key)
-            if used and used[1] >= getattr(settings, "sandbox_per_day", 30):
+            limit = getattr(settings, "sandbox_per_day", 0)
+            if limit > 0 and used and used[1] >= limit:
                 raise ToolError("на сегодня запусков хватит")
             spent = await db.kv_get(f"spend:{today}")
             # с учётом того, что ещё делается (студия и песочница записывают расход по итогу)
