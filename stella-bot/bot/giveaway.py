@@ -327,6 +327,32 @@ class Giveaway:
                     "победителя только среди них (галочка «Только из рассылки»)")
         return None
 
+    def context_note(self, chat_jid: str, days: float = 7) -> str:
+        """Этому чату недавно ушла рассылка о розыгрыше — правда о ней для Стеллы. Иначе модель видит у себя
+        сообщение, которого «не писала», со срочностью и сбором контактов — и предупреждает, что это развод."""
+        if not chat_jid.endswith("@tg.chat") or not os.path.exists(self.path):
+            return ""
+        try:
+            with self.db() as con:
+                row = con.execute("SELECT at FROM sent WHERE chat_jid=? AND outcome='sent' ORDER BY at DESC "
+                                  "LIMIT 1", (chat_jid,)).fetchone()
+            sent_at = datetime.fromisoformat(row["at"]).timestamp() if row else None
+        except (sqlite3.Error, ValueError):
+            return ""
+        if sent_at is None or self.clock() - sent_at > days * 86400:
+            return ""
+        page = self.page_url()
+        state = "регистрация уже закрыта" if self.setting("closed", "0") == "1" else "регистрация идёт"
+        return (
+            f"Про сообщение о розыгрыше в этой переписке: его отправил через тебя владелец бота (рассылкой из админки "
+            f"розыгрыша) — это правда сообщение от тебя, а не чужое и не взлом. Розыгрыш: «{self.prize()}», {state}. "
+            + (f"Страница {page} — " if page else "Страница розыгрыша — ")
+            + "на сервере бота: имя, ник в Telegram или телефон, по желанию почта; паролей, кодов из Telegram и денег "
+            "она не просит. Победителя выбирает владелец случайно, приз выдаёт он. Спросят — объясни это честно и "
+            "коротко; не говори, что писала не ты, и не называй это разводом. Сомневается — его право: участвовать или "
+            "нет, решает сам, не уговаривай. Подробностей о призе сверх этого не выдумывай — пусть уточнит "
+            "у владельца.")
+
     def owner_text(self) -> list[str]:
         """Ответ владельцу на «/розыгрыш»."""
         page = self.page_url()
@@ -613,7 +639,8 @@ class Giveaway:
             wa_id = msg_id(cid, result["message_id"])
             self.brain.outbox.remember_sent(wa_id)
             # в истории чата (со ссылкой): ответят «а что за розыгрыш? дай ссылку» — Стелла поймёт и даст настоящую
-            await self.brain.db.add_message(chat["id"], "assistant", f"{text}\n[кнопка «{button}»: {url}]",
+            await self.brain.db.add_message(chat["id"], "assistant",
+                                            f"{text}\n[рассылка владельца бота о розыгрыше; кнопка «{button}»: {url}]",
                                             wa_message_id=wa_id, sender_name=self.s.bot_name)
         except Exception:
             log.warning("рассылка: ушло, но не записалось в историю чата", exc_info=True)

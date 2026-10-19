@@ -1007,6 +1007,9 @@ class Brain:
         if sender.id in grudges:
             reason = grudges[sender.id]
             extra_hint = OFFENDED_HINT.format(name=sender.name, reason=f" ({reason})" if reason else "")
+        giveaway_note = await asyncio.to_thread(self.giveaway.context_note, chat["jid"])
+        if giveaway_note:  # сюда уходила рассылка о розыгрыше — чтобы не открещивалась от неё и не пугала «разводом»
+            extra_hint = (extra_hint + " " + giveaway_note).strip()
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         # пачка от нескольких людей: права того, кто написал последним, не должны достаться остальным
         shared = any(not self._same_sender(i, target) for i in starred)

@@ -407,3 +407,23 @@ async def test_giveaway_command_in_telegram_dm(tbrain, api):
     await feed_tg(tbrain, tg_update("/розыгрыш", chat_id=VASYA_TG, chat_type="private", user_id=VASYA_TG))
     texts = " ".join(b.get("text") or "" for b in api.sent())
     assert f"TELEGRAM_OWNER_ID={VASYA_TG}" in texts and "#t=" not in texts
+
+
+async def test_after_giveaway_broadcast_stella_knows_it_was_her(tbrain, api):
+    """Рассылку сделал владелец через бота — на «это ты писала? развод?» Стелла не открещивается и не пугает."""
+    tbrain.tunnel_url = "https://x.trycloudflare.com"
+    for uid in (VASYA_TG, 5550003):
+        await tbrain.db.get_or_create_chat(tbrain.s.evolution_instance, f"{uid}@tg.chat", False)
+    await tbrain.giveaway.start_broadcast("Розыгрыш! Жмите 👇", "Участвовать 🎁", start_timer=True)
+    await settle(tbrain)
+    with tbrain.giveaway.db() as con:  # третьему — как будто не дошло
+        con.execute("DELETE FROM sent WHERE chat_jid=?", ("5550003@tg.chat",))
+
+    tbrain.llm.queue = ["да, это я", "привет"]
+    await feed_tg(tbrain, tg_update("это ты писала? это развод?", chat_id=VASYA_TG, chat_type="private",
+                                    user_id=VASYA_TG))
+    prompt = tbrain.llm.calls[-1]["prompt"]
+    assert "отправил через тебя владелец бота" in prompt and "не называй это разводом" in prompt
+    assert "рассылка владельца бота о розыгрыше" in prompt  # и в самой переписке видно, что это за сообщение
+    await feed_tg(tbrain, tg_update("привет", chat_id=5550003, chat_type="private", user_id=5550003, first="Оля"))
+    assert "отправил через тебя владелец бота" not in tbrain.llm.calls[-1]["prompt"]  # кому не слали — без этого
