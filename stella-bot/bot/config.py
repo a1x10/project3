@@ -122,6 +122,12 @@ class Settings:
     sandbox_quick_seconds: float = field(default_factory=lambda: _float("SANDBOX_QUICK_SECONDS", 150))
     # потолок расходов одного запуска, $ (дальше — останавливается, «продолжи» доделает); 0 — без потолка
     sandbox_max_run_usd: float = field(default_factory=lambda: _float("SANDBOX_MAX_RUN_USD", 10))
+    # ультра-режим для программирования (как ultracode): план и тесты -> код -> независимая проверка -> исправления.
+    # projects — так идёт каждая большая задача; ask — только когда просят «ультра»/«максимально»; off — выключен
+    sandbox_ultra: str = field(default_factory=lambda: _str("SANDBOX_ULTRA", "projects"))
+    sandbox_ultra_rounds: int = field(default_factory=lambda: _int("SANDBOX_ULTRA_ROUNDS", 3))  # сколько проверок
+    sandbox_ultra_max_usd: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_MAX_USD", 30))
+    sandbox_ultra_timeout: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_TIMEOUT", 3600))
 
     # --- панель управления (сайт) ---
     # Оба пароля задаются ТОЛЬКО в .env на сервере. Пока хоть один пустой — панель выключена.
