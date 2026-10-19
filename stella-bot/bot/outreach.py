@@ -116,7 +116,7 @@ def build_outreach_tools(brain: "Brain", ctx: "ToolContext") -> list[ToolSpec]:
             raise ToolError(f"за один ответ — не больше {PER_REPLY} человек")
         today = f"outreach_count:{date.today().isoformat()}"
         sent_today = await brain.db.kv_get(today)
-        limit = int(getattr(s, "outreach_per_day", 20) or 0)
+        limit = int(getattr(s, "outreach_per_day", 0) or 0)
         if limit and sent_today and sent_today[1] >= limit:
             raise ToolError(f"на сегодня хватит — уже {int(sent_today[1])} сообщений (OUTREACH_PER_DAY): за массовые "
                             "сообщения WhatsApp банит номер")

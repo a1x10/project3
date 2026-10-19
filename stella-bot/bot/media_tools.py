@@ -77,7 +77,7 @@ class _Budget:
         if self.ctx.media_queued >= MAX_MEDIA_PER_REPLY:
             raise ToolError("за один ответ хватит двух файлов")
         used = await self.db.kv_get(f"media:{self.ctx.chat_id}:{date.today().isoformat()}")
-        if used and used[1] >= self.s.media_per_day and not self.ctx.is_admin:  # владельцу, админам и друзьям — без лимита
+        if self.s.media_per_day > 0 and used and used[1] >= self.s.media_per_day and not self.ctx.is_admin:  # владельцу, админам и друзьям — без лимита
             raise ToolError("на сегодня в этом чате лимит файлов исчерпан, давай завтра")
 
     async def queue(self, file: media.MediaFile, caption: str = "") -> str:
@@ -163,10 +163,11 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         today = date.today().isoformat()
         day_key, all_key = f"html:{ctx.chat_id}:{today}", f"html:all:{today}"
         used = await db.kv_get(day_key)
-        if not ctx.is_admin and used and used[1] >= settings.html_per_day:
+        if settings.html_per_day > 0 and not ctx.is_admin and used and used[1] >= settings.html_per_day:
             raise ToolError(f"на сегодня {w['many']} в этом чате хватит, давай завтра")
         used_all = await db.kv_get(all_key)
-        if not (owner or ctx.is_admin) and used_all and used_all[1] >= settings.html_per_day_total:
+        if (settings.html_per_day_total > 0 and not (owner or ctx.is_admin) and used_all
+                and used_all[1] >= settings.html_per_day_total):
             raise ToolError(f"на сегодня {w['many']} хватит, давай завтра")
         spent = await db.kv_get(f"spend:{today}")
         # учитываем и то, что ещё делается: расходы записываются только по готовности, через минуты
@@ -338,7 +339,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         await budget.take()
         day_key = f"anim:{ctx.chat_id}:{date.today().isoformat()}"
         used = await db.kv_get(day_key)
-        if not ctx.is_admin and used and used[1] >= getattr(settings, "anim_per_day", 8):
+        limit = getattr(settings, "anim_per_day", 0)
+        if limit > 0 and not ctx.is_admin and used and used[1] >= limit:
             raise ToolError("на сегодня мультиков в этом чате хватит, давай завтра")
         busy = runner.can_start(ctx.chat_id)
         if busy:
