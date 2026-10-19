@@ -32,3 +32,34 @@ def test_panel_has_no_unsafe_dom_or_inline_code():
     assert "Content-Security-Policy" in html and "script-src 'self'" in html
     assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "встроенный <script> запрещён CSP"
     assert not re.search(r"\son[a-z]+\s*=", html), "обработчики on...= в разметке запрещены CSP"
+
+
+AD = os.path.join(DOCS, "stella")
+
+
+@pytest.mark.skipif(not os.path.isdir(AD), reason="нет рекламной страницы docs/stella")
+def test_ad_site_is_static_and_safe():
+    """Рекламная страница на том же адресе, что и панель: только свой код, без опасных вставок в DOM."""
+    html = read(AD, "index.html")
+    assert "script-src 'self'" in html and "connect-src 'none'" in html
+    assert "require-trusted-types-for 'script'" in html
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), "встроенный <script> запрещён CSP"
+    assert not re.search(r"\son[a-z]+\s*=", html), "обработчики on...= в разметке запрещены CSP"
+    assert not re.search(r"\sstyle\s*=", html), "атрибут style= запрещён CSP"
+    for src in re.findall(r"<(?:script|link)[^>]+(?:src|href)=\"([^\"]+)\"", html):
+        assert not re.match(r"(https?:)?//", src), f"внешний файл: {src}"
+    files = {}
+    for root, _, names in os.walk(AD):
+        for name in names:
+            if name.endswith((".js", ".css")):
+                files[os.path.relpath(os.path.join(root, name), AD)] = read(root, name)
+    assert {"common.js", "film.js", "landing.js", "base.css", "film.css", "landing.css", "fonts.css"} <= set(files)
+    for name, code in files.items():
+        if name.endswith(".js"):
+            for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function",
+                        "setAttribute(\"style\"", "setAttribute('style'", "fetch(", "XMLHttpRequest", "WebSocket"):
+                assert bad not in code, f"{name}: {bad}"
+        for url in re.findall(r"https?://[\w-]+(?:\.[\w-]+)+[^\s\"'`)]*", code):
+            assert url.startswith(("https://t.me/", "http://www.w3.org/")), f"{name}: внешний адрес {url}"
+    for font in re.findall(r"url\((fonts/[^)]+)\)", files["fonts.css"]):
+        assert os.path.exists(os.path.join(AD, font)), font
