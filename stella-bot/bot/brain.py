@@ -516,6 +516,13 @@ class Brain:
                                            sender_name=sender.name, kind=inc.kind, quoted_wa_id=inc.quoted_id)
         if msg_id is None:
             return  # дубль
+        if not inc.is_group:  # ответ человеку, которому Стелла написала первой по просьбе владельца
+            from .outreach import on_reply
+
+            try:
+                await on_reply(self, chat, sender.name, text)
+            except Exception:
+                log.warning("не смогла сообщить владельцу об ответе", exc_info=True)
         if inc.kind == "audio" and self._age_seconds(inc) <= self.s.reply_stale_minutes * 60:
             # в истории голосовое уже на своём месте; расшифровка — она его «слышит», дальше это обычный текст
             heard = await self._transcribe(inc)
@@ -1010,6 +1017,12 @@ class Brain:
         giveaway_note = await asyncio.to_thread(self.giveaway.context_note, chat["jid"])
         if giveaway_note:  # сюда уходила рассылка о розыгрыше — чтобы не открещивалась от неё и не пугала «разводом»
             extra_hint = (extra_hint + " " + giveaway_note).strip()
+        if not chat["is_group"]:  # писала первой по просьбе владельца — помнит зачем
+            from .outreach import context_hint, note_for
+
+            outreach = await note_for(self, chat["id"])
+            if outreach:
+                extra_hint = (extra_hint + " " + context_hint(self, outreach)).strip()
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         # пачка от нескольких людей: права того, кто написал последним, не должны достаться остальным
         shared = any(not self._same_sender(i, target) for i in starred)
@@ -1104,6 +1117,9 @@ class Brain:
             extra += build_voice_tools(self.db, self.s, ctx, speaker=self.speaker)
         if shared:
             return extra
+        from .outreach import build_outreach_tools
+
+        extra += build_outreach_tools(self, ctx)
         self.sandbox.model, self.sandbox.effort = self.s.sandbox_model, self.s.sandbox_effort
         self.sandbox.timeout, self.sandbox.max_run_usd = self.s.sandbox_project_timeout, self.s.sandbox_max_run_usd
         extra += build_sandbox_tools(self.db, self.s, ctx, sandbox=self.sandbox)

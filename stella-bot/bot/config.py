@@ -125,6 +125,9 @@ class Settings:
     # ультра-режим для программирования (как ultracode): план и тесты -> код -> независимая проверка -> исправления.
     # projects — так идёт каждая большая задача; ask — только когда просят «ультра»/«максимально»; off — выключен
     sandbox_ultra: str = field(default_factory=lambda: _str("SANDBOX_ULTRA", "projects"))
+    # «напиши человеку от своего лица» по просьбе владельца: не больше стольких сообщений в сутки (за массовые
+    # сообщения WhatsApp банит номер)
+    outreach_per_day: int = field(default_factory=lambda: _int("OUTREACH_PER_DAY", 20))
     sandbox_ultra_rounds: int = field(default_factory=lambda: _int("SANDBOX_ULTRA_ROUNDS", 3))  # сколько проверок
     sandbox_ultra_max_usd: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_MAX_USD", 30))
     sandbox_ultra_timeout: float = field(default_factory=lambda: _float("SANDBOX_ULTRA_TIMEOUT", 3600))
