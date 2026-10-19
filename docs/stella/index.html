@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Стелла — ИИ в Telegram и WhatsApp</title>
+<meta name="description" content="Стелла — ИИ, который общается как человек: помнит людей, понимает голосовые, рисует стикеры, делает сайты, игры, мультики и презентации. Одно сообщение — и готово.">
+<meta name="theme-color" content="#0a0a0b">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:title" content="Стелла — ИИ в Telegram и WhatsApp">
+<meta property="og:description" content="Одно сообщение — и готово: сайт, игра, мультик, презентация, стикер. Помнит людей, слушает голосовые, отвечает как человек.">
+<meta property="og:url" content="https://a1x10.github.io/project3/stella/">
+<meta property="og:image" content="https://a1x10.github.io/project3/stella/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/unbounded-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="film.css">
+<link rel="stylesheet" href="landing.css">
+<script src="common.js" defer></script>
+<script src="film.js" defer></script>
+<script src="landing.js" defer></script>
+</head>
+<body>
+
+<!-- FILM:START — заставка-«фильм» (владелец: film.js / film.css). Внутри #hero — статичный первый экран:
+     его видно без JavaScript и при reduced-motion; фильм заканчивается на нём. -->
+<section id="film" class="film" aria-label="Стелла — вступление">
+  <div id="film-stage" class="film-stage" aria-hidden="true"></div>
+  <div id="hero" class="hero">
+    <p class="hero-kicker"><span class="star" aria-hidden="true">✦</span> ИИ в Telegram и WhatsApp</p>
+    <h1 class="hero-logo">Стелла</h1>
+    <p class="hero-tag">Одно сообщение — и готово.</p>
+    <div class="hero-cta">
+      <a class="btn btn-red" data-link="bot" href="https://t.me/stella_ai_beta_bot" target="_blank" rel="noopener">Написать Стелле</a>
+      <a class="btn btn-ghost" href="#what">Что она умеет</a>
+    </div>
+  </div>
+  <div id="film-ui" class="film-ui"></div>
+</section>
+<!-- FILM:END -->
+
+<!-- LANDING:START — остальная страница (владелец: landing.js / landing.css) -->
+<main id="landing" class="landing">
+  <section id="what" class="section">
+    <h2>Что умеет Стелла</h2>
+  </section>
+</main>
+<!-- LANDING:END -->
+
+</body>
+</html>
