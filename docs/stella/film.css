@@ -45,6 +45,13 @@
   animation: none;
 }
 
+/* пока идёт фильм, #film ровно в экран (и на телефоне боком): сцены центрируются по видимой высоте,
+   «Пропустить», пауза и полоска прогресса всегда внутри экрана */
+.film.film--js:not(.film--done) {
+  height: 100vh;
+  height: 100svh;
+}
+
 @keyframes film-breathe {
   from {
     opacity: 0.75;
@@ -81,7 +88,7 @@
   background: rgba(255, 255, 255, 0.04);
   font-family: var(--f-mono);
   font-weight: 500;
-  font-size: clamp(11px, 0.6vw + 9px, 15px);
+  font-size: clamp(12px, 0.6vw + 10px, 15px);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.82);
@@ -101,7 +108,8 @@
   line-height: 1.02;
   letter-spacing: -0.025em;
   color: #fff;
-  transform: skewX(-11deg);
+  /* сдвиг на ползвезды: «✦ Стелла» вместе стоит по центру */
+  transform: translateX(0.22em) skewX(-11deg);
   text-shadow: 0 0 0.06em rgba(255, 120, 110, 0.9), 0 0 0.22em rgba(255, 61, 58, 0.75), 0 0 0.6em rgba(255, 61, 58, 0.4);
 }
 
@@ -121,16 +129,19 @@
   pointer-events: none;
 }
 
-/* звезда-искра у логотипа */
+/* звезда ✦ слева от слова, на лазерной линии — как в сцене логотипа, в шапке и подвале.
+   Рисунок (не символ): в доступное имя заголовка не попадает, h1 читается как «Стелла» */
 .hero-logo::before {
-  content: "✦";
+  content: "";
   position: absolute;
-  right: -0.08em;
-  top: -0.12em;
-  font-size: 0.26em;
-  color: var(--red);
-  text-shadow: 0 0 12px rgba(255, 61, 58, 0.95);
-  transform: skewX(11deg);
+  left: 0;
+  top: 57%;
+  width: 0.4em;
+  height: 0.4em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff3d3a' d='M12 0C12.9 7.6 16.4 11.1 24 12 16.4 12.9 12.9 16.4 12 24 11.1 16.4 7.6 12.9 0 12 7.6 11.1 11.1 7.6 12 0Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 0 0.06em rgba(255, 61, 58, 0.95));
+  transform: translate(-100%, -50%) skewX(11deg);
+  pointer-events: none;
 }
 
 .hero-tag {
@@ -149,6 +160,39 @@
   justify-content: center;
   gap: 12px;
   margin-top: 6px;
+}
+
+/* телефон боком (и любой низкий экран): первый экран целиком помещается в высоту,
+   кнопки — в одну строку и выше кнопок управления фильмом */
+@media (orientation: landscape) and (max-height: 500px) {
+  .hero {
+    gap: clamp(6px, 2.2vh, 12px);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 68px);
+  }
+
+  .hero-kicker {
+    padding: 0.45em 1em;
+    font-size: 12px;
+  }
+
+  .hero-logo {
+    font-size: clamp(40px, min(14vw, 20vh), 110px);
+  }
+
+  .hero-tag {
+    font-size: clamp(14px, 4.4vh, 18px);
+  }
+
+  .hero-cta {
+    flex-wrap: nowrap;
+    margin-top: 0;
+  }
+
+  .hero-cta .btn {
+    min-height: 46px;
+    padding: 10px 22px;
+  }
 }
 
 /* пока идёт фильм — первый экран спрятан (текст остаётся доступным, кнопки — нет) */
@@ -462,9 +506,9 @@
 
 :where(.film-stage) .ha {
   position: absolute;
-  right: -0.22em;
-  top: -0.6em;
-  font-size: 0.3em;
+  right: -1.5em;
+  top: -0.32em;
+  font-size: 0.34em;
   color: var(--red);
   text-shadow: 0 0 0.3em rgba(255, 61, 58, 0.6);
 }
@@ -567,7 +611,7 @@
 
 .nb-tag {
   font-family: var(--f-mono);
-  font-size: 0.66em;
+  font-size: max(12px, 0.66em);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.62);
@@ -653,11 +697,23 @@
   border-radius: 0.8em;
   border: 1px solid rgba(190, 205, 255, 0.5);
   background: linear-gradient(160deg, rgba(96, 120, 220, 0.94), rgba(55, 70, 152, 0.94) 55%, rgba(36, 44, 104, 0.96));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1.4em 2.4em rgba(12, 16, 54, 0.35), 0 1.6em 4em -1em rgba(59, 79, 158, 0.85),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.35);
   color: #fff;
   font-family: var(--f-mono);
   font-weight: 500;
+  /* карточка двигается каждый кадр — свой слой, без перерисовки (сцена видна только 3.4 с, иначе display: none) */
+  will-change: transform, opacity;
+}
+
+/* большие размытые тени карточки — отдельным слоем: печать запроса перерисовывает текст, а не тени */
+.pr-sh {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: inset 0 -1.4em 2.4em rgba(12, 16, 54, 0.35), 0 1.6em 4em -1em rgba(59, 79, 158, 0.85);
+  pointer-events: none;
+  will-change: transform;
 }
 
 .pr-head {
@@ -1127,6 +1183,18 @@
   color: rgba(255, 255, 255, 0.86);
 }
 
+/* вертикальный кадр: вторая и третья строки крупнее, иначе на телефоне они мелкие */
+.pd-p .pd-l2 {
+  margin-top: 0.18em;
+  font-size: 0.47em;
+}
+
+.pd-p .pd-l3 {
+  margin-top: 0.22em;
+  margin-left: 0.25em;
+  font-size: 0.86em;
+}
+
 :where(.film-stage) .sel {
   position: relative;
   display: inline-block;
@@ -1213,8 +1281,8 @@
   background: repeating-conic-gradient(#f4f4f6 0 25%, #85858d 0 50%) 0 0 / 0.16em 0.16em;
   -webkit-background-clip: text;
   background-clip: text;
-  -webkit-text-stroke: 0.012em rgba(255, 255, 255, 0.9);
-  filter: drop-shadow(0 0 0.05em rgba(255, 255, 255, 0.45));
+  /* без -webkit-text-stroke: у вариативного Unbounded он рисует внутренние контуры букв; кромка — тенью */
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 0.05em rgba(255, 255, 255, 0.45));
 }
 
 .zh-row {
@@ -1223,7 +1291,7 @@
   margin-top: 0.22em;
   font-family: var(--f-mono);
   font-weight: 700;
-  font-size: 0.15em;
+  font-size: max(13px, 0.15em);
   letter-spacing: 0.1em;
   color: #fff;
 }
@@ -1270,7 +1338,7 @@
 .zh-etal {
   font-family: var(--f-mono);
   font-weight: 700;
-  font-size: 0.11em;
+  font-size: max(12px, 0.11em);
   letter-spacing: 0.14em;
   color: rgba(255, 255, 255, 0.7);
 }
@@ -1283,6 +1351,29 @@
   letter-spacing: 0.02em;
   color: #fff;
   text-shadow: 0 0 0.2em rgba(255, 255, 255, 0.4);
+}
+
+/* вертикальный кадр: таймер — второй главный элемент, крупно */
+.zh-p .zh-eta {
+  margin-top: 0.3em;
+  gap: 0.16em;
+}
+
+.zh-p .zh-glass {
+  width: 0.42em;
+  height: 0.56em;
+}
+
+.zh-p .zh-etal {
+  font-size: max(12px, 0.13em);
+}
+
+.zh-p .zh-timer {
+  font-size: 0.58em;
+}
+
+.zh-p .zh-row {
+  font-size: max(13px, 0.17em);
 }
 
 /* 18. глитч */
@@ -1373,9 +1464,12 @@
   white-space: nowrap;
 }
 
+/* контур: у вариативного Unbounded -webkit-text-stroke рисует и внутренние (перекрывающиеся) контуры —
+   стрелки и полосы внутри букв. Заливаем букву цветом фона поверх обводки (paint-order) — видна только внешняя кромка. */
 .sb-outline {
-  color: transparent;
-  -webkit-text-stroke: 0.022em #fff;
+  color: var(--ink);
+  -webkit-text-stroke: 0.046em #fff;
+  paint-order: stroke fill;
 }
 
 .sb-red {
@@ -1562,6 +1656,11 @@
 
 .id-r {
   align-items: flex-end;
+}
+
+/* зазор под «ДО ГОТОВОГО»: бревис «Й» в «ФАЙЛА» выше строки и иначе налезает */
+.id-r .id-s {
+  margin-bottom: 0.5em;
 }
 
 .id-s {
