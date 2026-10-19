@@ -40,6 +40,8 @@ from .persona import (
     format_transcript,
     system_prompt,
 )
+from .plans import NOTICE_EVERY as LIMIT_NOTICE_EVERY
+from .plans import count_reply, daily_limit, get_plan, limit_hint, limit_text, used_today
 from .stickers import StickerLibrary
 from .tools import ToolContext, build_tools
 from .util import jid_digits, mask_phone, norm, normalize_jid, phone_of, utcnow
@@ -242,6 +244,7 @@ class Brain:
         self.seen: OrderedDict[str, None] = OrderedDict()
         self.talking: dict[str, dict[str, float]] = {}  # чат -> собеседник -> когда Стелла ему отвечала
         self._trust: dict[int, tuple[float, bool]] = {}  # человек -> (когда проверили, свой ли) — режим друзей
+        self._limit_told: dict[int, float] = {}  # человек -> когда сказали «вы достигли лимита»
         self.connection_state = "unknown"
         self.disconnected_at: float | None = None
         self._last_alert: dict[str, float] = {}
@@ -848,6 +851,30 @@ class Brain:
         self._trust[person.id] = (now, ok)
         return ok
 
+    async def reply_limit(self, person: Person) -> int:
+        """Сколько ответов в сутки положено человеку (подписки выдаются в панели); 0 — без лимита."""
+        if self.s.is_admin(phone_of(person.jid) or person.phone):
+            return 0
+        plan = await get_plan(self.db, person.id)
+        if plan is None and self.s.free_replies_per_day <= 0:
+            return 0
+        return daily_limit(self.s, plan, plan is None and await self.is_trusted(person))
+
+    async def _limit_reached(self, chat: dict[str, Any], target: Incoming, sender: Person, limit: int, mode: str,
+                             *, several: bool = False) -> None:
+        """Лимит ответов кончился: сказать про подписку (не чаще раза в час), дальше — молчать до завтра."""
+        now = time.monotonic()
+        told = now - self._limit_told.get(sender.id, -1e9) < LIMIT_NOTICE_EVERY
+        self._decision(target, f"лимит {limit} ответов в сутки исчерпан" + ("" if mode == DIRECT and not told
+                                                                             else " — молчит"))
+        if mode != DIRECT or told:
+            return
+        self._limit_told[sender.id] = now
+        from .casino import CasinoResult
+
+        await self.outbox.send_result(chat, CasinoResult([limit_text(self.s, limit)]), reply_to=target,
+                                      quote=several or chat["is_group"])
+
     async def is_group_admin(self, chat: dict[str, Any], person: Person, max_age: float | None = None) -> bool:
         """Админ группы в WhatsApp (может, например, поставить Стеллу на паузу).
 
@@ -1010,6 +1037,12 @@ class Brain:
         if sender is None:
             log.warning("%s: не нашла в базе того, кому отвечать (%s)", mask_phone(chat_jid), mask_phone(target.sender_jid))
             return
+        limit = await self.reply_limit(sender) if mode in (DIRECT, CONTINUE) else 0
+        if limit:  # подписки из панели: лимит кончился — модель не зовём
+            used = await used_today(self.db, sender.id)
+            if used >= limit:
+                await self._limit_reached(chat, target, sender, limit, mode, several=several)
+                return
 
         # «просто ассистент» не обижается и не игнорирует людей
         grudges = await self.db.active_grudges(chat["id"]) if self.s.prompt_style != "minimal" else {}
@@ -1026,6 +1059,8 @@ class Brain:
             outreach = await note_for(self, chat["id"])
             if outreach:
                 extra_hint = (extra_hint + " " + context_hint(self, outreach)).strip()
+        if limit:  # спросит про лимит или подписку — знает, что ответить
+            extra_hint = (extra_hint + " " + limit_hint(self.s, limit, used)).strip()
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
         # пачка от нескольких людей: права того, кто написал последним, не должны достаться остальным
         shared = any(not self._same_sender(i, target) for i in starred)
@@ -1095,6 +1130,8 @@ class Brain:
         elif not tool_ctx.after:
             log.info("%s: молчит (%s)", mask_phone(chat_jid), mode)
             return
+        if mode in (DIRECT, CONTINUE):
+            await count_reply(self.db, sender.id)
         tool_ctx.replied = sent
         for action in tool_ctx.after:  # опрос — после её сообщения
             await action()

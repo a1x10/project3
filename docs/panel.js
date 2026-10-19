@@ -763,10 +763,8 @@
   function personCard(chatId, p) {
     const bodyId = `person-body-${++S.uid}`;
     const body = h("div", { class: "person-body", id: bodyId, hidden: true });
-    const meta = [p.nickname ? `прозвище: ${p.nickname}` : "", p.push_name && p.push_name !== p.name ? `в WhatsApp: ${p.push_name}` : "",
-      p.phone_masked || "", `сообщений: ${Number(p.msg_count) || 0}`].filter(Boolean).join(" · ");
     const head = h("button", { type: "button", class: "person-head", "aria-expanded": "false", "aria-controls": bodyId },
-      h("div", { class: "who" }, h("div", { class: "name", text: personName(p) }), h("div", { class: "meta", text: meta })),
+      h("div", { class: "who" }, h("div", { class: "name", text: personName(p) }), h("div", { class: "meta", text: personMeta(p) })),
       h("span", { class: "chev", "aria-hidden": "true" }));
     head.addEventListener("click", () => {
       const open = head.getAttribute("aria-expanded") !== "true";
@@ -775,6 +773,66 @@
       if (open && !body.firstChild) renderPersonBody(body, chatId, p);
     });
     return h("div", { class: "person" }, head, body);
+  }
+  function personMeta(p) {
+    const pl = p.plan && typeof p.plan === "object" ? p.plan : null;
+    const plan = !pl || pl.admin ? "" : pl.kind === "unlimited" ? "⭐ подписка" : pl.kind === "limit" ? `лимит ${Number(pl.limit) || 0}/день` : "";
+    return [p.nickname ? `прозвище: ${p.nickname}` : "", p.push_name && p.push_name !== p.name ? `в WhatsApp: ${p.push_name}` : "",
+      p.phone_masked || "", `сообщений: ${Number(p.msg_count) || 0}`, plan].filter(Boolean).join(" · ");
+  }
+  // ---------- подписка: сколько ответов в день Стелла даёт человеку ----------
+  const PLAN_KINDS = [["free", "Бесплатно (общий лимит)"], ["unlimited", "Подписка — без лимита"], ["limit", "Свой лимит в день"]];
+  function fmtDay(sec) {
+    const d = new Date(Number(sec) * 1000);
+    return Number.isFinite(d.getTime()) ? `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}` : "";
+  }
+  function planText(pl) {
+    if (pl.admin) return "Владелец или админ бота — всегда без лимита";
+    const until = pl.kind === "free" ? "" : pl.until ? ` до ${fmtDay(pl.until)}` : " навсегда";
+    const daily = Number(pl.daily) || 0;
+    const what = pl.kind === "unlimited" ? `Подписка без лимита${until}`
+      : pl.kind === "limit" ? `Свой лимит: ${Number(pl.limit) || 0} в день${until}`
+      : daily > 0 ? `Бесплатно: ${daily} ответов в день` : "Бесплатно, без лимита";
+    const ended = pl.ended && pl.until ? ` (подписка закончилась ${fmtDay(pl.until)})` : "";
+    return `${what}${ended}. Сегодня ответила: ${Number(pl.used_today) || 0}${daily > 0 ? ` из ${daily}` : ""}`;
+  }
+  function planSection(p, personPath, rerender) {
+    const pl = p.plan && typeof p.plan === "object" ? p.plan : null;
+    if (!pl) return null;
+    const status = h("p", { class: "plan-status", text: planText(pl) });
+    if (pl.admin) return h("div", {}, status);
+    const ids = [`plan-kind-${++S.uid}`, `plan-days-${++S.uid}`, `plan-limit-${++S.uid}`];
+    const kindSel = h("select", { id: ids[0] }, PLAN_KINDS.map(([v, t]) => h("option", { value: v, text: t })));
+    kindSel.value = pl.kind === "unlimited" || pl.kind === "limit" ? pl.kind : "free";
+    const left = pl.kind !== "free" && pl.until ? Math.max(1, Math.ceil((Number(pl.until) * 1000 - Date.now()) / 864e5)) : null;
+    const daysIn = h("input", { type: "number", id: ids[1], min: 0, max: 3650, step: 1, inputMode: "numeric",
+      value: String(left ?? (pl.kind === "free" ? 30 : 0)) });
+    const limitIn = h("input", { type: "number", id: ids[2], min: 1, max: 10000, step: 1, inputMode: "numeric",
+      value: String(Number(pl.limit) || 100) });
+    const daysBox = h("div", {}, h("label", { for: ids[1], text: "На сколько дней (0 — навсегда)" }), daysIn);
+    const limitBox = h("div", {}, h("label", { for: ids[2], text: "Ответов в день" }), limitIn);
+    const sync = () => { daysBox.hidden = kindSel.value === "free"; limitBox.hidden = kindSel.value !== "limit"; };
+    kindSel.addEventListener("change", sync);
+    sync();
+    const saveBtn = h("button", { type: "button", class: "btn primary", text: "Сохранить подписку" });
+    saveBtn.addEventListener("click", () => busy(saveBtn, async () => {
+      const kind = kindSel.value, days = Number(daysIn.value || 0), limit = Number(limitIn.value || 0);
+      if (kind !== "free" && !(Number.isInteger(days) && days >= 0 && days <= 3650)) {
+        toast("Дней: от 0 до 3650 (0 — навсегда)", "bad"); daysIn.focus(); return;
+      }
+      if (kind === "limit" && !(Number.isInteger(limit) && limit >= 1 && limit <= 10000)) {
+        toast("Ответов в день: от 1 до 10000", "bad"); limitIn.focus(); return;
+      }
+      const r = await api("PUT", personPath("/plan"), { kind, days: kind === "free" ? 0 : days, limit: kind === "limit" ? limit : 0 });
+      if (r.plan && typeof r.plan === "object") p.plan = r.plan;
+      toast(kind === "free" ? "Подписка снята" : kind === "unlimited" ? "Подписка выдана" : "Лимит сохранён");
+      rerender();
+    }));
+    return h("div", {}, status,
+      h("div", { class: "plan-grid" }, h("div", {}, h("label", { for: ids[0], text: "Что выдать" }), kindSel), daysBox, limitBox),
+      h("div", { class: "btn-row" }, saveBtn),
+      h("p", { class: "muted small", text: "Кончится лимит — Стелла напишет, что нужно купить подписку, и даст контакт техподдержки. "
+        + "Общий лимит для всех без подписки, текст и контакт — во вкладке «Настройки» (строки «Подписки: …»)." }));
   }
   // Что поменялось в анкете. Удалённое поле уходит как "" — сервер его стирает.
   function profileDiff(profile, recs) {
@@ -837,7 +895,15 @@
         renderPersonBody(body, chatId, p);
       });
     });
+    const rerender = () => {
+      const meta = body.parentElement && body.parentElement.querySelector(".person-head .meta");
+      if (meta) meta.textContent = personMeta(p);
+      renderPersonBody(body, chatId, p);
+    };
+    const plan = planSection(p, personPath, rerender);
     setKids(body,
+      plan ? h("h4", { class: "sub-title", text: "Подписка" }) : null,
+      plan,
       h("h4", { class: "sub-title", text: "Анкета" }),
       recs.length ? null : h("p", { class: "muted small", text: "Пока пусто — можно добавить поле" }),
       rows,
