@@ -182,7 +182,8 @@
   const defsSvg = svg("svg", { class: "film-defs", width: "0", height: "0", "aria-hidden": "true", focusable: "false" }, defs);
   const canvas = h("canvas", { class: "film-canvas" });
   const flash = h("div", { class: "film-flash" });
-  stage.replaceChildren(defsSvg, canvas, flash);
+  const vig = h("div", { class: "film-vig" });
+  stage.replaceChildren(defsSvg, canvas, vig, flash);
   const g = canvas.getContext("2d");
 
   let UID = 0;
@@ -497,13 +498,13 @@
   /* 6. «ЧТО ЭТО / ПРОСТО БОТ?» — шлейф-экструзия из копий */
   scene("chto-eto", 1.5, { bg: "ink", out: "smear" }, (c, e0) => {
     const txt = e0.P ? ["ЧТО ЭТО", "ПРОСТО", "БОТ?"] : ["ЧТО ЭТО", "ПРОСТО БОТ?"];
-    const N = 10;
+    const N = 12;
     const mk = (cls) => TB(txt.map((t) => L(t)), "tw " + cls);
     const main = mk("w");
     const ghosts = [];
     for (let i = 1; i <= N; i++) {
       const gh = mk("ghost");
-      const v = Math.round(lerp(118, 30, (i - 1) / (N - 1)));
+      const v = Math.round(lerp(150, 26, ((i - 1) / (N - 1)) ** 0.8));
       gh.style.color = `rgb(${v},${v},${Math.round(v * 1.04)})`;
       ghosts.push(gh);
     }
@@ -524,12 +525,12 @@
         const q = seg(lt, 0, 0.34);
         const k = E.out5(q);
         mb(q > 0 && q < 1 ? 64 * (1 - q) ** 3 : 0);
-        const d = lerp(0.08, 0.022, E.out3(seg(lt, 0.15, 1.15))) * (1 - E.in3(seg(lt, 1.18, 1.5)));
-        const a = lerp(-2.5, -0.65, E.io2(p));
+        const d = lerp(0.15, 0.04, E.out3(seg(lt, 0.15, 1.15))) * (1 - E.in3(seg(lt, 1.18, 1.5)));
+        const a = lerp(-2.4, -0.7, E.io2(p));
         const dx = Math.cos(a) * d;
         const dy = Math.sin(a) * d;
         ghosts.forEach((gh, i) => {
-          css(gh, { transform: `translate(${f(dx * (i + 1), 4)}em,${f(dy * (i + 1), 4)}em)`, opacity: f(1 - i * 0.06) });
+          css(gh, { transform: `translate(${f(dx * (i + 1), 4)}em,${f(dy * (i + 1), 4)}em)`, opacity: f(1 - i * 0.04) });
         });
         css(stack, { transform: `translateX(${f((1 - k) * e.W * 0.7, 1)}px) scale(${f(1 + 0.08 * E.in2(seg(lt, 1.1, 1.5)))})` });
       },
@@ -686,7 +687,7 @@
     let fs = 100;
     return {
       layout(e) {
-        fs = fitBlock(row, e.P ? e.W - 2 * e.g : Math.min(e.W * 0.66, 1000), e.H * 0.32);
+        fs = fitBlock(row, e.P ? (e.W - 2 * e.g) * 0.9 : Math.min(e.W * 0.64, 980), e.H * 0.3);
         cap.style.fontSize = f(clamp(fs * 0.14, 13, 24), 1) + "px";
         const r = rel(word);
         const rs = rel(star);
@@ -762,7 +763,7 @@
     for (const [s, isChip] of parts) {
       const holder = isChip ? h("span", { class: "chip" }) : txt;
       if (isChip) {
-        chips.push({ el: holder, at: chars.length });
+        chips.push({ el: holder, at: chars.length, len: [...s].length });
         txt.append(holder);
       }
       for (const ch of s) {
@@ -796,8 +797,8 @@
     let ec = { x: 0, y: 0 };
     return {
       layout(e) {
-        const bw = e.P ? e.W - 2 * e.g : Math.min(e.W * 0.64, 900);
-        const fz = e.P ? clamp(bw * 0.058, 16, 24) : clamp(bw * 0.04, 20, 36);
+        const bw = e.P ? e.W - 2 * e.g : Math.min(e.W * 0.68, 960);
+        const fz = e.P ? clamp(bw * 0.064, 16, 26) : clamp(bw * 0.04, 20, 38);
         css(box, { width: f(bw, 1) + "px", fontSize: f(fz, 1) + "px" });
         const r = rel(enter);
         ec = { x: r.cx, y: r.cy };
@@ -813,7 +814,7 @@
         const typing = lt < T1 + 0.05;
         css(caret, { opacity: typing || Math.floor(lt * 3.4) % 2 === 0 ? "1" : "0.1" });
         chips.forEach((ch) => {
-          const k = E.out3(seg(lt, tAt(ch.at), tAt(ch.at) + 0.22));
+          const k = E.out2(seg(lt, tAt(ch.at) - 0.03, tAt(ch.at + ch.len)));
           css(ch.el, { "--k": String(f(k)) });
         });
         // вход, «камера», выход
@@ -934,7 +935,7 @@
   });
 
   /* 12c. Бумага: «3D» + крутится красный куб, «МУЛЬТИКИ» */
-  scene("cube", 1.6, { bg: "paper", flash: "white", out: "smear" }, (c) => {
+  scene("cube", 1.6, { bg: "paper", out: "smear" }, (c) => {
     const faces = ["fr", "bk", "rt", "lf", "tp", "dn"].map((k) => h("i", { class: "cb-face cb-" + k }));
     const cube = h("div", { class: "cb" }, faces);
     const cw = h("div", { class: "cb-wrap" }, cube);
@@ -995,7 +996,7 @@
     return {
       layout(e) {
         sv.setAttribute("viewBox", `0 0 ${e.W} ${e.H}`);
-        const fs = e.P ? e.W * 0.1 : Math.min(e.H * 0.15, e.W * 0.085);
+        const fs = e.P ? e.W * 0.098 : Math.min(e.H * 0.15, e.W * 0.085);
         G = { W: e.W, H: e.H, y1: e.H * (e.P ? 0.42 : 0.42), y2: e.H * (e.P ? 0.57 : 0.64), a1: e.H * (e.P ? 0.06 : 0.11), a2: e.H * (e.P ? 0.04 : 0.07), fs };
         t1.setAttribute("font-size", f(fs, 1));
         t2.setAttribute("font-size", f(clamp(fs * 0.3, 13, 26), 1));
@@ -1304,7 +1305,7 @@
   });
 
   /* 16. Бумага: «А ПОТОМ …» */
-  scene("potom", 1.1, { bg: "paper", flash: "white" }, (c, e0) => {
+  scene("potom", 1.1, { bg: "paper" }, (c, e0) => {
     const dots = [0, 1, 2].map(() => h("span", { class: "pt-dot", text: "." }));
     const lines = e0.P ? [L("А"), h("span", { class: "ln" }, "ПОТОМ", dots)] : [h("span", { class: "ln" }, "А ПОТОМ", dots)];
     const tb = TB(lines, "tw k al");
@@ -1507,7 +1508,7 @@
         const fw = e.P ? e.W - 2 * e.g : Math.min(e.W * 0.68, 1080);
         const fh = e.P ? Math.min(fw * 1.2, e.H * 0.6) : Math.min(fw * 0.5625, e.H * 0.72);
         css(frame, { width: f(fw, 1) + "px", height: f(fh, 1) + "px", fontSize: f(clamp(fw / 24, 13, 34), 1) + "px" });
-        fitBlock(mid, fw * 0.8, fh * 0.42);
+        fitBlock(mid, fw * 0.86, fh * 0.44);
         frame.style.fontSize = f(clamp(fw / 24, 13, 34), 1) + "px";
       },
       update(lt, p) {
@@ -1796,8 +1797,8 @@
     if (b.inst.update) b.inst.update(lt, p, env);
     applyOut(s, b, lt);
 
-    const fk = s.flash ? 1 - seg(lt, 0, 0.22) : 0;
-    css(flash, { opacity: String(f(fk * fk * 0.95)), backgroundColor: FLASH[s.flash] || "#fff" });
+    const fk = s.flash ? 1 - seg(lt, 0, 0.17) : 0;
+    css(flash, { opacity: String(f(fk * fk * fk * 0.95)), backgroundColor: FLASH[s.flash] || "#fff" });
 
     if (canvasDirty || b.inst.draw) {
       g.setTransform(1, 0, 0, 1, 0, 0);

@@ -97,7 +97,7 @@
   padding: 0 0.1em;
   font-family: var(--f-wide);
   font-weight: 800;
-  font-size: clamp(56px, min(20vw, 30vh), 220px);
+  font-size: clamp(48px, min(17vw, 26vh), 220px);
   line-height: 1.02;
   letter-spacing: -0.025em;
   color: #fff;
@@ -194,6 +194,18 @@
   max-width: none;
 }
 
+.film-vig {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.32));
+  pointer-events: none;
+}
+
+.film--hero .film-vig {
+  opacity: 0;
+}
+
 .film-flash {
   position: absolute;
   inset: 0;
@@ -241,11 +253,11 @@
 }
 
 .bg-glow {
-  background: radial-gradient(ellipse 55% 50% at 50% 50%, rgba(255, 61, 58, 0.5), rgba(255, 61, 58, 0.12) 55%, transparent 80%), var(--ink);
+  background: radial-gradient(ellipse 80vmin 58vmin at 50% 50%, rgba(255, 61, 58, 0.5), rgba(255, 61, 58, 0.13) 55%, transparent 100%), var(--ink);
 }
 
 .bg-glowl {
-  background: radial-gradient(ellipse 45% 60% at 16% 52%, rgba(255, 61, 58, 0.55), rgba(255, 61, 58, 0.1) 60%, transparent 85%), var(--ink);
+  background: radial-gradient(ellipse 62vmin 72vmin at 14% 52%, rgba(255, 61, 58, 0.55), rgba(255, 61, 58, 0.1) 60%, transparent 100%), var(--ink);
 }
 
 .bg-dots::before,
@@ -450,8 +462,8 @@
 
 .ha {
   position: absolute;
-  right: -0.12em;
-  top: -0.42em;
+  right: -0.22em;
+  top: -0.6em;
   font-size: 0.3em;
   color: var(--red);
   text-shadow: 0 0 0.3em rgba(255, 61, 58, 0.6);
@@ -1088,8 +1100,8 @@
 
 .pd-mask {
   overflow: hidden;
-  padding-top: 0.08em;
-  margin-top: -0.08em;
+  padding: 0.08em 0 0.16em;
+  margin: -0.08em 0 -0.16em;
 }
 
 .pd-in {
@@ -1211,7 +1223,7 @@
   margin-top: 0.22em;
   font-family: var(--f-mono);
   font-weight: 700;
-  font-size: 0.12em;
+  font-size: 0.15em;
   letter-spacing: 0.1em;
   color: #fff;
 }
@@ -1245,8 +1257,8 @@
 }
 
 .zh-glass {
-  width: 0.26em;
-  height: 0.34em;
+  width: 0.3em;
+  height: 0.4em;
   flex: none;
 }
 
@@ -1258,7 +1270,7 @@
 .zh-etal {
   font-family: var(--f-mono);
   font-weight: 700;
-  font-size: 0.09em;
+  font-size: 0.11em;
   letter-spacing: 0.14em;
   color: rgba(255, 255, 255, 0.7);
 }
@@ -1266,7 +1278,7 @@
 .zh-timer {
   font-family: var(--f-mono);
   font-weight: 700;
-  font-size: 0.34em;
+  font-size: 0.4em;
   line-height: 1;
   letter-spacing: 0.02em;
   color: #fff;

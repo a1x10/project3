@@ -923,7 +923,7 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  height: clamp(440px, 64svh, 560px);
+  height: clamp(420px, 62svh, 560px);
   overflow: hidden;
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 56px);
   mask-image: linear-gradient(180deg, transparent 0, #000 56px);
@@ -1262,12 +1262,12 @@
 
 #start-title .lp-line:nth-child(1) {
   --em: 2.78;
-  --max: 210px;
+  --max: 180px;
 }
 
 #start-title .lp-line:nth-child(2) {
   --em: 5.62;
-  --max: 210px;
+  --max: 180px;
 }
 
 .lp-steps {
@@ -1337,7 +1337,8 @@
   font-weight: 700;
   text-decoration: none;
   border-bottom: 2px solid currentColor;
-  word-break: break-all;
+  display: inline-block;
+  white-space: nowrap;
 }
 
 .lp-field {
@@ -1798,8 +1799,8 @@
 .lp-final {
   display: flex;
   align-items: center;
-  min-height: min(100vh, 940px);
-  min-height: min(100svh, 940px);
+  min-height: min(92vh, 900px);
+  min-height: min(92svh, 900px);
   background:
     radial-gradient(90% 60% at 50% 115%, rgba(255, 61, 58, 0.55), rgba(255, 61, 58, 0.12) 50%, transparent 75%),
     radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1.3px) 0 0 / 22px 22px,
@@ -1818,7 +1819,7 @@
 #go-title .lp-line:nth-child(2) {
   --em: 2.2;
   --max: 300px;
-  margin-top: 0.2em;
+  margin-top: 0.26em;
   line-height: 0.86;
 }
 
@@ -2300,9 +2301,10 @@
 @keyframes lp-laser-head {
   0% {
     left: 0;
-    opacity: 1;
+    opacity: 0;
     transform: scale(1.6);
   }
+  10%,
   85% {
     opacity: 1;
   }
