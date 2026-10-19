@@ -578,6 +578,72 @@
   font-weight: 700;
 }
 
+/* голосовое сообщение в карточке */
+.lp-voice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: auto 0 0;
+  padding: 7px 11px 7px 7px;
+  align-self: flex-start;
+  max-width: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+}
+
+.lp-voice__p {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--red);
+  clip-path: circle(50%);
+  position: relative;
+}
+
+.lp-voice__p::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  border-style: solid;
+  border-width: 5px 0 5px 8px;
+  border-color: transparent transparent transparent var(--ink);
+}
+
+.lp-voice__w {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lp-voice__w i {
+  flex: none;
+  width: 2.5px;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.75);
+  transform: scaleY(0.4);
+  animation: lp-wave 0.9s ease-in-out infinite alternate;
+}
+
+.lp-voice__w i:nth-child(3n) { animation-delay: -0.3s; }
+.lp-voice__w i:nth-child(3n + 1) { animation-delay: -0.6s; }
+.lp-voice__w i:nth-child(4n) { animation-duration: 1.2s; }
+.lp-voice__w i:nth-child(5n) { animation-duration: 0.7s; }
+.lp-voice__w i:nth-child(n + 8) { background: rgba(255, 255, 255, 0.35); }
+
+.lp-voice__t {
+  flex: none;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* иконки — микродвижение */
 .i-dot,
 .i-bar,
@@ -1144,13 +1210,14 @@
 
 .tg-replay {
   position: absolute;
-  left: 50%;
-  bottom: 74px;
+  top: 40px;
+  right: 12px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px;
+  min-height: 36px;
+  padding: 8px 14px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   background: rgba(10, 10, 11, 0.82);
@@ -1160,7 +1227,6 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
-  transform: translateX(-50%);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   animation: tg-pop 0.5s var(--ease-out) both;
@@ -1629,7 +1695,7 @@
   position: absolute;
   right: 0.04em;
   bottom: -0.04em;
-  font-size: calc(var(--F) * 2.3);
+  font-size: calc(var(--F) * 2.5);
   line-height: 0.8;
   color: var(--red);
   transform: rotate(12deg);
@@ -1752,6 +1818,7 @@
 #go-title .lp-line:nth-child(2) {
   --em: 2.2;
   --max: 300px;
+  margin-top: 0.2em;
   line-height: 0.86;
 }
 
@@ -1939,6 +2006,7 @@
 .lp-js .lp-sec:not(.is-live) .lp-rec::before,
 .lp-js .lp-sec:not(.is-live) .lp-ico *,
 .lp-js .lp-sec:not(.is-live) .lp-typing__b i,
+.lp-js .lp-sec:not(.is-live) .lp-voice__w i,
 .lp-js .lp-sec:not(.is-live) .tg-card__burst,
 .lp-js .lp-sec:not(.is-live) .tg-card__star,
 .lp-js .lp-sec:not(.is-live) .lp-caret,
@@ -2398,6 +2466,7 @@
   .lp-rec::before,
   .lp-caret,
   .lp-typing__b i,
+  .lp-voice__w i,
   .lp-inf__beam,
   .lp-day,
   .tg-card__burst,
