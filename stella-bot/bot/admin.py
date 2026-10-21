@@ -233,6 +233,10 @@ EDITABLE: list[dict[str, Any]] = [
      "hint": "Opus — самая умная (дороже Sonnet в 2 раза), Haiku — самая дешёвая"},
     {"key": "llm_effort", "label": "Сколько думать перед ответом", "type": "select",
      "options": ["low", "medium", "high"], "hint": "low — быстро и коротко; high — дольше и дороже"},
+    {"key": "llm_backend_after", "label": "После окончания бонусных кредитов", "type": "select",
+     "options": ["off", "messages_api"],
+     "hint": "off — Стелла выключает модель и не тратит твой баланс API (команды и казино работают); "
+             "messages_api — работает дальше за твой баланс"},
     {"key": "llm_model_after", "label": "Модель после окончания бонусных кредитов", "type": "select",
      "options": MODELS, "hint": "работает за твои деньги на API — Opus быстро съест баланс"},
     {"key": "daily_budget_usd", "label": "Лимит расходов в день, $", "type": "number", "min": 0, "max": 200,
@@ -464,7 +468,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
     async def status(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
         brain = get_brain(request)
         s = brain.s
-        kind, model = s.backend_for(date.today())
+        kind, model = s.backend_for(s.local_today())
         chats = await brain.db.all_chats(s.evolution_instance)
         return {
             "whatsapp": brain.connection_state,
@@ -482,6 +486,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
             "tunnel_url": brain.tunnel_url,
             "uptime_s": int(time.monotonic() - brain.started_at),
             "switch_at": s.llm_switch_at.isoformat() if s.llm_switch_at else None,
+            "backend_after": s.llm_backend_after,
         }
 
     @router.get("/chats")

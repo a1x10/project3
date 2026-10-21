@@ -41,6 +41,10 @@ class LLMRefusal(LLMError):
     """Модель отказалась отвечать (stop_reason=refusal)."""
 
 
+class LLMOff(LLMError):
+    """Модель выключена (LLM_BACKEND_AFTER=off): запрос не отправлялся, денег не потрачено."""
+
+
 class LLM(Protocol):
     name: str
 

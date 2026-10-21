@@ -27,7 +27,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .llm.base import ToolSpec
 from .media import MediaFile
@@ -181,7 +181,8 @@ def is_owner(settings: Any, ctx: "ToolContext") -> bool:
 
 class CodeSandbox:
     def __init__(self, model: str = "claude-opus-5-5", effort: str = "max", client: Any = None,
-                 timeout: float = 1800, max_run_usd: float = 0.0):
+                 timeout: float = 1800, max_run_usd: float = 0.0, off: Callable[[], bool] | None = None):
+        self.off = off  # True — модель выключена (кончились бонусные кредиты): ни одного шага за свой баланс
         self.model = model
         self.effort = effort
         self.timeout = timeout
@@ -292,6 +293,8 @@ class CodeSandbox:
 
         from .llm.messages_api import estimate_cost
 
+        if self.off is not None and self.off():
+            raise SandboxError("модель выключена — дальше не запускаю, деньги не тратятся")
         client = self.client()
         engine = engine or (self.model, self.effort)
         web = web and time.time() >= self.web_off_until
@@ -402,6 +405,8 @@ class CodeSandbox:
 
         from .html_studio import _partial_cost
 
+        if self.off is not None and self.off():
+            raise SandboxError("модель выключена — дальше не запускаю, деньги не тратятся")
         model, effort = engine or (self.model, self.effort)
         kwargs: dict[str, Any] = {
             "model": model, "max_tokens": SANDBOX_MAX_TOKENS, "system": system, "messages": messages,
@@ -412,6 +417,8 @@ class CodeSandbox:
         if container:
             kwargs["container"] = container
         for attempt in range(1, STEP_ATTEMPTS + 1):
+            if attempt > 1 and self.off is not None and self.off():  # выключили, пока ждали повтора
+                raise SandboxError("модель выключена — дальше не запускаю, деньги не тратятся")
             holder: dict[str, Any] = {"started": time.monotonic()}
             try:
                 async with client.messages.stream(**kwargs) as stream:
