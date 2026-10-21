@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Exchange — ИИ-трейдер на симулированной бирже</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cpath d=%27M16 2l14 14-14 14L2 16z%27 fill=%27%23f0b90b%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="logo">◆</span> AI Exchange</div>
+    <div class="pair">BTC/USDT</div>
+    <div class="price-box">
+      <div id="price" class="price">—</div>
+      <div id="change" class="change">—</div>
+    </div>
+    <div class="chip-wrap">
+      <div class="label">ИИ-трейдер</div>
+      <div id="ai-status" class="chip chip-wait">загрузка…</div>
+    </div>
+    <div class="chip-wrap">
+      <div class="label">Время симуляции</div>
+      <div id="clock" class="clock">00:00</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="controls">
+      <button id="btn-pause" class="btn">⏸ Пауза</button>
+      <div class="seg">
+        <button id="btn-x1" class="btn seg-btn active">x1</button>
+        <button id="btn-x10" class="btn seg-btn">x10</button>
+      </div>
+      <button id="btn-shock" class="btn btn-danger">⚡ Рыночный шок</button>
+    </div>
+  </header>
+
+  <aside id="book-panel" class="panel">
+    <div class="panel-title">Книга ордеров</div>
+    <div class="book-head"><span>Цена, USDT</span><span>Объём, BTC</span></div>
+    <div id="asks" class="book-side"></div>
+    <div id="spread" class="book-spread">—</div>
+    <div id="bids" class="book-side"></div>
+    <div class="legend"><span class="ai-dot"></span> заявки ИИ</div>
+  </aside>
+
+  <section id="charts">
+    <div class="panel chart-panel">
+      <div class="panel-title">Цена BTC/USDT · свечи 5 с <span class="legend-inline"><span class="up">▲ покупки ИИ</span> <span class="down">▼ продажи ИИ</span> <span class="warnc">● шок</span></span></div>
+      <div id="chart" class="chart"></div>
+      <div id="shock-banner" class="shock-banner">⚡ РЫНОЧНЫЙ ШОК</div>
+    </div>
+    <div class="panel chart-panel eq-panel">
+      <div class="panel-title">Прибыль, % от стартового баланса
+        <span class="legend-inline"><span class="lg lg-ai"></span> ИИ-трейдер <span class="lg lg-bh"></span> Buy&amp;Hold (купил и держит)</span></div>
+      <div id="eqchart" class="chart"></div>
+    </div>
+  </section>
+
+  <aside id="ai-panel" class="panel">
+    <div class="panel-title">ИИ-трейдер · маркет-мейкер</div>
+    <div class="big-tile">
+      <div class="label">Баланс (USDT + BTC по рынку)</div>
+      <div id="m-equity" class="big-num">10 000.00</div>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="label">Прибыль ИИ</div><div id="m-profit" class="num">0.00%</div></div>
+      <div class="tile"><div class="label">Buy&amp;Hold</div><div id="m-bh" class="num">0.00%</div></div>
+    </div>
+    <div class="edge"><span class="label">Преимущество над Buy&amp;Hold</span><span id="m-edge" class="num">0.00%</span></div>
+    <div class="stats">
+      <div><span class="label">Сделок</span><span id="m-fills" class="val">0</span></div>
+      <div><span class="label">Прибыльных</span><span id="m-win" class="val">—</span></div>
+      <div><span class="label">Макс. просадка</span><span id="m-dd" class="val">0.00%</span></div>
+      <div><span class="label">Спред ИИ</span><span id="m-spread" class="val">—</span></div>
+    </div>
+    <div class="pos-box">
+      <div class="row"><span class="label">Позиция</span><span id="m-pos" class="val">0.0000 BTC</span></div>
+      <div class="pos-bar"><div id="pos-fill" class="pos-fill"></div><div id="pos-target" class="pos-target"></div></div>
+      <div class="pos-scale"><span>0</span><span>лимит 0.5 BTC</span></div>
+    </div>
+    <div class="pred-box">
+      <div class="row"><span class="label">Прогноз ML на 3 с</span><span id="m-pred" class="val">0.0 б.п.</span></div>
+      <div class="pred-bar"><div class="pred-mid"></div><div id="pred-fill" class="pred-fill"></div></div>
+      <div class="row small"><span class="label">Дисбаланс книги</span><span id="m-imb" class="val">0%</span></div>
+      <div id="model-info" class="model-info"></div>
+    </div>
+    <div id="analyst" class="analyst" hidden>
+      <div class="label">Комментарий ИИ-аналитика (Claude)</div>
+      <div id="analyst-text"></div>
+    </div>
+  </aside>
+
+  <section id="bottom">
+    <div class="panel tape-panel">
+      <div class="panel-title">Лента сделок</div>
+      <div class="tape-head"><span>Время</span><span>Цена</span><span>Объём</span></div>
+      <div id="tape" class="tape"></div>
+    </div>
+    <div class="panel thoughts-panel">
+      <div class="panel-title">Мысли ИИ</div>
+      <div id="thoughts" class="thoughts"></div>
+    </div>
+  </section>
+  <div id="offline" class="offline" hidden>Нет связи с сервером… переподключение</div>
+</div>
+<script src="/static/lightweight-charts.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
