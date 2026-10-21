@@ -1,7 +1,7 @@
 """Выбор модели через .env: LLM_BACKEND=agent_sdk | messages_api.
 
 LLM_SWITCH_AT=2026-10-23 — с этой даты автоматически используется LLM_BACKEND_AFTER/LLM_MODEL_AFTER
-(промокредиты закончились -> дешёвый Haiku через Messages API), чтобы не забыть переключить руками.
+(промокредиты закончились): off — модель выключена, свой баланс не тратится; messages_api — дальше за свой баланс.
 """
 
 from __future__ import annotations
@@ -12,9 +12,10 @@ from datetime import date
 from typing import Any, Callable, Sequence
 
 from ..config import Settings
-from .base import LLM, Image, LLMError, LLMRefusal, LLMReply, ToolSpec
+from .base import LLM, Image, LLMError, LLMOff, LLMRefusal, LLMReply, ToolSpec
 
-__all__ = ["LLM", "Image", "LLMError", "LLMRefusal", "LLMReply", "ToolSpec", "SwitchingLLM", "make_backend"]
+__all__ = ["LLM", "Image", "LLMError", "LLMOff", "LLMRefusal", "LLMReply", "ToolSpec", "SwitchingLLM",
+           "make_backend"]
 
 log = logging.getLogger("stella.llm")
 
@@ -41,10 +42,10 @@ def make_backend(kind: str, model: str, settings: Settings) -> LLM:
 class SwitchingLLM:
     """Обёртка: выбирает бэкенд по дате (LLM_SWITCH_AT)."""
 
-    def __init__(self, settings: Settings, today: Callable[[], date] = date.today,
+    def __init__(self, settings: Settings, today: Callable[[], date] | None = None,
                  factory: Callable[[str, str, Settings], LLM] = make_backend):
         self.settings = settings
-        self.today = today
+        self.today = today or settings.local_today
         self.factory = factory
         self._cache: dict[tuple, LLM] = {}
 
@@ -55,6 +56,8 @@ class SwitchingLLM:
 
     def _backend(self) -> tuple[LLM, str, str]:
         kind, model = self.settings.backend_for(self.today())
+        if kind == "off":
+            raise LLMOff("модель выключена (LLM_BACKEND_AFTER=off) — запрос не отправлен")
         # настройки можно менять на лету из панели — тогда бэкенд пересоздаётся
         key = (kind, model, self.settings.llm_effort, self.settings.llm_web_search, self.settings.llm_timeout,
                self.settings.llm_max_call_usd)

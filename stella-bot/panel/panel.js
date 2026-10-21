@@ -113,13 +113,14 @@
     const d = Math.floor(t / 86400), hr = Math.floor((t % 86400) / 3600), m = Math.floor((t % 3600) / 60);
     return d ? `${d} д ${hr} ч` : hr ? `${hr} ч ${m} мин` : `${m} мин`;
   }
-  function switchText(v) { // LLM_SWITCH_AT — дата, с которой бот берёт запасную модель
+  function switchText(v, after) { // LLM_SWITCH_AT — дата, с которой бот берёт запасную модель (или выключает её)
     const s = String(v);
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
     if (!m) return s;
     const n = new Date();
     const today = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
-    return `с ${m[3]}.${m[2]}.${m[1]}` + (s.slice(0, 10) <= today ? " (уже действует)" : " — запасная модель");
+    const what = after === "off" ? " — модель выключится, баланс не тратится" : " — запасная модель";
+    return `с ${m[3]}.${m[2]}.${m[1]}` + (s.slice(0, 10) <= today ? " (уже действует)" : what);
   }
   function hostOf(url) {
     try {
@@ -488,8 +489,8 @@
           kv("WhatsApp", h("span", { class: `pill ${waCls}`, text: waText })),
           kv("Модель", st.llm_model || "—"),
           kv("Усилие", st.llm_effort || "—"),
-          kv("Бэкенд", st.llm_backend || "—"),
-          st.switch_at ? kv("Смена модели", switchText(st.switch_at)) : null,
+          kv("Бэкенд", st.llm_backend === "off" ? "выключена — баланс не тратится" : st.llm_backend || "—"),
+          st.switch_at ? kv("Смена модели", switchText(st.switch_at, st.backend_after)) : null,
           kv("Работает", fmtDur(st.uptime_s)),
           st.tunnel_url ? kv("Туннель", hostOf(String(st.tunnel_url))) : null)),
       h("div", { class: "card" },

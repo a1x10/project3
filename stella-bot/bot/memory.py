@@ -55,7 +55,7 @@ class Memory:
 
     async def note_message(self, chat_id: int) -> None:
         """Вызывается на каждое входящее сообщение; запускает выжимку, когда накопилось."""
-        if self.s.memory_extract_every <= 0:
+        if self.s.memory_extract_every <= 0 or self.s.model_off():
             return
         count = await self.db.bump_extract_counter(chat_id)
         if count >= self.s.memory_extract_every and chat_id not in self._running:
@@ -71,6 +71,8 @@ class Memory:
             self._running.discard(chat_id)
 
     async def extract(self, chat_id: int) -> int:
+        if self.s.model_off():  # модель выключена — свой баланс не тратим
+            return 0
         await self.db.update_chat(chat_id, msgs_since_extract=0)
         rows = await self.db.recent_messages(chat_id, max(self.s.memory_extract_every * 2, 40))
         if not any(r["role"] == "user" for r in rows):

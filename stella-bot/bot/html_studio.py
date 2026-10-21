@@ -559,6 +559,9 @@ async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget:
     на всю работу (обдумывание + код) и под это распределяет силы (бета task budgets)."""
     import anthropic
 
+    off = getattr(settings, "model_off", None)
+    if off is not None and off():  # модель выключили (кончились бонусные кредиты) — даже начатое не доделываем
+        raise StudioError("модель выключена — страница не доделана, деньги не тратятся")
     cl = client(settings.html_timeout)
     kwargs = dict(base)
     config: dict[str, Any] = {}
@@ -583,6 +586,8 @@ async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget:
 
     lost = 0.0  # оборванные попытки тоже оплачены — учитываем оценкой
     for attempt in range(1, ATTEMPTS + 1):
+        if attempt > 1 and off is not None and off():  # выключили, пока ждали повтора
+            raise StudioError("модель выключена — страница не доделана, деньги не тратятся", lost)
         try:
             msg = await asyncio.wait_for(call(), timeout=settings.html_timeout)
             msg._studio_lost = lost  # type: ignore[attr-defined]

@@ -229,7 +229,8 @@ class Brain:
         from .sandbox import CodeSandbox
 
         self.sandbox = CodeSandbox(model=settings.sandbox_model, effort=settings.sandbox_effort,
-                                   timeout=settings.sandbox_project_timeout, max_run_usd=settings.sandbox_max_run_usd)
+                                   timeout=settings.sandbox_project_timeout, max_run_usd=settings.sandbox_max_run_usd,
+                                   off=settings.model_off)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         from .giveaway import Giveaway
 
@@ -295,6 +296,7 @@ class Brain:
         # всегда: «сама пишет» можно включить в панели без перезапуска (тик сам смотрит INITIATIVE_PER_WEEK)
         self._background.append(asyncio.create_task(self._initiative_loop()))
         self._background.append(asyncio.create_task(reminder_loop(self)))
+        self._background.append(asyncio.create_task(self._model_off_loop()))
         if self.admin.enabled() and self.s.tunnel_metrics_url:
             self._background.append(asyncio.create_task(self._tunnel_loop()))
 
@@ -979,6 +981,9 @@ class Brain:
             return
         levels = {lvl for _, lvl in batch}
         mode = DIRECT if DIRECT in levels else CONTINUE if CONTINUE in levels else AMBIENT
+        if self.s.model_off():  # кончились бонусные кредиты: модель не зовём, свой баланс не тратим
+            await self._model_off_reply(chat, batch, mode)
+            return
         if mode == AMBIENT and not await self._ambient_ok(chat, batch):
             return
         if mode == CONTINUE and self.over_budget():
@@ -1469,7 +1474,7 @@ class Brain:
         """Решить, в какие группы Стелла сама напишет сейчас. Возвращает id чатов."""
         now = now or utcnow()
         if (self.s.initiative_per_week <= 0 or self.connection_state != "open" or self.over_budget()
-                or not self._in_initiative_hours(now)):
+                or self.s.model_off() or not self._in_initiative_hours(now)):
             return []
         p = self.initiative_probability()
         started = []
@@ -1598,6 +1603,67 @@ class Brain:
                 await client.post(self.s.alert_webhook_url, json={"text": text})
         except httpx.HTTPError:
             log.warning("алерт не отправился", exc_info=True)
+
+    MODEL_OFF_REPLY_EVERY = 6 * 3600  # «я пока на паузе» — одному чату не чаще раза в 6 часов
+
+    async def _model_off_reply(self, chat: dict[str, Any], batch: list[tuple[Incoming, str]], mode: str) -> None:
+        """Модель выключена: на прямое обращение — короткое «я пока на паузе» (не чаще раза в 6 ч), иначе молчит."""
+        target = next((i for i, lvl in reversed(batch) if lvl == DIRECT), None)
+        self._decision(batch[-1][0], "модель выключена (LLM_BACKEND_AFTER=off) — свой баланс не тратится")
+        await self._tell_owner_model_off()
+        if mode != DIRECT or target is None:
+            return
+        key = f"model_off_told:{chat['id']}"
+        row = await self.db.kv_get(key)
+        now = time.time()
+        if row and now - row[1] < self.MODEL_OFF_REPLY_EVERY:
+            return
+        await self.db.kv_set(key, "", now)
+        from .casino import CasinoResult
+
+        await self.outbox.send_result(chat, CasinoResult([self.s.model_off_message or "Я пока на паузе 🙏"]),
+                                      reply_to=target, quote=chat["is_group"])
+
+    async def _tell_owner_model_off(self) -> None:
+        """Один раз сказать владельцу, что модель выключилась (и что включить — в .env или в панели)."""
+        key = f"model_off_owner:{self.s.llm_switch_at}"
+        if (await self.db.kv_get(key)) is not None:
+            return
+        await self.db.kv_set(key, "", time.time())
+        await self.notify_owner("model_off", "⏸ Бонусные кредиты закончились — Стелла выключила модель, твой баланс "
+                                "API не тратится. Команды, казино и напоминания работают. Включить снова (за свой "
+                                "баланс): в панели «После окончания бонусных кредитов» → messages_api или "
+                                "LLM_BACKEND_AFTER=messages_api в .env.")
+
+    async def _model_off_loop(self) -> None:
+        while True:
+            try:
+                await self.model_off_tick()
+            except Exception:
+                log.exception("проверка выключения модели")
+            await asyncio.sleep(600)
+
+    async def model_off_tick(self, today: date | None = None) -> None:
+        """За день до LLM_SWITCH_AT предупредить владельца, в сам день — сказать, что модель выключилась."""
+        today = today or self.s.local_today()
+        switch = self.s.llm_switch_at
+        if not switch:
+            return
+        if self.s.llm_backend_after != "off":  # дальше — за свой баланс: предупредить, чтобы не было сюрпризом
+            if today == switch - timedelta(days=1) and (await self.db.kv_get(f"paid_soon:{switch}")) is None:
+                await self.db.kv_set(f"paid_soon:{switch}", "", time.time())
+                await self.notify_owner("paid_soon", f"💳 Завтра ({switch:%d.%m}) кончаются бонусные кредиты — Стелла "
+                                        "перейдёт на твой платный баланс API. Не хочешь — в панели «После окончания "
+                                        "бонусных кредитов» → off.")
+            return
+        if self.s.model_off(today):
+            await self._tell_owner_model_off()
+        elif today == switch - timedelta(days=1):
+            key = f"model_off_soon:{switch}"
+            if (await self.db.kv_get(key)) is None:
+                await self.db.kv_set(key, "", time.time())
+                await self.notify_owner("model_off_soon", f"⏳ Завтра ({switch:%d.%m}) кончаются бонусные кредиты — "
+                                        "Стелла сама выключит модель, чтобы не тратить твой баланс API.")
 
     async def notify_owner(self, kind: str, text: str) -> None:
         now = time.monotonic()

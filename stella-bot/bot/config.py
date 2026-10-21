@@ -58,7 +58,11 @@ class Settings:
     llm_memory_effort: str = field(default_factory=lambda: _str("LLM_MEMORY_EFFORT", "medium"))
     # Автопереключение после окончания промокредитов
     llm_switch_at: date | None = field(default_factory=lambda: _date("LLM_SWITCH_AT"))
-    llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "messages_api"))
+    # off — с этой даты модель выключена: ни одного запроса к Anthropic, свой баланс не тратится (команды,
+    # казино, напоминания работают); messages_api — дальше работать за свой баланс API
+    llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "off"))
+    # что она отвечает, когда к ней обращаются, а модель выключена (одному чату — не чаще раза в 6 часов)
+    model_off_message: str = field(default_factory=lambda: _str("MODEL_OFF_MESSAGE", "Я пока на паузе 🙏"))
     llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-opus-5-5"))
     # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут
     llm_timeout: float = field(default_factory=lambda: _float("LLM_TIMEOUT", 600))
@@ -264,6 +268,21 @@ class Settings:
         if self.llm_switch_at and today >= self.llm_switch_at:
             return self.llm_backend_after, self.llm_model_after
         return self.llm_backend, self.llm_model
+
+    def model_off(self, today: date | None = None) -> bool:
+        """Модель выключена (LLM_BACKEND_AFTER=off после LLM_SWITCH_AT): к Anthropic не ходим вообще — ни чат,
+        ни память, ни страницы, ни песочница, — чтобы не тратить свой баланс."""
+        return self.backend_for(today or self.local_today())[0] == "off"
+
+    def local_today(self) -> date:
+        """Сегодня по часам владельца (TIMEZONE), а не сервера (в Docker — UTC): смена в его полночь."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        try:
+            return datetime.now(ZoneInfo(self.timezone)).date()
+        except Exception:
+            return date.today()
 
     def initiative_window(self) -> tuple[int, int]:
         """(начало, конец) в часах; «20-0» — до полуночи, «0-24» или «10-10» — круглые сутки."""
