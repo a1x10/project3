@@ -41,6 +41,8 @@ def _digits(value: str) -> str:
     return "".join(ch for ch in value if ch.isdigit())
 
 
+ANTHROPIC_BACKENDS = ("agent_sdk", "messages_api")
+
 DEFAULT_LIMIT_MESSAGE = ("Вы достигли лимита сообщений на сегодня 🙏 Чтобы общаться без ограничений, купите подписку — "
                          "вся информация у техподдержки: {support}")
 
@@ -62,6 +64,8 @@ class Settings:
     # казино, напоминания работают); messages_api — дальше работать за свой баланс API
     llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "off"))
     # что она отвечает, когда к ней обращаются, а модель выключена (одному чату — не чаще раза в 6 часов)
+    # модель у Groq / OpenRouter / Gemini / OpenAI (ключи — в панели, «Ключи»); пусто — модель провайдера по умолчанию
+    alt_model: str = field(default_factory=lambda: _str("ALT_MODEL"))
     model_off_message: str = field(default_factory=lambda: _str("MODEL_OFF_MESSAGE", "Я пока на паузе 🙏"))
     llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-opus-5-5"))
     # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут
@@ -266,13 +270,21 @@ class Settings:
     def backend_for(self, today: date) -> tuple[str, str]:
         """Какой бэкенд и модель использовать сегодня (после LLM_SWITCH_AT — запасные)."""
         if self.llm_switch_at and today >= self.llm_switch_at:
-            return self.llm_backend_after, self.llm_model_after
-        return self.llm_backend, self.llm_model
+            kind, model = self.llm_backend_after, self.llm_model_after
+        else:
+            kind, model = self.llm_backend, self.llm_model
+        if kind not in ANTHROPIC_BACKENDS and kind != "off":  # Groq и др. — своя модель
+            model = self.alt_model
+        return kind, model
 
     def model_off(self, today: date | None = None) -> bool:
         """Модель выключена (LLM_BACKEND_AFTER=off после LLM_SWITCH_AT): к Anthropic не ходим вообще — ни чат,
         ни память, ни страницы, ни песочница, — чтобы не тратить свой баланс."""
         return self.backend_for(today or self.local_today())[0] == "off"
+
+    def anthropic_off(self, today: date | None = None) -> bool:
+        """Сейчас не Anthropic (выключено или Groq и т. п.): страницы и песочница — только Anthropic, их не зовём."""
+        return self.backend_for(today or self.local_today())[0] not in ANTHROPIC_BACKENDS
 
     def local_today(self) -> date:
         """Сегодня по часам владельца (TIMEZONE), а не сервера (в Docker — UTC): смена в его полночь."""

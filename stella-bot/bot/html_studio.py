@@ -559,7 +559,7 @@ async def _call(settings: Any, base: dict[str, Any], effort: str | None, budget:
     на всю работу (обдумывание + код) и под это распределяет силы (бета task budgets)."""
     import anthropic
 
-    off = getattr(settings, "model_off", None)
+    off = getattr(settings, "anthropic_off", None)
     if off is not None and off():  # модель выключили (кончились бонусные кредиты) — даже начатое не доделываем
         raise StudioError("модель выключена — страница не доделана, деньги не тратятся")
     cl = client(settings.html_timeout)

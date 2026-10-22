@@ -530,6 +530,9 @@ def build_sandbox_tools(db: Any, settings: Any, ctx: "ToolContext", *, sandbox: 
     trusted = owner or (getattr(settings, "friends_mode", False) and ctx.is_admin)
     if not getattr(settings, "sandbox_enabled", True) or not trusted:
         return []
+    anthropic_off = getattr(settings, "anthropic_off", None)
+    if anthropic_off is not None and anthropic_off():  # песочница — только у Anthropic
+        return []
 
     async def inputs_from_chat() -> list[InputFile]:
         files = []
