@@ -87,6 +87,7 @@
     if (m.model) $('model-info').textContent = `LightGBM: корреляция прогноза с реальностью ${m.model.corr.toFixed(2)}, ` +
       `направление угадано в ${(m.model.dir_acc * 100).toFixed(0)}% (проверка на новых данных)`;
     else $('model-info').textContent = 'Модель не загружена — работает базовая логика Avellaneda–Stoikov (запустите train.py)';
+    if (window.Explain) window.Explain.init(m);
   }
 
   function addTrade(t) {
@@ -153,6 +154,7 @@
     }
 
     renderBook(m.book);
+    if (window.Explain) window.Explain.tick(m);
     m.trades.forEach(addTrade);
     (m.thoughts || []).forEach(addThought);
 

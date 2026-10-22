@@ -132,3 +132,48 @@ header { grid-area: head; display: flex; align-items: center; gap: 28px; backgro
 
 @media (max-width: 1500px) { html, body { font-size: 16px; } .price { font-size: 40px; min-width: 210px; } .big-num { font-size: 32px; } .num { font-size: 25px; } }
 .warnc { color: var(--yellow); }
+
+/* --- Внутри модели --- */
+.ai-actions { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+.btn-wide { width: 100%; text-align: center; text-decoration: none; display: block; font-size: 19px; padding: 6px 12px; }
+.btn-accent { background: #12283A; border-color: #38BDF8; color: #7DD3FC; }
+.btn-accent:hover { background: #17364f; }
+#ai-panel { overflow: auto; }
+.xp { grid-area: 2 / 1 / 4 / 4; position: relative; z-index: 5; background: var(--bg); display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+.xp .btn { text-decoration: none; display: inline-block; white-space: nowrap; }
+.xp-head { display: flex; align-items: center; gap: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 22px; }
+.xp-head h2 { font-family: "Rubik", "Segoe UI", sans-serif; font-size: 36px; font-weight: 700; color: var(--yellow); white-space: nowrap; }
+.xp-sub { flex: 1; font-size: 20px; line-height: 1.3; color: #C9CFD8; }
+.xp-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px; }
+.xp-mid, .xp-right { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+.xp-pred { flex: 0 0 auto; }
+.xp-chartbox { flex: 1; }
+.xp-acc { flex: 0 0 auto; }
+.xp-imp { flex: 1; }
+.xf-list { display: flex; flex-direction: column; gap: 2px; flex: 1; justify-content: space-between; }
+.xf { display: grid; grid-template-columns: minmax(0, 1fr) 118px 110px; align-items: center; gap: 10px; border-left: 5px solid #4B5563; padding: 1px 8px; font-size: 20px; line-height: 1.15; }
+.xf.g-book { border-left-color: #38BDF8; } .xf.g-flow { border-left-color: #0ECB81; } .xf.g-price { border-left-color: #F0B90B; }
+.xf.g-vol { border-left-color: #C084FC; } .xf.g-pos { border-left-color: #F5F6F8; }
+.xf .v { font-family: var(--mono); font-weight: 700; font-size: 22px; text-align: right; }
+.xf .bar { position: relative; height: 12px; background: #0f1317; border-radius: 6px; overflow: hidden; }
+.xf .bar i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; }
+.xf .bar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #4B5563; }
+.xp-big { display: flex; align-items: baseline; gap: 16px; padding: 2px 4px 6px; }
+.xp-pred-num { font-family: var(--mono); font-size: 56px; font-weight: 700; line-height: 1; }
+.xp-dir { font-size: 26px; font-weight: 600; color: #C9CFD8; }
+.xp-rows { display: flex; flex-direction: column; gap: 3px; }
+.xp-rows > div { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; font-size: 21px; line-height: 1.25; padding: 3px 8px; border-radius: 6px; }
+.xp-rows > div:nth-child(odd) { background: #1b2027; }
+.xp-rows .k { color: #C9CFD8; } .xp-rows .val { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+.xp-rows.small > div { font-size: 19px; }
+.xp-rows .total { background: #12283A !important; }
+.xp-acc-main { display: flex; align-items: baseline; gap: 16px; padding: 2px 4px 6px; }
+.xp-acc-num { font-family: var(--mono); font-size: 64px; font-weight: 700; line-height: 1; }
+.xp-acc-sub { font-size: 21px; line-height: 1.25; color: #C9CFD8; }
+.imp-list { display: flex; flex-direction: column; gap: 2px; flex: 1; justify-content: space-between; }
+.imp { display: grid; grid-template-columns: 178px minmax(0, 1fr) 64px; gap: 10px; align-items: center; font-size: 19px; }
+.imp .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imp .tr { height: 16px; background: #0f1317; border-radius: 8px; overflow: hidden; }
+.imp .tr i { display: block; height: 100%; background: linear-gradient(90deg, #1d7fb0, #38BDF8); border-radius: 8px; }
+.imp .pc { font-family: var(--mono); font-weight: 700; text-align: right; }
+.xp-none { color: var(--muted); font-size: 22px; padding: 12px 4px; }

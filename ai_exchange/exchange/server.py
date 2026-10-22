@@ -17,10 +17,13 @@ from pydantic import BaseModel, Field
 
 from .analyst import Analyst
 from .ai_trader import AI_ID, PriceModel
+from .explain import NEUTRAL_BPS
 from .sim import CANDLE_SEC, WARMUP_TICKS, Simulation, book_view
 
 log = logging.getLogger("server")
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WEB_DIR = os.path.join(ROOT_DIR, "web")
+LOG_PATH = os.path.join(ROOT_DIR, "logs", "predictions.csv")
 TICK_SEC = 0.1
 DEMO_USER = "user"  # единственный участник, которым можно управлять через REST
 
@@ -64,10 +67,27 @@ class Context:
             "equity": s.eq_curve[-n:], "marks": [m for t, m in s.marks.items() if t in times],
             "thoughts": list(s.ai.thoughts)[-30:] if s.ai else [], "trades": list(s.ui_trades)[-40:],
             "shocks": [s.t0_wall + t for t in s.shocks], "t0": s.t0_wall,
+            "explain": self.explain_init(),
             "model": getattr(s.ai.model, "meta", None) and {
                 "corr": s.ai.model.meta["metrics_valid"]["corr"],
                 "dir_acc": s.ai.model.meta["metrics_valid"]["dir_acc"],
                 "horizon": s.ai.model.meta["horizon_sec"]} if s.ai and s.ai.model else None,
+        }
+
+    def explain_init(self) -> Optional[dict]:
+        s = self.sim
+        if s.explain is None:
+            return None
+        model = s.ai.model if s.ai else None
+        imp = None
+        if model is not None and hasattr(model, "feature_importance"):
+            imp = sorted(model.feature_importance().items(), key=lambda kv: -kv[1])
+            imp = [{"name": k, "share": v} for k, v in imp]
+        meta = getattr(model, "meta", None) or {}
+        return {
+            "importance": imp, "horizon": s.explain.horizon_sec, "neutral_bps": NEUTRAL_BPS,
+            "metrics": meta.get("metrics_valid"), "chart": s.explain.chart_points(),
+            "log": bool(s.explain.csv_path), "ml": model is not None,
         }
 
     def tick_message(self, last_trade: int, last_thought: int) -> dict:
@@ -88,6 +108,8 @@ class Context:
             "shocks": len(s.shocks),
             "analyst": self.analyst.view(),
         }
+        if s.explain is not None:
+            msg["explain"] = s.explain.view()
         if ai is not None:
             msg["ai"] = {**summ, **ai.view()}
             msg["thoughts"] = [t for t in ai.thoughts if t["id"] > last_thought]
@@ -161,10 +183,12 @@ class Context:
             await asyncio.sleep(delay)
 
 
-def make_sim(seed: Optional[int] = None, model: Optional[PriceModel] = None, **kw) -> Simulation:
+def make_sim(seed: Optional[int] = None, model: Optional[PriceModel] = None,
+             log_path: Optional[str] = None, **kw) -> Simulation:
     seed = seed if seed is not None else random.randint(1, 10_000)
     sim = Simulation(seed=seed, ai_mode="ml" if model else "baseline", model=model,
-                     wall_t0=int(time.time()) - int(WARMUP_TICKS * 0.1), **kw)
+                     wall_t0=int(time.time()) - int(WARMUP_TICKS * 0.1),
+                     explain=True, log_path=log_path, **kw)
     sim.run(WARMUP_TICKS)
     sim.start_ai()
     return sim
@@ -177,7 +201,7 @@ def create_app(sim: Optional[Simulation] = None, autostart: bool = True) -> Fast
         except Exception as e:  # повреждённая/устаревшая модель
             log.warning("Модель не загружена: %s", e)
             model = None
-        sim = make_sim(model=model)
+        sim = make_sim(model=model, log_path=LOG_PATH)
     ctx = Context(sim, Analyst())
 
     @asynccontextmanager
@@ -187,6 +211,8 @@ def create_app(sim: Optional[Simulation] = None, autostart: bool = True) -> Fast
         yield
         if ctx.task:
             ctx.task.cancel()
+        if sim.explain:
+            sim.explain.close()
 
     app = FastAPI(title="AI Exchange", lifespan=lifespan)
     app.state.ctx = ctx
@@ -239,6 +265,19 @@ def create_app(sim: Optional[Simulation] = None, autostart: bool = True) -> Fast
                 "sim_time": sim.now, "paused": ctx.paused, "speed": ctx.speed, "errors": ctx.errors,
                 "shocks": len(sim.shocks), "agents": len(sim.agents), "analyst": ctx.analyst.view(),
                 "ml": bool(sim.ai and sim.ai.model)}
+
+    @app.get("/api/predictions.csv")
+    def download_predictions():
+        """Журнал прогнозов текущей сессии (зрелые строки: прогноз + что произошло через горизонт)."""
+        tr = sim.explain
+        if tr is None or not tr.csv_path:
+            raise HTTPException(404, "Журнал прогнозов не ведётся")
+        tr.flush()
+        return FileResponse(tr.csv_path, media_type="text/csv; charset=utf-8", filename="predictions.csv")
+
+    @app.get("/api/explain")
+    def explain_state():
+        return {"init": ctx.explain_init(), "now": sim.explain.view() if sim.explain else None}
 
     @app.post("/control/{cmd}")
     def control(cmd: str, value: Optional[int] = None):

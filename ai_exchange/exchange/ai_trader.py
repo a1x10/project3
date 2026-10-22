@@ -97,6 +97,12 @@ class PriceModel:
     def predict(self, x: np.ndarray) -> float:
         return float(self.booster.predict(x.reshape(1, -1), num_threads=1)[0])
 
+    def feature_importance(self) -> dict:
+        """Доля вклада (gain) каждого признака в модель, сумма = 1."""
+        gain = self.booster.feature_importance("gain")
+        tot = float(sum(gain)) or 1.0
+        return {n: float(g) / tot for n, g in zip(FEATURES, gain)}
+
     @staticmethod
     def load_default() -> Optional["PriceModel"]:
         if os.path.exists(MODEL_PATH) and os.path.exists(META_PATH):

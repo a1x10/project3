@@ -35,7 +35,9 @@ from exchange.sim import Simulation
 HORIZON_SEC = 3.0
 HORIZON = int(HORIZON_SEC * 10)
 STRIDE = 2  # берём каждый 2-й тик, чтобы соседние строки были менее похожи
-MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+ROOT = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(ROOT, "models")
+LOGS_DIR = os.path.join(ROOT, "logs")
 
 
 def gen_episode(args):
@@ -76,7 +78,52 @@ def metrics(y, p):
     conf = (np.abs(p) >= thr) & (y != 0)
     acc_conf = float(np.mean(np.sign(y[conf]) == np.sign(p[conf]))) if conf.any() else 0.0
     return {"rmse": rmse, "rmse_baseline": base, "r2": 1 - (rmse / base) ** 2, "corr": corr,
-            "dir_acc": acc, "dir_acc_top20": acc_conf}
+            "dir_acc": acc, "dir_acc_top20": acc_conf,
+            "mae": float(np.mean(np.abs(y - p))), "mae_baseline": float(np.mean(np.abs(y - y.mean())))}
+
+
+def _pct(v):
+    return f"{v * 100:.1f}%"
+
+
+def render_report_txt(r: dict) -> str:
+    """Человекочитаемый отчёт об обучении (на русском)."""
+    d, v, t, m = r["data"], r["metrics_valid"], r["metrics_train"], r["timing_sec"]
+    L = ["ОТЧЁТ ОБ ОБУЧЕНИИ ML-МОДЕЛИ ИИ-ТРЕЙДЕРА", "=" * 48, f"Дата: {r['trained_at']}", "",
+         "ВЫБОРКА",
+         f"  Симуляций: {d['episodes']} × {d['minutes_per_episode']:g} мин (процессов: {d['workers']})",
+         f"  Всего строк: {d['rows_total']:,} (обучение {d['rows_train']:,}, проверка {d['rows_valid']:,})".replace(",", " "),
+         "  Проверка идёт на отдельных симуляциях, которых модель не видела при обучении.",
+         f"  Цель: изменение средней цены за {d['horizon_sec']:g} с вперёд, б.п. "
+         f"(обрезка выбросов ±{d['label_clip_bps']:.1f} б.п.)", "",
+         "МЕТРИКИ НА ПРОВЕРКЕ (новые симуляции)",
+         f"  Корреляция прогноза с фактом: {v['corr']:.3f}",
+         f"  Точность направления: {_pct(v['dir_acc'])} (на 20% самых уверенных прогнозов: {_pct(v['dir_acc_top20'])})",
+         f"  MAE: {v['mae']:.3f} б.п. (если всегда прогнозировать среднее: {v['mae_baseline']:.3f} б.п.)",
+         f"  RMSE: {v['rmse']:.3f} б.п. (без модели {v['rmse_baseline']:.3f}), R²: {v['r2'] * 100:.2f}%",
+         f"  Для сравнения, на обучающих данных: корреляция {t['corr']:.3f}, точность направления {_pct(t['dir_acc'])}",
+         "", "ВАЖНОСТЬ ПРИЗНАКОВ (доля вклада по gain)"]
+    for row in r["feature_importance"]:
+        L.append(f"  {row['feature']:<15} {row['gain_share'] * 100:5.1f}%  {'█' * int(round(row['gain_share'] * 60))}")
+    p = r["model_params"]
+    L += ["", "ПАРАМЕТРЫ МОДЕЛИ (LightGBM)"]
+    L += [f"  {k}: {val}" for k, val in p["lightgbm"].items()]
+    L += [f"  максимум раундов: {p['max_rounds']}, остановка по проверке через {p['early_stopping_rounds']} раундов",
+          f"  итоговое число деревьев: {p['best_iteration']}", f"  время одного прогноза: {p['predict_latency_ms']:.3f} мс",
+          "", "ВРЕМЯ",
+          f"  генерация данных: {m['data']:.0f} с, обучение: {m['fit']:.0f} с, всего: {m['total']:.0f} с ({m['total'] / 60:.1f} мин)",
+          "", "ОКРУЖЕНИЕ", f"  Python {r['env']['python']}, LightGBM {r['env']['lightgbm']}, NumPy {r['env']['numpy']}", ""]
+    return "\n".join(L)
+
+
+def write_report(logs_dir: str, report: dict) -> tuple[str, str]:
+    os.makedirs(logs_dir, exist_ok=True)
+    pj, pt = os.path.join(logs_dir, "train_report.json"), os.path.join(logs_dir, "train_report.txt")
+    with open(pj, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    with open(pt, "w", encoding="utf-8") as f:
+        f.write(render_report_txt(report))
+    return pj, pt
 
 
 def main():
@@ -86,6 +133,8 @@ def main():
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 0)))
     ap.add_argument("--quick", action="store_true", help="быстрый режим (~1–2 минуты)")
     ap.add_argument("--rounds", type=int, default=600)
+    ap.add_argument("--model-dir", default=MODEL_DIR, help="куда сохранить модель (по умолчанию models/)")
+    ap.add_argument("--logs-dir", default=LOGS_DIR, help="куда сохранить отчёт (по умолчанию logs/)")
     args = ap.parse_args()
     if args.quick:
         args.episodes, args.minutes, args.rounds = 8, 15, 200
@@ -105,6 +154,7 @@ def main():
         for k, j in enumerate(jobs, 1):
             results.append(gen_episode(j))
             print(f"   готово {k}/{len(jobs)}  ({time.time() - t0:.0f} с)", flush=True)
+    t_data = time.time() - t0
     results.sort(key=lambda r: r[2])
     n_val = max(2, len(results) // 5)
     tr, va = results[:-n_val], results[-n_val:]
@@ -113,6 +163,7 @@ def main():
     print(f"   строк: обучение {len(ytr):,}, проверка {len(yva):,} (проверка — отдельные симуляции)".replace(",", " "))
 
     print("[2/3] Обучение LightGBM")
+    t_fit0 = time.time()
     clip = float(np.quantile(np.abs(ytr), 0.995))
     params = dict(objective="regression", learning_rate=0.04, num_leaves=24, min_data_in_leaf=300,
                   feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=10.0,
@@ -125,10 +176,11 @@ def main():
     pva = booster.predict(Xva, num_iteration=best)
     ptr = booster.predict(Xtr, num_iteration=best)
     m_tr, m_va = metrics(ytr, ptr), metrics(yva, pva)
+    t_fit = time.time() - t_fit0
 
     print("[3/3] Сохранение")
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    booster.save_model(os.path.join(MODEL_DIR, "model.txt"), num_iteration=best)
+    os.makedirs(args.model_dir, exist_ok=True)
+    booster.save_model(os.path.join(args.model_dir, "model.txt"), num_iteration=best)
     imp = sorted(zip(FEATURES, booster.feature_importance("gain")), key=lambda t: -t[1])
     tot = sum(v for _, v in imp) or 1
     # скорость одного прогноза (как в живой работе)
@@ -141,8 +193,28 @@ def main():
             "metrics_train": m_tr, "metrics_valid": m_va, "rows_train": int(len(ytr)), "rows_valid": int(len(yva)),
             "importance": {k: v / tot for k, v in imp}, "predict_latency_ms": lat_ms,
             "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")}
-    with open(os.path.join(MODEL_DIR, "meta.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.model_dir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    split = booster.feature_importance("split")
+    gain = booster.feature_importance("gain")
+    gtot = float(sum(gain)) or 1.0
+    report = {
+        "trained_at": meta["trained_at"],
+        "data": {"episodes": args.episodes, "minutes_per_episode": args.minutes, "workers": args.workers,
+                 "episodes_train": len(tr), "episodes_valid": len(va), "stride_ticks": STRIDE,
+                 "rows_total": int(len(ytr) + len(yva)), "rows_train": int(len(ytr)), "rows_valid": int(len(yva)),
+                 "horizon_sec": HORIZON_SEC, "label_clip_bps": clip, "features": FEATURES},
+        "metrics_valid": m_va, "metrics_train": m_tr,
+        "feature_importance": [{"feature": FEATURES[i], "gain_share": float(gain[i]) / gtot, "splits": int(split[i])}
+                               for i in sorted(range(len(FEATURES)), key=lambda i: -gain[i])],
+        "model_params": {"lightgbm": {k: v for k, v in params.items() if k not in ("verbose",)},
+                         "max_rounds": args.rounds, "early_stopping_rounds": 40, "best_iteration": int(best),
+                         "predict_latency_ms": lat_ms},
+        "timing_sec": {"data": t_data, "fit": t_fit, "total": time.time() - t0},
+        "env": {"python": sys.version.split()[0], "lightgbm": lgb.__version__, "numpy": np.__version__},
+    }
+    p_json, p_txt = write_report(args.logs_dir, report)
 
     print("\n=== МЕТРИКИ (горизонт прогноза %.0f с, цель — изменение цены в б.п.) ===" % HORIZON_SEC)
     for name, m in (("обучение", m_tr), ("ПРОВЕРКА ", m_va)):
@@ -151,7 +223,8 @@ def main():
               f"(на 20% самых уверенных прогнозов: {m['dir_acc_top20'] * 100:.1f}%)")
     print("Важность признаков:", ", ".join(f"{k} {v / tot * 100:.0f}%" for k, v in imp[:6]))
     print(f"Деревьев: {best}, время одного прогноза: {lat_ms:.2f} мс")
-    print(f"Модель сохранена в models/model.txt. Всего времени: {(time.time() - t0) / 60:.1f} мин")
+    print(f"Модель сохранена в {os.path.join(args.model_dir, 'model.txt')}. Всего времени: {(time.time() - t0) / 60:.1f} мин")
+    print(f"Отчёт: {p_json} и {p_txt}")
 
 
 if __name__ == "__main__":
