@@ -34,6 +34,8 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import OWNER_SENDER, Person, chat_paused
+from .keys import PROVIDERS, mask
+from .keys import STORE as KEYS
 from .plans import get_plan, set_plan, used_today
 from .util import mask_phone, phone_of, utcnow
 
@@ -228,15 +230,21 @@ def install_ring_log() -> None:
 
 # ---------- настройки, которые можно менять из панели ----------
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+BACKENDS = ["agent_sdk", "messages_api", "groq", "openrouter", "gemini", "openai"]
 EDITABLE: list[dict[str, Any]] = [
     {"key": "llm_model", "label": "Модель", "type": "select", "options": MODELS,
      "hint": "Opus — самая умная (дороже Sonnet в 2 раза), Haiku — самая дешёвая"},
     {"key": "llm_effort", "label": "Сколько думать перед ответом", "type": "select",
      "options": ["low", "medium", "high"], "hint": "low — быстро и коротко; high — дольше и дороже"},
+    {"key": "llm_backend", "label": "Где работает модель сейчас", "type": "select", "options": BACKENDS,
+     "hint": "agent_sdk — бонусные кредиты Anthropic; groq / openrouter / gemini / openai — по ключам из вкладки "
+             "«Ключи»; messages_api — платный баланс Anthropic"},
+    {"key": "alt_model", "label": "Модель у Groq / OpenRouter / Gemini / OpenAI", "type": "text", "max_len": 120,
+     "hint": "пусто — модель провайдера по умолчанию (у Groq — openai/gpt-oss-120b)"},
     {"key": "llm_backend_after", "label": "После окончания бонусных кредитов", "type": "select",
-     "options": ["off", "messages_api"],
-     "hint": "off — Стелла выключает модель и не тратит твой баланс API (команды и казино работают); "
-             "messages_api — работает дальше за твой баланс"},
+     "options": ["off", *BACKENDS[1:]],
+     "hint": "off — Стелла выключает модель и не тратит твой баланс (команды и казино работают); groq и др. — "
+             "дальше по ключам из «Ключей»; messages_api — за твой баланс Anthropic"},
     {"key": "llm_model_after", "label": "Модель после окончания бонусных кредитов", "type": "select",
      "options": MODELS, "hint": "работает за твои деньги на API — Opus быстро съест баланс"},
     {"key": "daily_budget_usd", "label": "Лимит расходов в день, $", "type": "number", "min": 0, "max": 200,
@@ -351,6 +359,22 @@ class AboutBody(BaseModel):
 
 class ProfileBody(BaseModel):
     fields: dict[str, str]
+
+
+class KeyBody(BaseModel):
+    provider: str = Field(pattern="^(groq|openrouter|gemini|openai)$")
+    key: str = Field(min_length=16, max_length=300)
+    label: str = Field(default="", max_length=40)
+
+
+class KeyPatch(BaseModel):
+    disabled: bool | None = None
+    label: str | None = Field(default=None, max_length=40)
+
+
+class ActiveBody(BaseModel):
+    backend: str = Field(pattern="^(agent_sdk|messages_api|groq|openrouter|gemini|openai)$")
+    model: str = Field(default="", max_length=120)
 
 
 class PlanBody(BaseModel):
@@ -642,6 +666,95 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         await member_or_404(request, chat_id, person_id)
         n = await brain.db.forget_facts(person_id, chat_id, None)
         return {"ok": True, "deleted": n}
+
+    # ---------- ключи Groq / OpenRouter / Gemini / OpenAI ----------
+    def active_info(s: Settings) -> dict[str, Any]:
+        kind, model = s.backend_for(s.local_today())
+        if kind in PROVIDERS and not model:
+            model = PROVIDERS[kind].default_model
+        return {"backend": kind, "model": model, "backend_after": s.llm_backend_after,
+                "configured_backend": s.llm_backend}
+
+    @router.get("/keys")
+    async def keys_list(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
+        brain = get_brain(request)
+        found: dict[str, set[str]] = {}
+        for k in KEYS.keys:
+            found.setdefault(k.provider, set()).update(k.models)
+        providers = [{"id": p.id, "name": p.name, "default_model": p.default_model, "signup_url": p.signup_url,
+                      "hint": p.hint, "models": list(dict.fromkeys([*p.models, *sorted(found.get(p.id, ()))]))[:200]}
+                     for p in PROVIDERS.values()]
+        return {"providers": providers, "keys": KEYS.public(), "active": active_info(brain.s)}
+
+    @router.post("/keys")
+    async def keys_add(body: KeyBody, _: str = Depends(require_session)) -> dict[str, Any]:
+        from .llm.openai_compat import check_key
+
+        try:
+            item = await KEYS.add(body.provider, body.key, body.label)
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        ok, detail, models = await check_key(item.provider, item.key)
+        item.models = models
+        if not ok:
+            item.last_error = detail
+        await KEYS.save()
+        log.warning("панель: добавлен ключ %s (%s)", item.provider, mask(item.key))
+        return {"ok": True, "key": item.public(None), "test": {"ok": ok, "detail": detail}}
+
+    @router.patch("/keys/{key_id}")
+    async def keys_patch(key_id: str, body: KeyPatch, _: str = Depends(require_session)) -> dict[str, Any]:
+        item = KEYS.get(key_id)
+        if item is None:
+            raise HTTPException(404, detail="нет такого ключа")
+        if body.disabled is not None:
+            item.disabled = body.disabled
+        if body.label is not None:
+            item.label = body.label.strip()
+        await KEYS.save()
+        return {"ok": True, "key": item.public(KEYS.cooldown.get(item.id))}
+
+    @router.delete("/keys/{key_id}")
+    async def keys_delete(key_id: str, _: str = Depends(require_session)) -> dict[str, Any]:
+        if not await KEYS.remove(key_id):
+            raise HTTPException(404, detail="нет такого ключа")
+        log.warning("панель: удалён ключ %s", key_id)
+        return {"ok": True}
+
+    @router.post("/keys/{key_id}/test")
+    async def keys_test(key_id: str, _: str = Depends(require_session)) -> dict[str, Any]:
+        from .llm.openai_compat import check_key
+
+        item = KEYS.get(key_id)
+        if item is None:
+            raise HTTPException(404, detail="нет такого ключа")
+        ok, detail, models = await check_key(item.provider, item.key)
+        if models:
+            item.models = models
+        item.last_error = None if ok else detail
+        if ok:
+            KEYS.cooldown.pop(item.id, None)
+        await KEYS.save()
+        return {"ok": ok, "detail": detail}
+
+    @router.put("/keys/active")
+    async def keys_active(body: ActiveBody, request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
+        brain = get_brain(request)
+        if body.backend in PROVIDERS and not KEYS.has(body.backend):
+            raise HTTPException(400, detail=f"сначала добавь ключ {PROVIDERS[body.backend].name}")
+        changes: dict[str, Any] = {"llm_backend": body.backend}
+        if body.backend in PROVIDERS:
+            changes["alt_model"] = body.model.strip()
+        row = await brain.db.kv_get(OVERRIDES_KV)
+        try:
+            saved = json.loads(row[0]) if row and row[0] else {}
+        except ValueError:
+            saved = {}
+        saved.update(changes)
+        await brain.db.kv_set(OVERRIDES_KV, json.dumps(saved, ensure_ascii=False))
+        await load_overrides(brain)
+        log.warning("панель: модель теперь %s %s", body.backend, body.model or "")
+        return {"ok": True, "active": active_info(brain.s)}
 
     @router.get("/settings")
     async def get_settings(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:

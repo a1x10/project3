@@ -230,7 +230,7 @@ class Brain:
 
         self.sandbox = CodeSandbox(model=settings.sandbox_model, effort=settings.sandbox_effort,
                                    timeout=settings.sandbox_project_timeout, max_run_usd=settings.sandbox_max_run_usd,
-                                   off=settings.model_off)
+                                   off=settings.anthropic_off)
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         from .giveaway import Giveaway
 
@@ -272,6 +272,10 @@ class Brain:
         from .admin import load_overrides
 
         await self.db.init()
+        from .keys import STORE as KEYS
+
+        KEYS.db = self.db  # ключи Groq и др. из панели
+        await KEYS.load()
         await load_overrides(self)  # настройки, изменённые в панели, важнее .env
         from .admin import LOCKS_KV
 

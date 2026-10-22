@@ -150,6 +150,9 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         w = STUDIO_WORDS[kind]
         if not getattr(settings, "html_enabled", True):
             raise ToolError(w["off"])
+        anthropic_off = getattr(settings, "anthropic_off", None)
+        if anthropic_off is not None and anthropic_off():  # студия — только на моделях Anthropic
+            raise ToolError(f"{w['one']} сейчас недоступна: я работаю на другой модели — попроси владельца")
         if ctx.sender is None:
             raise ToolError(f"{w['one']} — только когда о ней просят")
         if getattr(ctx, "html_queued", False):
