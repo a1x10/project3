@@ -33,6 +33,7 @@ class FeatureBuilder:
         self.cum_sell: list[float] = [0.0]
         self.cum_cnt: list[float] = [0.0]
         self._last: dict = {}
+        self.n_updates = 0  # число обработанных шагов (нужно журналу прогнозов)
 
     @property
     def ready(self) -> bool:
@@ -40,6 +41,7 @@ class FeatureBuilder:
 
     def update(self, mid: float, bid_lv, ask_lv, trades, pos_norm: float) -> None:
         """bid_lv/ask_lv: [(цена, объём), ...] от лучшей; trades: [(price, qty, taker_side), ...] чужие сделки тика."""
+        self.n_updates += 1
         m = self.mids
         m.append(mid)
         n = len(m)

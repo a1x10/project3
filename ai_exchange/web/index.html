@@ -89,6 +89,10 @@
       <div class="label">Комментарий ИИ-аналитика (Claude)</div>
       <div id="analyst-text"></div>
     </div>
+    <div class="ai-actions">
+      <button id="btn-xp" class="btn btn-wide btn-accent">🔍 Внутри модели</button>
+      <a id="btn-dl" class="btn btn-wide" href="/api/predictions.csv" download="predictions.csv">⬇ Скачать лог</a>
+    </div>
   </aside>
 
   <section id="bottom">
@@ -102,9 +106,48 @@
       <div id="thoughts" class="thoughts"></div>
     </div>
   </section>
+  <section id="xp" class="xp" hidden>
+    <div class="xp-head">
+      <h2>Внутри модели</h2>
+      <p class="xp-sub">Прогноз — ожидаемое изменение средней цены за <b id="xp-h">3</b> с. Факт — что случилось на самом деле через эти секунды.
+        Каждое решение пишется в журнал <b>logs/predictions.csv</b>.</p>
+      <a id="xp-dl" class="btn" href="/api/predictions.csv" download="predictions.csv">⬇ Скачать лог</a>
+      <button id="xp-close" class="btn">✕ Закрыть</button>
+    </div>
+    <div class="xp-grid">
+      <section class="panel xp-feat">
+        <div class="panel-title">Признаки сейчас <span class="legend-inline">то, что видит модель</span></div>
+        <div id="xp-features" class="xf-list"></div>
+      </section>
+      <section class="xp-mid">
+        <div class="panel xp-pred">
+          <div class="panel-title">Прогноз и сдвиг котировок</div>
+          <div class="xp-big"><span id="xp-pred" class="xp-pred-num">—</span><span id="xp-dir" class="xp-dir"></span></div>
+          <div id="xp-rows" class="xp-rows"></div>
+        </div>
+        <div class="panel xp-chartbox">
+          <div class="panel-title"><span>Прогноз vs факт, б.п. за <span id="xp-h2">3</span> с</span>
+            <span class="legend-inline"><span class="lg lg-ai"></span> прогноз <span class="lg lg-bh"></span> факт (среднее за 5 с)</span></div>
+          <div id="xp-chart" class="chart"></div>
+        </div>
+      </section>
+      <section class="xp-right">
+        <div class="panel xp-acc">
+          <div class="panel-title">Точность направления за сессию</div>
+          <div class="xp-acc-main"><span id="xp-acc" class="xp-acc-num">—</span><span id="xp-acc-sub" class="xp-acc-sub"></span></div>
+          <div id="xp-acc-rows" class="xp-rows small"></div>
+        </div>
+        <div class="panel xp-imp">
+          <div class="panel-title">Важность признаков <span class="legend-inline">вклад в модель, %</span></div>
+          <div id="xp-imp" class="imp-list"></div>
+        </div>
+      </section>
+    </div>
+  </section>
   <div id="offline" class="offline" hidden>Нет связи с сервером… переподключение</div>
 </div>
 <script src="/static/lightweight-charts.js"></script>
+<script src="/static/explain.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

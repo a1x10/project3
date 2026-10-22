@@ -10,6 +10,7 @@ from typing import Optional
 from .agents import DT, build_crowd
 from .ai_trader import AI_ID, AIConfig, Gateway, MarketMaker, PriceModel
 from .engine import Exchange
+from .explain import ExplainTracker
 
 START_PRICE = 65000.0
 CANDLE_SEC = 5
@@ -21,7 +22,8 @@ class Simulation:
                  start_price: float = START_PRICE, whale_gap: float = 150.0,
                  random_shocks_per_hour: float = 0.0, ai_cfg: Optional[AIConfig] = None,
                  maker_fee: float = 0.0005, taker_fee: float = 0.0005,
-                 shock_size: float = 20.0, wall_t0: Optional[float] = None):
+                 shock_size: float = 20.0, wall_t0: Optional[float] = None,
+                 explain: bool = False, log_path: Optional[str] = None):
         self.seed = seed
         self.rng = random.Random(seed)
         self.now = 0.0
@@ -59,6 +61,13 @@ class Simulation:
             self.ex.create_wallet(AI_ID, (ai_cfg or AIConfig()).start_usdt, 0.0)
             self.ai = MarketMaker(Gateway(self.ex, AI_ID, lambda: self.now), ai_cfg,
                                   model if ai_mode == "ml" else None)
+
+        # прозрачность модели: журнал прогнозов и живая статистика (только наблюдает за ИИ)
+        self.explain: Optional[ExplainTracker] = None
+        if explain and self.ai is not None:
+            meta = getattr(model, "meta", None) or {}
+            self.explain = ExplainTracker(horizon_sec=float(meta.get("horizon_sec", 3.0)), log_path=log_path,
+                                          t0_wall=self.t0_wall)
 
         # свечи и учёт
         self.candles: list[dict] = []
@@ -136,6 +145,8 @@ class Simulation:
             del self.mid_hist[:1000]
         self._update_candle()
         self._update_account(price)
+        if self.explain is not None and self.started:
+            self.explain.on_tick(self)
 
     def run(self, ticks: int) -> None:
         for _ in range(ticks):
