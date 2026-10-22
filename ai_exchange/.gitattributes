@@ -1,0 +1,3 @@
+models/model.txt -text
+models/meta.json -text
+*.js -text
