@@ -13,7 +13,7 @@
   const ABOUT_MAX = 4000;
   // trusted — сервер, на котором уже был успешный вход: чужой адрес из ссылки без предупреждения не принимаем
   const K = { server: "stella.server", trusted: "stella.trusted", token: "stella.token", exp: "stella.token_exp", active: "stella.last_active", tab: "stella.tab" };
-  const TABS = ["overview", "chats", "people", "settings", "log"];
+  const TABS = ["overview", "chats", "people", "keys", "settings", "log"];
   const CHIME = new Map([["off", "выкл"], ["rare", "редко"], ["normal", "обычно"], ["chatty", "болтушка"]]);
   const KINDS = new Map([
     ["sticker", "стикер"], ["image", "фото"], ["photo", "фото"], ["video", "видео"], ["gif", "гифка"],
@@ -31,7 +31,7 @@
   const $ = (id) => document.getElementById(id);
   const S = {
     server: "", tab: "overview", chats: null, chat: null, chatSeq: 0, peopleChatId: null, peopleSeq: 0,
-    settings: null, settingCtl: [], settingsDirty: false, log: [], logAuto: false,
+    settings: null, settingCtl: [], settingsDirty: false, log: [], logAuto: false, keys: null, keysUI: null, keysSeq: 0,
     lastOverview: 0, lastLog: 0, lastActive: 0, lastSaved: 0, loading: { overview: false, log: false },
     beat: 0, lockTimer: 0, lockUntil: 0, toastTimer: 0, p1: "", loginBusy: false, uid: 0,
   };
@@ -52,7 +52,74 @@
     return el;
   }
   const setKids = (box, ...kids) => box.replaceChildren(...clean(kids));
-  const showEmpty = (box, text) => box.replaceChildren(h("p", { class: "placeholder", text }));
+  // SVG-иконки: только createElementNS + setAttribute, пути — константы из кода
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const STAR = "M32 6c2 14 6 22 26 26-20 4-24 12-26 26-2-14-6-22-26-26 20-4 24-12 26-26z";
+  const ICONS = {
+    wa: ["M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12z", "M9.5 9.5c0 2.5 2.5 5 5 5"],
+    chip: ["M7 7h10v10H7z", "M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"],
+    coin: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M14.8 9.2c-.5-.8-1.5-1.2-2.8-1.2-1.7 0-2.8.8-2.8 2s1.1 1.7 2.8 2 2.8.8 2.8 2-1.1 2-2.8 2c-1.3 0-2.4-.5-2.9-1.3M12 6.5V8M12 16v1.5"],
+    chats: ["M4 5h16v11H10l-5 4v-4H4z"],
+    clock: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2"],
+    globe: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M3 12h18", "M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"],
+    key: ["M8 19.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z", "M11.2 11.8 20 3", "M16.5 6.5l2.5 2.5M14 9l2 2"],
+    ext: ["M14 4h6v6", "M20 4l-9 9", "M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"],
+    plus: ["M12 5v14M5 12h14"],
+    info: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 11v5M12 8h.01"],
+    group: ["M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z", "M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5", "M16 4.8a3.3 3.3 0 0 1 0 6.4", "M18 14.8c1.8.7 3 2.4 3.5 5.2"],
+    chev: ["M9 6l6 6-6 6"],
+    swap: ["M4 8h13l-3-3M20 16H7l3 3"],
+  };
+  function icon(name, cls) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    const star = name === "star";
+    svg.setAttribute("viewBox", star ? "0 0 64 64" : "0 0 24 24");
+    svg.setAttribute("class", "ico" + (cls ? " " + cls : ""));
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    if (!star) {
+      [["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.8"], ["stroke-linecap", "round"], ["stroke-linejoin", "round"]]
+        .forEach(([k, v]) => svg.setAttribute(k, v));
+    }
+    for (const d of star ? [STAR] : ICONS[name] || []) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", d);
+      if (star) path.setAttribute("fill", "currentColor");
+      svg.append(path);
+    }
+    return svg;
+  }
+  // Пустое состояние: звёздочка + текст (+ необязательная подсказка)
+  const emptyBox = (text, sub) => h("div", { class: "placeholder empty" },
+    h("span", { class: "empty-mark" }, icon("star")), h("p", { class: "empty-title", text }), sub ? h("p", { class: "empty-sub", text: sub }) : null);
+  const showEmpty = (box, text, sub) => { box.removeAttribute("aria-busy"); box.replaceChildren(emptyBox(text, sub)); };
+  // Скелетон на время загрузки: kind — tiles | list | msgs | form | log
+  function showSkeleton(box, kind, n) {
+    const count = n || (kind === "tiles" ? 6 : kind === "msgs" ? 6 : 5);
+    const one = (i) => {
+      if (kind === "tiles") return h("div", { class: "skel-tile" + (i < 2 ? " wide" : "") }, h("i", { class: "skel w30" }), h("i", { class: "skel big w60" }), h("i", { class: "skel w80" }));
+      if (kind === "msgs") return h("div", { class: "skel-msg" + (i % 3 === 1 ? " right" : "") }, h("i", { class: "skel w60" }), h("i", { class: "skel w80" }));
+      if (kind === "log") return h("i", { class: "skel line " + ["w80", "w60", "w90", "w70"][i % 4] });
+      return h("div", { class: "skel-row" }, kind === "form" ? null : h("i", { class: "skel ava" }),
+        h("div", { class: "skel-lines" }, h("i", { class: "skel w60" }), h("i", { class: "skel w80" })));
+    };
+    box.setAttribute("aria-busy", "true");
+    box.replaceChildren(h("div", { class: `skeleton skel-${kind}` },
+      h("span", { class: "sr-only", text: "Загрузка…" }), Array.from({ length: count }, (_, i) => one(i))));
+  }
+  const loaded = (box) => box.removeAttribute("aria-busy");
+  // Аватар-инициалы: цвет — по хэшу имени (классы av-0…av-5, без style)
+  function avatar(name, extra) {
+    const words = String(name || "?").replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
+    const ini = words.length > 1 ? [...words[0]][0] + [...words[1]][0] : [...(words[0] || "?")][0];
+    let hash = 0;
+    for (const ch of String(name || "")) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+    return h("span", { class: `avatar av-${hash % 6}${extra ? " " + extra : ""}`, "aria-hidden": "true", text: ini.toUpperCase() });
+  }
+  function plural(n, forms) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    return forms[a > 10 && a < 20 ? 2 : b === 1 ? 0 : b >= 2 && b <= 4 ? 1 : 2];
+  }
   const on = (id, ev, fn) => $(id).addEventListener(ev, fn);
   const setVal = (ids, v) => ids.forEach((id) => { $(id).value = v; });
 
@@ -354,7 +421,9 @@
       beat: 0, chats: null, chat: null, chatSeq: S.chatSeq + 1, peopleSeq: S.peopleSeq + 1, peopleChatId: null,
       settings: null, settingCtl: [], settingsDirty: false, log: [], logAuto: false,
     });
-    ["ov-body", "chats-list", "chat-msgs", "people-list", "people-chat", "settings-body", "log-list"].forEach((id) => $(id).replaceChildren());
+    Object.assign(S, { keys: null, keysUI: null, keysSeq: S.keysSeq + 1 });
+    ["ov-body", "chats-list", "chat-msgs", "people-list", "people-chat", "settings-body", "log-list", "keys-body"].forEach((id) => $(id).replaceChildren());
+    $("hdr-dot").className = "dot";
     setVal(["send-text", "about-text", "log-filter"], "");
     $("about-notes").textContent = "";
     $("log-auto").checked = false;
@@ -432,6 +501,7 @@
     if (name === "overview") loadOverview(false);
     else if (name === "chats") { if (S.chat) loadMessages(); else loadChats(); }
     else if (name === "people") loadPeopleTab();
+    else if (name === "keys") loadKeys(false);
     else if (name === "settings") { if (!S.settingsDirty) loadSettings(); }
     else if (name === "log") loadLog(false);
   }
@@ -444,20 +514,25 @@
   }
 
   // ---------- 1. Обзор ----------
-  const kv = (label, value) => h("div", { class: "kv" }, h("dt", { text: label }), h("dd", null, value));
-  const stat = (n, label) => h("div", { class: "stat" }, h("b", { text: String(Number(n) || 0) }), h("span", { text: label }));
+  const BACKENDS = new Map([
+    ["off", "выключена"], ["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Google Gemini"], ["openai", "OpenAI"],
+    ["agent_sdk", "Claude · Agent SDK"], ["messages_api", "Claude · Messages API"],
+  ]);
+  const backendName = (b) => BACKENDS.get(String(b || "")) || String(b || "—");
+  const tile = (cls, ico, label, ...kids) => h("div", { class: "tile " + cls },
+    h("div", { class: "tile-label" }, icon(ico), h("span", { text: label })), kids);
   async function loadOverview(silent) {
     if (S.loading.overview) return;
     S.loading.overview = true;
     S.lastOverview = Date.now();
     const box = $("ov-body");
-    if (!box.firstChild) showEmpty(box, "Загрузка…");
+    if (!box.firstChild) showSkeleton(box, "tiles");
     try {
       renderOverview(await api("GET", "/status"));
     } catch (e) {
       if (e.handled) return;
       if (!silent) showError(e);
-      if (!box.querySelector(".card")) showEmpty(box, "Не удалось загрузить. Нажмите «Обновить».");
+      if (!box.querySelector(".tile")) showEmpty(box, "Не удалось загрузить", "Проверьте связь и нажмите «Обновить».");
     } finally {
       S.loading.overview = false;
     }
@@ -466,16 +541,26 @@
     const wa = String(st.whatsapp || "неизвестно");
     const waCls = wa === "open" ? "ok" : wa === "connecting" ? "warn" : "bad";
     const waText = wa === "open" ? "на связи" : wa === "connecting" ? "подключается…" : `нет связи (${wa})`;
+    $("hdr-dot").className = "dot " + waCls;
     const spend = Number(st.spend_today_usd) || 0;
     const budget = Number(st.daily_budget_usd) || 0;
     const over = Boolean(st.over_budget);
+    const off = st.llm_backend === "off";
     const pct = budget > 0 ? Math.min(100, (spend / budget) * 100) : over ? 100 : 0;
     const fill = h("span");
     fill.style.width = pct.toFixed(1) + "%"; // CSSOM, а не атрибут style — CSP это разрешает
     const bar = h("div", {
-      class: "bar" + (over ? " over" : ""), role: "progressbar", "aria-label": "Потрачено от дневного бюджета",
+      class: "bar" + (over ? " over" : pct >= 80 ? " high" : ""), role: "progressbar", "aria-label": "Потрачено от дневного бюджета",
       "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(pct)),
     }, fill);
+    // Главный итог: одна фраза о самом важном
+    const [tone, head] = waCls === "bad" ? ["bad", "Нет связи с WhatsApp"]
+      : over ? ["bad", "Дневной бюджет исчерпан"]
+        : waCls === "warn" ? ["warn", "WhatsApp подключается"]
+          : off ? ["warn", "Модель выключена"]
+            : ["ok", "Стелла на связи"];
+    const sub = off ? "Отвечать не будет, баланс не тратится" : `Отвечает через ${backendName(st.llm_backend)}`;
+    const chats = Number(st.chats) || 0;
     setKids($("ov-body"),
       st.weak_passwords
         ? h("div", { class: "notice", role: "note", text: "Пароли панели короткие или только из цифр — смените их в .env на длинные (держится только на блокировке подбора)" })
@@ -483,26 +568,33 @@
       st.own_lid_known === false
         ? h("div", { class: "notice", role: "note", text: "Стелла пока не знает свой LID — @упоминания в некоторых группах может не видеть" })
         : null,
-      h("div", { class: "card" },
-        h("h3", { class: "card-title", text: "Состояние" }),
-        h("dl", null,
-          kv("WhatsApp", h("span", { class: `pill ${waCls}`, text: waText })),
-          kv("Модель", st.llm_model || "—"),
-          kv("Усилие", st.llm_effort || "—"),
-          kv("Бэкенд", st.llm_backend === "off" ? "выключена — баланс не тратится" : st.llm_backend || "—"),
-          st.switch_at ? kv("Смена модели", switchText(st.switch_at, st.backend_after)) : null,
-          kv("Работает", fmtDur(st.uptime_s)),
-          st.tunnel_url ? kv("Туннель", hostOf(String(st.tunnel_url))) : null)),
-      h("div", { class: "card" },
-        h("div", { class: "card-head" },
-          h("h3", { class: "card-title", text: "Расходы сегодня" }),
-          over ? h("span", { class: "pill bad", text: "бюджет превышен" }) : null),
-        h("p", { class: "big", text: budget > 0 ? `${usd(spend)} из ${usd(budget)}` : `${usd(spend)} · без лимита` }),
-        budget > 0 ? bar : null),
-      h("div", { class: "card" },
-        h("h3", { class: "card-title", text: "Чаты" }),
-        h("div", { class: "stats" }, stat(st.groups, "группы"), stat(st.dms, "лички"), stat(st.chats, "всего"))),
-      h("p", { class: "updated muted small", text: `Обновлено в ${fmtTime(new Date().toISOString(), true)}` }));
+      h("div", { class: `hero tone-${tone}` },
+        h("span", { class: "hero-mark" }, icon("star")),
+        h("div", { class: "hero-text" },
+          h("p", { class: "hero-kicker", text: `работает ${fmtDur(st.uptime_s)}` }),
+          h("h3", { class: "hero-title", text: head }),
+          h("p", { class: "hero-sub", text: sub }))),
+      h("div", { class: "tiles" },
+        tile("t-model wide", "chip", "Модель",
+          h("div", { class: "tile-value" }, off ? h("span", { class: "pill warn", text: "выключена" }) : backendName(st.llm_backend)),
+          off ? h("p", { class: "tile-sub", text: "Отвечать не будет — баланс не тратится" }) : null,
+          !off && st.llm_model ? h("p", { class: "mono-chip", text: String(st.llm_model) }) : null,
+          !off && st.llm_effort ? h("p", { class: "tile-sub", text: `усилие: ${st.llm_effort}` }) : null,
+          st.switch_at ? h("p", { class: "tile-sub switch", text: `Смена модели ${switchText(st.switch_at, st.backend_after)}` }) : null),
+        tile("t-spend wide" + (over ? " is-bad" : ""), "coin", "Расходы сегодня",
+          h("div", { class: "tile-value" }, h("span", { class: "num", text: usd(spend) }),
+            h("span", { class: "of", text: budget > 0 ? ` из ${usd(budget)}` : " · без лимита" })),
+          budget > 0 ? bar : null,
+          h("p", { class: "tile-sub", text: over ? "бюджет превышен — Стелла экономит" : budget > 0 ? `осталось ${usd(Math.max(0, budget - spend))} · ${Math.round(pct)}%` : "дневной лимит не задан" })),
+        tile("t-wa", "wa", "WhatsApp", h("div", { class: "tile-value" }, h("span", { class: `pill ${waCls}`, text: waText }))),
+        tile("t-chats", "chats", "Чаты",
+          h("div", { class: "tile-value" }, h("span", { class: "num", text: String(chats) })),
+          h("p", { class: "tile-sub", text: `${Number(st.groups) || 0} ${plural(Number(st.groups) || 0, ["группа", "группы", "групп"])} · ${Number(st.dms) || 0} ${plural(Number(st.dms) || 0, ["личка", "лички", "личек"])}` })),
+        tile("t-tunnel wide", "globe", "Туннель",
+          h("div", { class: "tile-value" }, st.tunnel_url ? h("span", { class: "host-val", text: hostOf(String(st.tunnel_url)) }) : h("span", { class: "muted", text: "не запущен" })),
+          h("p", { class: "tile-sub", text: st.tunnel_url ? "через него открывается эта панель" : "панель открыта напрямую" }))),
+      h("p", { class: "updated muted small", text: `Обновлено в ${fmtTime(new Date().toISOString(), true)} · каждые 30 с` }));
+    loaded($("ov-body"));
   }
   async function bulkAction(btn, path, question, done) {
     if (!confirm(question)) return;
@@ -529,7 +621,7 @@
 
   async function loadChats() {
     const box = $("chats-list");
-    if (!S.chats) showEmpty(box, "Загрузка…");
+    if (!S.chats) showSkeleton(box, "list");
     try {
       const r = await api("GET", "/chats");
       S.chats = sortChats(Array.isArray(r.chats) ? r.chats : []);
@@ -538,26 +630,32 @@
     } catch (e) {
       if (e.handled) return S.chats;
       showError(e);
-      if (!S.chats) showEmpty(box, "Не удалось загрузить. Нажмите «Обновить».");
+      if (!S.chats) showEmpty(box, "Не удалось загрузить", "Проверьте связь и нажмите «Обновить».");
     }
     return S.chats;
   }
   function renderChats() {
     const box = $("chats-list");
-    if (!S.chats || !S.chats.length) { showEmpty(box, "Пока пусто"); return; }
+    if (!S.chats || !S.chats.length) { showEmpty(box, "Чатов пока нет", "Добавьте Стеллу в группу или напишите ей в личку — чат появится здесь."); return; }
     const section = (title, list) => (list.length
-      ? [h("h3", { class: "list-title", text: `${title} · ${list.length}` }), h("ul", { class: "list" }, list.map(chatItem))]
+      ? [h("h3", { class: "list-title" }, h("span", { text: title }), h("span", { class: "count", text: String(list.length) })), h("ul", { class: "list" }, list.map(chatItem))]
       : null);
+    loaded(box);
     setKids(box, section("Группы", S.chats.filter((c) => c.is_group)), section("Личные", S.chats.filter((c) => !c.is_group)));
   }
   function chatItem(c) {
     const pause = pauseInfo(c);
-    const meta = [c.is_group ? "группа" : "личка", `режим: ${chimeText(c.chime_level)}`,
+    const meta = [`режим: ${chimeText(c.chime_level)}`,
       c.last_bot_at ? `ответ: ${ago(c.last_bot_at)}` : "ещё не отвечала"].join(" · ");
-    const btn = h("button", { type: "button", class: "chat-item" },
-      h("div", { class: "name", text: c.title || "Без названия" }),
-      h("div", { class: "meta", text: meta }),
-      h("div", { class: "badges" }, pause ? h("span", { class: "badge warn", text: pause }) : null, grudgeBadge(c)));
+    const title = c.title || "Без названия";
+    const btn = h("button", { type: "button", class: "chat-item" + (pause ? " is-paused" : "") },
+      avatar(title, c.is_group ? "group" : ""),
+      h("div", { class: "chat-item-body" },
+        h("div", { class: "name-row" }, h("span", { class: "name", text: title }),
+          c.last_message_at ? h("span", { class: "when", text: ago(c.last_message_at) }) : null),
+        h("div", { class: "meta", text: meta }),
+        h("div", { class: "badges" }, pause ? h("span", { class: "badge warn", text: pause }) : null, grudgeBadge(c))),
+      icon("chev", "chev-r"));
     btn.addEventListener("click", () => openChat(c.id));
     return h("li", null, btn);
   }
@@ -572,7 +670,7 @@
     $("about-text").disabled = $("about-save").disabled = true; // пока «Про чат» не загрузился
     $("about-notes").textContent = "Загрузка…";
     updateAboutCount();
-    showEmpty($("chat-msgs"), "Загрузка…");
+    showSkeleton($("chat-msgs"), "msgs");
     renderChatHead();
     window.scrollTo(0, 0);
     loadMessages();
@@ -616,12 +714,13 @@
     } catch (e) {
       if (seq !== S.chatSeq || e.handled) return;
       showError(e);
-      if (!box.querySelector(".msg")) showEmpty(box, "Не удалось загрузить сообщения");
+      if (!box.querySelector(".msg")) showEmpty(box, "Не удалось загрузить сообщения", "Нажмите ↻ вверху, чтобы попробовать снова.");
     }
   }
   function renderMessages(list) {
     const box = $("chat-msgs");
-    if (!list.length) { showEmpty(box, "Пока пусто"); return; }
+    if (!list.length) { showEmpty(box, "Сообщений пока нет", "Здесь появится переписка — и ваши сообщения от имени Стеллы."); return; }
+    loaded(box);
     setKids(box, list.map((m) => {
       const mine = m.role === "assistant";
       const kind = m.kind && m.kind !== "text" ? `[${KINDS.get(m.kind) || String(m.kind)}]` : "";
@@ -740,20 +839,21 @@
   async function loadPeopleTab() {
     if (!S.chats) await loadChats(); else fillPeopleSelect();
     if (S.chats && S.chats.length) await loadPeople();
-    else showEmpty($("people-list"), S.chats ? "Пока пусто — нет чатов" : "Не удалось загрузить список чатов");
+    else showEmpty($("people-list"), S.chats ? "Пока никого нет" : "Не удалось загрузить список чатов", S.chats ? "Люди появятся, когда в чатах начнут писать." : "Нажмите «Обновить».");
   }
   async function loadPeople() {
     const id = S.peopleChatId, box = $("people-list");
-    if (id === null) { showEmpty(box, "Пока пусто"); return; }
+    if (id === null) { showEmpty(box, "Пока никого нет"); return; }
     const seq = ++S.peopleSeq;
-    showEmpty(box, "Загрузка…");
+    showSkeleton(box, "list");
     try {
       const r = await api("GET", chatPath(id, "/people"));
       if (seq !== S.peopleSeq) return;
       const people = (Array.isArray(r.people) ? r.people : []).slice()
         .sort((a, b) => (Number(b.msg_count) || 0) - (Number(a.msg_count) || 0));
+      loaded(box);
       if (people.length) setKids(box, people.map((p) => personCard(id, p)));
-      else showEmpty(box, "Пока пусто");
+      else showEmpty(box, "Пока никого нет", "Стелла запоминает людей, которые пишут в этом чате.");
     } catch (e) {
       if (seq !== S.peopleSeq || e.handled) return;
       showError(e);
@@ -765,7 +865,9 @@
     const bodyId = `person-body-${++S.uid}`;
     const body = h("div", { class: "person-body", id: bodyId, hidden: true });
     const head = h("button", { type: "button", class: "person-head", "aria-expanded": "false", "aria-controls": bodyId },
-      h("div", { class: "who" }, h("div", { class: "name", text: personName(p) }), h("div", { class: "meta", text: personMeta(p) })),
+      avatar(personName(p)),
+      h("div", { class: "who" }, h("div", { class: "name-row" }, h("span", { class: "name", text: personName(p) }), personBadge(p)),
+        h("div", { class: "meta", text: personMeta(p) })),
       h("span", { class: "chev", "aria-hidden": "true" }));
     head.addEventListener("click", () => {
       const open = head.getAttribute("aria-expanded") !== "true";
@@ -774,6 +876,13 @@
       if (open && !body.firstChild) renderPersonBody(body, chatId, p);
     });
     return h("div", { class: "person" }, head, body);
+  }
+  function personBadge(p) {
+    const pl = p.plan && typeof p.plan === "object" ? p.plan : null;
+    if (!pl || pl.ended) return null;
+    if (pl.admin) return h("span", { class: "badge", text: "админ" });
+    if (pl.kind === "unlimited") return h("span", { class: "badge accent", text: "подписка" });
+    return pl.kind === "limit" ? h("span", { class: "badge", text: "свой лимит" }) : null;
   }
   function personMeta(p) {
     const pl = p.plan && typeof p.plan === "object" ? p.plan : null;
@@ -915,14 +1024,283 @@
       forgetBtn);
   }
 
-  // ---------- 4. Настройки (форма строится по описаниям с сервера) ----------
+  // ---------- 4. Ключи API: несколько ключей на сервис, активная модель ----------
+  const PROVIDER_LOOK = new Map([["groq", "Gq"], ["openrouter", "OR"], ["gemini", "Ge"], ["openai", "AI"]]);
+  const CLAUDE_BACKENDS = [["agent_sdk", "Claude · Agent SDK"], ["messages_api", "Claude · Messages API"]];
+  const CUSTOM = "\u0000custom"; // значение пункта «Другая модель…» — не может совпасть с именем модели
+  const keyPath = (id, tail) => `/keys/${encodeURIComponent(String(id))}${tail || ""}`;
+  const safeUrl = (u) => (/^https:\/\/[^\s"'<>]+$/i.test(String(u || "")) ? String(u) : "");
+  const providerIni = (p) => PROVIDER_LOOK.get(p.id) || String(p.name || p.id || "?").slice(0, 2);
+  const providerCls = (id) => (PROVIDER_LOOK.has(id) ? `pv-${id}` : "pv-other");
+  function keyStatus(k) {
+    if (k.disabled) return ["выключен", "off"];
+    const cd = toDate(k.cooldown_until);
+    if (cd && cd.getTime() > Date.now()) return [`пауза до ${fmtTime(k.cooldown_until)}`, "warn"];
+    if (k.last_error) return ["ошибка", "bad"];
+    return ["работает", "ok"];
+  }
+  async function loadKeys(silent) {
+    const box = $("keys-body"), seq = ++S.keysSeq;
+    if (!S.keys) showSkeleton(box, "list", 4);
+    try {
+      const r = await api("GET", "/keys");
+      if (seq !== S.keysSeq) return;
+      S.keys = {
+        providers: (Array.isArray(r.providers) ? r.providers : []).filter((p) => p && p.id),
+        keys: (Array.isArray(r.keys) ? r.keys : []).filter((k) => k && k.id),
+        active: r.active && typeof r.active === "object" ? r.active : {},
+      };
+      renderKeys();
+    } catch (e) {
+      if (seq !== S.keysSeq || e.handled) return;
+      if (e.status === 404) { // сервер ещё старый — раздела нет
+        S.keys = null;
+        showEmpty(box, "Раздел ключей пока не включён на сервере",
+          "Обновите бота до новой версии — и здесь можно будет добавлять ключи Groq, OpenRouter, Gemini и OpenAI и переключать модель.");
+        return;
+      }
+      if (!silent) showError(e);
+      if (!S.keys) showEmpty(box, "Не удалось загрузить ключи", "Проверьте связь и нажмите «Обновить».");
+    }
+  }
+  function renderKeys() {
+    const box = $("keys-body");
+    const ui = { active: h("div", { class: "card active-card" }), list: h("div", { class: "providers" }) };
+    S.keysUI = ui;
+    loaded(box);
+    setKids(box,
+      ui.active,
+      addKeyCard(ui),
+      h("div", { class: "info-note", role: "note" }, icon("swap"),
+        h("p", { text: "Несколько ключей одного сервиса работают по очереди: когда у одного кончается лимит, Стелла сама переключается на следующий." })),
+      h("h3", { class: "list-title" }, h("span", { text: "Сервисы" }), h("span", { class: "count", text: String(S.keys.providers.length) })),
+      ui.list);
+    renderActive();
+    renderKeyList();
+  }
+  // --- активная модель ---
+  function backendChoices() {
+    const list = S.keys.providers.map((p) => [String(p.id), String(p.name || p.id)]);
+    for (const [id, name] of CLAUDE_BACKENDS) if (!list.some(([x]) => x === id)) list.push([id, name]);
+    return list;
+  }
+  function renderActive() {
+    const ui = S.keysUI, a = S.keys.active || {};
+    const cur = String(a.backend || "");
+    const ids = [`act-pv-${++S.uid}`, `act-model-${++S.uid}`, `act-custom-${++S.uid}`];
+    const pvSel = h("select", { id: ids[0] }, backendChoices().map(([v, t]) => h("option", { value: v, text: t })));
+    if (backendChoices().some(([v]) => v === cur)) pvSel.value = cur;
+    const modelSel = h("select", { id: ids[1] });
+    const custom = h("input", { type: "text", id: ids[2], maxLength: 200, autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "например, openai/gpt-oss-120b" });
+    const modelBox = h("div", {}, h("label", { for: ids[1], text: "Модель" }), modelSel);
+    const customBox = h("div", {}, h("label", { for: ids[2], text: "Своя модель" }), custom);
+    const fillModels = () => {
+      const p = S.keys.providers.find((x) => String(x.id) === pvSel.value);
+      const models = p && Array.isArray(p.models) ? p.models.map(String) : [];
+      const def = p && p.default_model ? String(p.default_model) : "";
+      if (def && !models.includes(def)) models.unshift(def);
+      const opts = [h("option", { value: "", text: def ? `по умолчанию (${def})` : "по умолчанию" })];
+      models.forEach((m) => opts.push(h("option", { value: m, text: m })));
+      opts.push(h("option", { value: CUSTOM, text: "Другая модель…" }));
+      setKids(modelSel, opts);
+      const want = pvSel.value === cur ? String(a.model || "") : "";
+      if (!want) modelSel.value = "";
+      else if (models.includes(want)) modelSel.value = want;
+      else { modelSel.value = CUSTOM; custom.value = want; }
+      customBox.hidden = modelSel.value !== CUSTOM;
+    };
+    pvSel.addEventListener("change", () => { custom.value = ""; fillModels(); });
+    modelSel.addEventListener("change", () => { customBox.hidden = modelSel.value !== CUSTOM; if (!customBox.hidden) custom.focus(); });
+    fillModels();
+    const useBtn = h("button", { type: "button", class: "btn primary" }, icon("star"), h("span", { text: "Использовать сейчас" }));
+    useBtn.addEventListener("click", () => busy([useBtn, pvSel, modelSel, custom], async () => {
+      const model = modelSel.value === CUSTOM ? custom.value.trim() : modelSel.value;
+      if (modelSel.value === CUSTOM && !model) { toast("Впишите название модели", "bad"); custom.focus(); return; }
+      const body = { backend: pvSel.value };
+      if (model) body.model = model;
+      const r = await api("PUT", "/keys/active", body);
+      if (!S.keys) return;
+      S.keys.active = r.active && typeof r.active === "object" ? r.active : { backend: body.backend, model: model || null };
+      S.lastOverview = 0; // обзор обновится при следующем открытии
+      toast(`Теперь Стелла отвечает через ${backendName(S.keys.active.backend)}`);
+      renderActive();
+    }));
+    const off = cur === "off" || !cur;
+    setKids(ui.active,
+      h("div", { class: "card-head" },
+        h("h3", { class: "card-title", text: "Активная модель" }),
+        h("span", { class: "pill " + (off ? "warn" : "ok"), text: off ? "выключена" : "работает" })),
+      h("div", { class: "active-now" },
+        h("span", { class: "active-mark" }, icon("star")),
+        h("div", { class: "active-text" },
+          h("div", { class: "active-name", text: off ? "Модель выключена" : backendName(cur) }),
+          a.model && !off ? h("div", { class: "mono-chip", text: String(a.model) }) : null,
+          a.backend_after && a.backend_after !== cur
+            ? h("div", { class: "muted small", text: `по расписанию потом: ${backendName(a.backend_after)}` }) : null)),
+      h("div", { class: "form-grid" }, h("div", {}, h("label", { for: ids[0], text: "Сервис" }), pvSel), modelBox, customBox),
+      h("div", { class: "btn-row" }, useBtn),
+      h("p", { class: "muted small", text: "Переключает Стеллу сразу, без перезапуска. Для Groq, OpenRouter, Gemini и OpenAI нужен хотя бы один включённый ключ." }));
+  }
+  // --- добавить ключ ---
+  function addKeyCard(ui) {
+    const ids = [`add-pv-${++S.uid}`, `add-key-${++S.uid}`, `add-label-${++S.uid}`];
+    const pvSel = h("select", { id: ids[0] }, S.keys.providers.map((p) => h("option", { value: String(p.id), text: String(p.name || p.id) })));
+    const keyIn = h("input", { type: "password", id: ids[1], autocomplete: "off", autocapitalize: "off", spellcheck: "false", maxLength: 400, placeholder: "вставьте ключ", "aria-describedby": `${ids[1]}-hint` });
+    const labelIn = h("input", { type: "text", id: ids[2], autocomplete: "off", maxLength: 60, placeholder: "например, основной" });
+    const result = h("div", { class: "test-result", role: "status", "aria-live": "polite", hidden: true });
+    const submit = h("button", { type: "submit", class: "btn primary" }, icon("plus"), h("span", { text: "Добавить и проверить" }));
+    const hint = h("p", { class: "hint", id: `${ids[1]}-hint` });
+    const syncHint = () => {
+      const p = S.keys && S.keys.providers.find((x) => String(x.id) === pvSel.value);
+      hint.textContent = p && p.hint ? String(p.hint) : "Ключ хранится только на сервере. Здесь потом будет видно только его начало и конец.";
+    };
+    pvSel.addEventListener("change", syncHint);
+    syncHint();
+    const showResult = (kind, title, detail) => {
+      result.hidden = false;
+      result.className = `test-result ${kind}`;
+      setKids(result, h("b", { text: title }), detail ? h("span", { text: clip(String(detail), 300) }) : null);
+    };
+    const form = h("form", { class: "card add-card", novalidate: true },
+      h("div", { class: "card-head" }, h("h3", { class: "card-title", text: "Добавить ключ" }), icon("key", "head-ico")),
+      h("div", { class: "form-grid" },
+        h("div", {}, h("label", { for: ids[0], text: "Сервис" }), pvSel),
+        h("div", { class: "span-2" }, h("label", { for: ids[1], text: "Ключ API" }), keyIn, hint),
+        h("div", {}, h("label", { for: ids[2] }, "Подпись ", h("span", { class: "opt", text: "— необязательно" })), labelIn)),
+      h("div", { class: "btn-row" }, submit),
+      result);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (submit.disabled) return;
+      const key = keyIn.value.trim();
+      if (!pvSel.value) { toast("Выберите сервис", "bad"); return; }
+      if (!key) { toast("Вставьте ключ", "bad"); keyIn.focus(); return; }
+      const body = { provider: pvSel.value, key };
+      if (labelIn.value.trim()) body.label = labelIn.value.trim();
+      keyIn.value = ""; // ключ в поле не держим — ни при успехе, ни при ошибке
+      const els = [submit, pvSel, keyIn, labelIn];
+      els.forEach((el) => { el.disabled = true; });
+      submit.setAttribute("aria-busy", "true");
+      showResult("wait", "Проверяю ключ…", "");
+      try {
+        const r = await api("POST", "/keys", body);
+        body.key = "";
+        const t = r.test && typeof r.test === "object" ? r.test : null;
+        if (!t || t.ok) showResult("ok", "Ключ добавлен и работает", t && t.detail);
+        else showResult("bad", "Ключ добавлен, но проверка не прошла", t.detail);
+        labelIn.value = "";
+        if (S.keys && r.key && r.key.id) {
+          S.keys.keys = S.keys.keys.filter((k) => k.id !== r.key.id).concat([r.key]);
+          renderKeyList();
+        } else loadKeys(true);
+      } catch (err) {
+        body.key = "";
+        if (err.handled) return;
+        showResult("bad", "Ключ не добавлен", errText(err));
+      } finally {
+        els.forEach((el) => { el.disabled = false; });
+        submit.removeAttribute("aria-busy");
+      }
+    });
+    ui.addProvider = pvSel;
+    ui.addKey = keyIn;
+    return form;
+  }
+  // --- карточки сервисов со списком ключей ---
+  function renderKeyList() {
+    const ui = S.keysUI;
+    if (!ui || !S.keys) return;
+    const known = new Set(S.keys.providers.map((p) => String(p.id)));
+    const groups = S.keys.providers.map((p) => [p, S.keys.keys.filter((k) => String(k.provider) === String(p.id))]);
+    const others = S.keys.keys.filter((k) => !known.has(String(k.provider)));
+    if (others.length) groups.push([{ id: "", name: "Другие" }, others]);
+    if (!groups.length) { setKids(ui.list, emptyBox("Сервер не прислал список сервисов")); return; }
+    setKids(ui.list, groups.map(([p, keys]) => providerCard(p, keys)));
+  }
+  function providerCard(p, keys) {
+    const url = safeUrl(p.signup_url);
+    const works = keys.filter((k) => keyStatus(k)[1] === "ok").length;
+    const addBtn = p.id ? h("button", { type: "button", class: "btn small ghost" }, icon("plus"), h("span", { text: "Ключ" })) : null;
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        const ui = S.keysUI;
+        if (!ui) return;
+        ui.addProvider.value = String(p.id);
+        ui.addProvider.dispatchEvent(new Event("change"));
+        ui.addKey.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+        ui.addKey.focus({ preventScroll: true });
+      });
+    }
+    const active = S.keys.active && String(S.keys.active.backend) === String(p.id);
+    return h("article", { class: "card provider " + providerCls(String(p.id)) },
+      h("div", { class: "provider-head" },
+        h("span", { class: "pv-ini", "aria-hidden": "true", text: providerIni(p) }),
+        h("div", { class: "provider-title" },
+          h("div", { class: "name-row" }, h("h4", { class: "provider-name", text: String(p.name || p.id) }),
+            active ? h("span", { class: "badge accent", text: "активен" }) : null),
+          h("div", { class: "muted small", text: keys.length
+            ? `${keys.length} ${plural(keys.length, ["ключ", "ключа", "ключей"])} · работает ${works}`
+            : "ключей нет" })),
+        addBtn),
+      p.hint ? h("p", { class: "provider-hint", text: String(p.hint) }) : null,
+      url ? h("a", { class: "ext-link", href: url, target: "_blank", rel: "noopener noreferrer" },
+        h("span", { text: "Как получить ключ" }), icon("ext")) : null,
+      keys.length ? h("ul", { class: "key-list" }, keys.map(keyItem)) : null);
+  }
+  function keyItem(k) {
+    const [stText, stCls] = keyStatus(k);
+    const label = k.label ? String(k.label) : "";
+    const name = `${String(k.masked || "ключ")}${label ? ` (${label})` : ""}`;
+    const testBtn = h("button", { type: "button", class: "btn small", text: "Проверить" });
+    const toggleBtn = h("button", { type: "button", class: "btn small", text: k.disabled ? "Включить" : "Выключить" });
+    const delBtn = h("button", { type: "button", class: "btn small danger", text: "Удалить" });
+    const all = [testBtn, toggleBtn, delBtn];
+    const replaceKey = (nk) => {
+      if (!S.keys || !nk || !nk.id) return;
+      S.keys.keys = S.keys.keys.map((x) => (x.id === nk.id ? nk : x));
+    };
+    testBtn.addEventListener("click", () => busy(all, async () => {
+      const r = await api("POST", keyPath(k.id, "/test"));
+      toast(r.ok ? `Ключ работает${r.detail ? ": " + clip(String(r.detail), 120) : ""}` : `Ключ не работает${r.detail ? ": " + clip(String(r.detail), 160) : ""}`, r.ok ? "" : "bad");
+      if (r.key && r.key.id) { replaceKey(r.key); renderKeyList(); } else loadKeys(true);
+    }));
+    toggleBtn.addEventListener("click", () => busy(all, async () => {
+      const r = await api("PATCH", keyPath(k.id), { disabled: !k.disabled });
+      replaceKey(r.key && r.key.id ? r.key : { ...k, disabled: !k.disabled });
+      toast(k.disabled ? "Ключ включён" : "Ключ выключен — Стелла его пропускает");
+      renderKeyList();
+    }));
+    delBtn.addEventListener("click", () => {
+      if (!confirm(`Удалить ключ ${name}? Вернуть его можно, только добавив заново.`)) return;
+      busy(all, async () => {
+        await api("DELETE", keyPath(k.id));
+        if (S.keys) S.keys.keys = S.keys.keys.filter((x) => x.id !== k.id);
+        toast("Ключ удалён");
+        renderKeyList();
+      });
+    });
+    const meta = [`использований: ${Number(k.uses) || 0}`,
+      k.last_used ? `последний раз ${ago(k.last_used)}` : "ещё не использовался",
+      k.added_at ? `добавлен ${fmtTime(k.added_at)}` : ""].filter(Boolean).join(" · ");
+    return h("li", { class: "key-item" + (k.disabled ? " is-off" : "") },
+      h("div", { class: "key-top" },
+        h("div", { class: "key-id" },
+          h("code", { class: "key-mask", text: String(k.masked || "••••") }),
+          label ? h("span", { class: "key-label", text: label }) : null),
+        h("span", { class: `pill ${stCls}`, text: stText })),
+      k.last_error && !k.disabled ? h("p", { class: "key-err", text: clip(String(k.last_error), 300) }) : null,
+      h("p", { class: "key-meta", text: meta }),
+      h("div", { class: "key-actions" }, all));
+  }
+
+  // ---------- 5. Настройки (форма строится по описаниям с сервера) ----------
   function setDirty(v) {
     S.settingsDirty = v;
     $("settings-dirty").hidden = !v;
   }
   async function loadSettings() {
     const box = $("settings-body");
-    if (!S.settings) showEmpty(box, "Загрузка…");
+    if (!S.settings) showSkeleton(box, "form", 6);
     try {
       const r = await api("GET", "/settings");
       renderSettings(Array.isArray(r.settings) ? r.settings : []);
@@ -936,8 +1314,9 @@
     S.settings = list;
     S.settingCtl = [];
     setDirty(false);
+    loaded($("settings-body"));
     if (list.length) setKids($("settings-body"), list.map(settingField));
-    else showEmpty($("settings-body"), "Пока пусто");
+    else showEmpty($("settings-body"), "Настроек нет");
   }
   function settingField(d, i) {
     const id = `set-${i}`;
@@ -965,7 +1344,7 @@
     S.settingCtl.push({ d, el });
     const label = String(d.label || d.key), keyTag = h("span", { class: "key", text: String(d.key) });
     return h("div", { class: "setting" },
-      d.type === "bool" ? h("label", { class: "check", for: id }, el, h("span", { text: label }), keyTag) : h("label", { for: id }, label, keyTag),
+      d.type === "bool" ? h("label", { class: "check switch", for: id }, el, h("span", { class: "check-text" }, h("span", { text: label }), keyTag)) : h("label", { for: id }, label, keyTag),
       d.type === "bool" ? null : el,
       hintId ? h("p", { class: "hint", id: hintId, text: String(d.hint) }) : null);
   }
@@ -1000,13 +1379,13 @@
     });
   }
 
-  // ---------- 5. Журнал ----------
+  // ---------- 6. Журнал ----------
   async function loadLog(silent) {
     if (S.loading.log) return;
     S.loading.log = true;
     S.lastLog = Date.now();
     const box = $("log-list");
-    if (!S.log.length) showEmpty(box, "Загрузка…");
+    if (!S.log.length) showSkeleton(box, "log", 12);
     try {
       const r = await api("GET", "/log?limit=200");
       S.log = Array.isArray(r.lines) ? r.lines : [];
@@ -1024,7 +1403,8 @@
     const atBottom = !box.querySelector(".log-line") || box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     const q = $("log-filter").value.trim().toLowerCase();
     const lines = q ? S.log.filter((l) => `${l.level} ${l.text}`.toLowerCase().includes(q)) : S.log;
-    if (!lines.length) { showEmpty(box, S.log.length ? "Ничего не найдено" : "Пока пусто"); return; }
+    if (!lines.length) { showEmpty(box, S.log.length ? "Ничего не найдено" : "Журнал пуст", S.log.length ? "Попробуйте другое слово." : ""); return; }
+    loaded(box);
     setKids(box, lines.map((l) => {
       const up = String(l.level || "INFO").toUpperCase();
       const lv = /^[A-Z]{1,10}$/.test(up) ? up : "INFO"; // уровень попадает в имя класса — только буквы
@@ -1069,6 +1449,7 @@
 
     on("people-chat", "change", (e) => { S.peopleChatId = Number(e.target.value); loadPeople(); });
     on("people-refresh", "click", (e) => busy(e.currentTarget, async () => { await loadChats(); await loadPeople(); }));
+    on("keys-refresh", "click", (e) => busy(e.currentTarget, () => loadKeys(false)));
     on("settings-save", "click", saveSettings);
     on("settings-refresh", "click", (e) => {
       if (S.settingsDirty && !confirm("Есть несохранённые изменения. Сбросить их?")) return;
