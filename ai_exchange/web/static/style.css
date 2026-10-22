@@ -177,3 +177,18 @@ header { grid-area: head; display: flex; align-items: center; gap: 28px; backgro
 .imp .tr i { display: block; height: 100%; background: linear-gradient(90deg, #1d7fb0, #38BDF8); border-radius: 8px; }
 .imp .pc { font-family: var(--mono); font-weight: 700; text-align: right; }
 .xp-none { color: var(--muted); font-size: 22px; padding: 12px 4px; }
+
+/* --- Полная мощность (охлаждение) --- */
+.btn-cool { background: #12283A; border-color: #38BDF8; color: #7DD3FC; white-space: nowrap; }
+.btn-cool:hover { background: #17364f; }
+.btn-cool.on { background: #38BDF8; color: #0b1620; border-color: #38BDF8; }
+.toast { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); z-index: 20; max-width: 1200px; background: #12283A;
+  border: 2px solid #38BDF8; color: #F5F6F8; border-radius: 14px; padding: 16px 28px; font-size: 24px; line-height: 1.35; text-align: center; }
+.toast.err { background: #2A1A1F; border-color: #F6465D; }
+
+/* компактная шапка, чтобы все кнопки помещались в одну строку */
+header { gap: 18px; padding: 8px 18px; }
+header .btn { white-space: nowrap; padding: 10px 14px; font-size: 18px; }
+.controls { gap: 8px; }
+.price { min-width: 230px; }
+.clock { white-space: nowrap; }

@@ -10,12 +10,13 @@ import time
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .analyst import Analyst
+from .cooling import Cooling
 from .ai_trader import AI_ID, PriceModel
 from .explain import NEUTRAL_BPS
 from .sim import CANDLE_SEC, WARMUP_TICKS, Simulation, book_view
@@ -56,6 +57,7 @@ class Context:
         self.clients: dict[WebSocket, dict] = {}
         self.task: Optional[asyncio.Task] = None
         self.errors = 0
+        self.cooling = Cooling()
 
     # ---------- данные для сайта ----------
     def init_message(self) -> dict:
@@ -278,6 +280,24 @@ def create_app(sim: Optional[Simulation] = None, autostart: bool = True) -> Fast
     @app.get("/api/explain")
     def explain_state():
         return {"init": ctx.explain_init(), "now": sim.explain.view() if sim.explain else None}
+
+    def _local_only(request: Request) -> None:
+        host = request.client.host if request.client else ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            raise HTTPException(403, "Управление охлаждением доступно только с этого же компьютера")
+
+    @app.get("/api/cooling")
+    def cooling_status(request: Request):
+        _local_only(request)
+        return ctx.cooling.status()
+
+    @app.post("/api/cooling/{mode}")
+    def cooling_set(mode: str, request: Request):
+        """mode = max (полная мощность: активное охлаждение Windows) или restore (вернуть как было)."""
+        _local_only(request)
+        if mode not in ("max", "restore"):
+            raise HTTPException(404, "Неизвестный режим")
+        return ctx.cooling.enable() if mode == "max" else ctx.cooling.restore()
 
     @app.post("/control/{cmd}")
     def control(cmd: str, value: Optional[int] = None):
