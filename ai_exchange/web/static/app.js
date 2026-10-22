@@ -62,6 +62,25 @@
   $('btn-x1').onclick = () => send('speed', 1);
   $('btn-x10').onclick = () => send('speed', 10);
   $('btn-shock').onclick = () => send('shock');
+  // «Полная мощность»: активное охлаждение Windows (вкл/выкл)
+  let coolOn = false, toastTimer = null;
+  const toast = (msg, err) => {
+    const t = $('toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, err ? 9000 : 12000);
+  };
+  const paintCool = () => {
+    const b = $('btn-cool'); b.classList.toggle('on', coolOn);
+    b.textContent = coolOn ? '🌀 Полная мощность: ВКЛ' : '🌀 Полная мощность';
+  };
+  fetch('/api/cooling').then((r) => r.json()).then((s) => { coolOn = !!s.active; paintCool(); }).catch(() => {});
+  $('btn-cool').onclick = async () => {
+    try {
+      const r = await fetch('/api/cooling/' + (coolOn ? 'restore' : 'max'), { method: 'POST' });
+      const d = await r.json();
+      if (r.ok && d.ok) { coolOn = !!d.active; paintCool(); toast(d.message, false); }
+      else toast(d.message || d.detail || 'Не удалось изменить охлаждение', true);
+    } catch (e) { toast('Нет связи с сервером', true); }
+  };
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Space') { e.preventDefault(); send('toggle_pause'); }
     if (e.key === '1') send('speed', 1);
