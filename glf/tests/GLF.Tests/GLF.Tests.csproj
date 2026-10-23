@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\GLF.Market\GLF.Market.csproj" />
     <ProjectReference Include="..\..\src\GLF.Trading\GLF.Trading.csproj" />
     <ProjectReference Include="..\..\src\GLF.Agent\GLF.Agent.csproj" />
+    <ProjectReference Include="..\..\src\GLF.Neural\GLF.Neural.csproj" />
   </ItemGroup>
 
 </Project>

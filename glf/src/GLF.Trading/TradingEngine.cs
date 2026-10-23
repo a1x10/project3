@@ -15,6 +15,7 @@ public sealed class EngineConfig
     public double ExitFrac = 0.25;       // exit when forecast falls below this fraction of round-trip cost
     public int MaxHoldEvents = 40;
     public double SlippageTicks = 2;     // IOC limit tolerance beyond the touch
+    public bool UseNeural = true;        // add online neural hypotheses to the ensemble
     public RiskLimits Risk = new();
 
     public long TickScaled => (long)Math.Round(TickSize * FixedDecimal.Scale);
@@ -43,7 +44,7 @@ public sealed class TradingEngine
     {
         _c = c;
         _fx = new FeatureExtractor(c.TickScaled);
-        Ensemble = new HypothesisEnsemble(c.Horizon);
+        Ensemble = new HypothesisEnsemble(c.Horizon, c.UseNeural);
         Risk = new RiskGate(c.Risk);
     }
 
