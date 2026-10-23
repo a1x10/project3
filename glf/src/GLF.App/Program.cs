@@ -18,6 +18,9 @@ switch (a.Command)
     case "vision": RunVision(a); break;
     case "neural": NeuralDemo(a); break;
     case "gpt": GptDemo(a); break;
+    case "quant": QuantDemo(a); break;
+    case "scale": ScaleDemo(a); break;
+    case "continual": ContinualDemo(a); break;
     case "live": await Live(a); break;
     default:
         Console.WriteLine("""
@@ -30,6 +33,9 @@ switch (a.Command)
           vision    [--episodes N] [--noise 12] [--shuffle] [--palette 3]   agent learns the room from raw pixels
           neural    fit | trade [--events N]          neurons learn an unknown formula and print it / compete with linear models in trading
           gpt       [--steps N --dim 64 --layers 2]      tiny decoder transformer (BPE, RoPE, GQA, KV-cache, SwiGLU, sampling) trained from scratch
+          quant     [--steps N]                          INT8/INT4 quantisation: naive vs SmoothQuant vs AWQ, measured perplexity
+          scale                                          tensor parallelism (exact), 1F1B pipeline schedule, ZeRO memory
+          continual                                      catastrophic forgetting vs replay vs EWC
           live      --symbol btcusdt [--seconds 60] [--record f.jsonl] [--paper] [--tick 0.01 --lot 0.001 --fee 4]
                     public market data only; --paper simulates fills locally. No real orders are ever sent.
         """);
@@ -313,6 +319,220 @@ static void GptDemo(Args a)
     Console.WriteLine($"    attention work per new token: position 1 = {m1:N0} MACs, position 50 = {dec.LastStepAttentionMacs:N0} MACs (linear in context length)");
 }
 
+
+static ToyGpt TrainToyGpt(int steps, bool log)
+{
+    var rng = new Rng(11);
+    string[] subj = { "Агент", "Робот", "Трейдер", "Система" };
+    var sb = new System.Text.StringBuilder();
+    for (int i = 0; i < 700; i++)
+    {
+        string S = subj[rng.NextInt(4)];
+        if (rng.NextInt(2) == 0) sb.Append($"{S} ищет ключ. {S} находит ключ и открывает дверь. {S} выходит из комнаты.\n");
+        else if (rng.NextInt(2) == 0) sb.Append($"{S} читает стакан. Спрос больше предложения, и {S} покупает. Цена растёт.\n");
+        else sb.Append($"{S} читает стакан. Спрос меньше предложения, и {S} продаёт. Цена падает.\n");
+    }
+    var tk = BpeTokenizer.Train(sb.ToString(), 400);
+    var ids = tk.Encode(sb.ToString());
+    const int T = 96;
+    var model = new TransformerModel(new TransformerConfig(tk.VocabSize, 64, 2, 4, 2, 128, T), 5);
+    int split = ids.Length * 9 / 10;
+    var opt = new Adam(3e-3f, weightDecay: 0.01f, clipNorm: 1f);
+    var trng = new Rng(3);
+    for (int step = 1; step <= steps; step++)
+    {
+        opt.Lr = 3e-3f * (step < 30 ? step / 30f : 0.1f + 0.9f * 0.5f * (1 + MathF.Cos(MathF.PI * (step - 30) / Math.Max(1, steps - 30))));
+        var batch = new List<(int[], int[])>();
+        for (int b = 0; b < 8; b++) { int st = trng.NextInt(split - T - 1); batch.Add((ids.AsSpan(st, T).ToArray(), ids.AsSpan(st + 1, T).ToArray())); }
+        float loss = model.TrainBatch(batch, opt);
+        if (log && (step == 1 || step % 100 == 0)) Console.WriteLine($"  training step {step}: loss {loss:F3}");
+    }
+    return new ToyGpt(model, tk, ids, split, T);
+}
+
+static double Perplexity(TransformerModel m, ToyGpt g)
+{
+    double total = 0; int n = 0;
+    for (int st = g.Split; st + g.T + 1 < g.Ids.Length; st += g.T / 2)
+    {
+        total += m.Evaluate(g.Ids.AsSpan(st, g.T).ToArray(), g.Ids.AsSpan(st + 1, g.T).ToArray()); n++;
+    }
+    return Math.Exp(total / n);
+}
+
+static void QuantDemo(Args a)
+{
+    Console.WriteLine("training a small transformer to quantise...");
+    var g = TrainToyGpt((int)a.Lng("steps", 300), false);
+    var m = g.Model;
+    var rngW = new Rng(2);
+    var windows = Enumerable.Range(0, 24).Select(_ => { int st = rngW.NextInt(g.Split - g.T - 1); return g.Ids.AsSpan(st, g.T).ToArray(); }).ToList();
+    var cal = Quantizer.Calibrate(m, windows);
+    long lin = Quantizer.LinearParameters(m);
+
+    var rows = new List<(string, double, string)>();
+    double fp = Perplexity(m, g);
+    rows.Add(("FP32 baseline", fp, $"{lin * 4 / 1024.0:F0} KB"));
+
+    TransformerModel Q(Action<TransformerModel> f) { var c = m.Clone(); f(c); return c; }
+    var w8 = Q(c => { Quantizer.Rtn(c, 8, 0); c.ActBits = 8; });
+    rows.Add(("W8A8 naive (per-channel W, per-token A)", Perplexity(w8, g), $"{lin / 1024.0:F0} KB"));
+    var w8s = Q(c => { Quantizer.SmoothQuant(c, cal, 0.5); Quantizer.Rtn(c, 8, 0); c.ActBits = 8; });
+    rows.Add(("W8A8 SmoothQuant a=0.5", Perplexity(w8s, g), $"{lin / 1024.0:F0} KB"));
+    var w4 = Q(c => Quantizer.Rtn(c, 4, 0));
+    rows.Add(("W4 round-to-nearest, per-channel", Perplexity(w4, g), $"{lin / 2048.0:F0} KB"));
+    var w4g = Q(c => Quantizer.Rtn(c, 4, 32));
+    rows.Add(("W4 round-to-nearest, group 32", Perplexity(w4g, g), $"{lin * (0.5 + 2.0 / 32) / 1024.0:F0} KB"));
+    (double, double)[] gam = Array.Empty<(double, double)>();
+    var awq = Q(c => gam = Quantizer.Awq(c, cal, 4, 0));
+    rows.Add(("W4 AWQ-style, per-channel", Perplexity(awq, g), $"{lin / 2048.0:F0} KB"));
+    var awqg = Q(c => Quantizer.Awq(c, cal, 4, 32));
+    rows.Add(("W4 AWQ-style, group 32", Perplexity(awqg, g), $"{lin * (0.5 + 2.0 / 32) / 1024.0:F0} KB"));
+
+    foreach (int bits in new[] { 3, 2 })
+    {
+        var rb = Q(c => Quantizer.Rtn(c, bits, 32));
+        rows.Add(($"W{bits} round-to-nearest, group 32", Perplexity(rb, g), $"{lin * (bits / 8.0 + 2.0 / 32) / 1024.0:F0} KB"));
+        var ab = Q(c => Quantizer.Awq(c, cal, bits, 32));
+        rows.Add(($"W{bits} AWQ-style, group 32", Perplexity(ab, g), $"{lin * (bits / 8.0 + 2.0 / 32) / 1024.0:F0} KB"));
+    }
+    Console.WriteLine($"\n{"variant",-42} {"perplexity",11} {"linear weights",15}");
+    foreach (var (name, ppl, size) in rows) Console.WriteLine($"{name,-42} {ppl,11:F3} {size,15}");
+    Console.WriteLine($"AWQ gamma per layer (qkv-input, ffn-input), per-channel run: {string.Join("  ", gam.Select(x => $"({x.Item1:F1},{x.Item2:F1})"))}");
+
+    // SmoothQuant is an exact re-parameterisation in floating point
+    var sm = m.Clone(); Quantizer.SmoothQuant(sm, cal, 0.5);
+    var toks = g.Ids.AsSpan(g.Split, 40).ToArray();
+    m.Forward(toks, 40); var l0 = m.Logits.ToArray(); sm.Forward(toks, 40); var l1 = sm.Logits;
+    double md = 0; for (int i = 0; i < l0.Length; i++) md = Math.Max(md, Math.Abs(l0[i] - l1[i]));
+    Console.WriteLine($"\nSmoothQuant before quantising: max |logit difference| = {md:E1} (float round-off only)");
+
+    // controlled outlier experiment: one activation channel 60x larger than the rest
+    var r = new Rng(9); int D = 64, N = 256;
+    var W = new float[D * D]; for (int i = 0; i < W.Length; i++) W[i] = r.NextGaussian() * 0.1f;
+    var X = new float[N * D]; for (int i = 0; i < X.Length; i++) X[i] = r.NextGaussian();
+    for (int t = 0; t < N; t++) X[t * D + 3] *= 60f;
+    float[] Mat(float[] w, float[] x) { var y = new float[N * D]; for (int t = 0; t < N; t++) for (int o = 0; o < D; o++) { float s = 0; for (int j = 0; j < D; j++) s += w[o * D + j] * x[t * D + j]; y[t * D + o] = s; } return y; }
+    double Rel(float[] yq, float[] yr) { double e = 0, n = 0; for (int i = 0; i < yr.Length; i++) { e += (yq[i] - yr[i]) * (yq[i] - yr[i]); n += yr[i] * yr[i]; } return Math.Sqrt(e / n); }
+    var yref = Mat(W, X);
+    var w1 = (float[])W.Clone(); var x1 = (float[])X.Clone(); Quant.FakeQuantWeights(w1, D, D, 8, 0); Quant.FakeQuantRows(x1, N, D, 8);
+    double eNaive = Rel(Mat(w1, x1), yref);
+    var amax = new float[D]; for (int t = 0; t < N; t++) for (int j = 0; j < D; j++) amax[j] = MathF.Max(amax[j], MathF.Abs(X[t * D + j]));
+    var sc = Quantizer.SmoothScales(amax, new List<(float[], int)> { (W, D) }, D, 0.5);
+    var w2 = (float[])W.Clone(); var x2 = (float[])X.Clone();
+    for (int o = 0; o < D; o++) for (int j = 0; j < D; j++) w2[o * D + j] *= sc[j];
+    for (int t = 0; t < N; t++) for (int j = 0; j < D; j++) x2[t * D + j] /= sc[j];
+    Quant.FakeQuantWeights(w2, D, D, 8, 0); Quant.FakeQuantRows(x2, N, D, 8);
+    double eSmooth = Rel(Mat(w2, x2), yref);
+    var il = new Int8Linear(W, D, D); var yi = new float[D]; var yf = new float[D];
+    il.Forward(X.AsSpan(5 * D, D), yi);
+    Console.WriteLine($"outlier channel x60: relative output error  W8A8 naive {eNaive:P2}  ->  SmoothQuant {eSmooth:P2}");
+    Console.WriteLine("(our toy transformer has no such outlier channels, so on it INT8 is already near-lossless; the effect shows up in large models.)");
+}
+
+static void ScaleDemo(Args a)
+{
+    var cfg = new TransformerConfig(50, 64, 3, Heads: 8, KvHeads: 2, FfnDim: 128, MaxSeq: 32);
+    var m = new TransformerModel(cfg, 4);
+    var rng = new Rng(8); var tok = Enumerable.Range(0, 24).Select(_ => rng.NextInt(50)).ToArray();
+    m.Forward(tok, tok.Length); var single = m.Logits.ToArray();
+    Console.WriteLine($"[tensor parallelism] {cfg.Layers} layers, {cfg.Heads} query heads, {cfg.KvHeads} KV heads, ffn {cfg.FfnDim}");
+    Console.WriteLine($"  {"P",2} {"max|logit diff|",16} {"All-Reduces",12} {"floats/All-Reduce",18} {"KV floats/shard",16}  note");
+    foreach (int P in new[] { 1, 2, 4, 8 })
+    {
+        var tp = TensorParallel.Forward(m, tok, P, out var st);
+        double md = 0; for (int i = 0; i < single.Length; i++) md = Math.Max(md, Math.Abs(single[i] - tp[i]));
+        string note = P <= cfg.KvHeads ? "KV cache split" : "KV heads replicated (P > KV heads)";
+        Console.WriteLine($"  {P,2} {md,16:E1} {st.AllReduces,12} {st.AllReduceFloats / st.AllReduces,18} {st.KvFloatsPerShard,16}  {note}");
+    }
+    Console.WriteLine($"  single-device KV floats per layer: {2 * cfg.KvDim * tok.Length}; exactly 2 All-Reduces per layer (after Wo and after Wdown).");
+
+    Console.WriteLine("\n[pipeline parallelism] 4 stages, 8 micro-batches, forward = backward = 1 time unit");
+    var gp = Pipeline.Simulate("GPipe", 4, 8, false);
+    var f1 = Pipeline.Simulate("1F1B", 4, 8, true);
+    Console.WriteLine($"  theory bubble (P-1)/(M+P-1) = {Pipeline.TheoreticalBubble(4, 8):P1}");
+    foreach (var r in new[] { gp, f1 })
+        Console.WriteLine($"  {r.Name,-6} makespan {r.Makespan,4:F0}  bubble {r.BubbleFraction:P1}  peak activations held per stage: [{string.Join(", ", r.PeakInFlight)}] micro-batches");
+    Console.WriteLine("  1F1B timeline (Fk = forward of micro-batch k, Bk = backward):");
+    Console.Write(f1.Render());
+    var big = Pipeline.Simulate("1F1B", 4, 64, true);
+    Console.WriteLine($"  with 64 micro-batches: bubble {big.BubbleFraction:P1}, peak activations per stage [{string.Join(", ", big.PeakInFlight)}] (unchanged)  | GPipe would hold 64");
+
+    Console.WriteLine("\n[ZeRO] per-GPU training state for a 70B-parameter model, mixed-precision Adam (16 bytes/parameter), data-parallel degree 64");
+    double phi = 70e9;
+    foreach (var (name, st2) in new[] { ("plain data parallel", 0), ("ZeRO-1 optimizer states", 1), ("ZeRO-2 + gradients", 2), ("ZeRO-3 + parameters", 3) })
+        Console.WriteLine($"  {name,-26} {ZeroMemory.PerGpu(st2, phi, 64) / 1e9,9:F1} GB");
+    Console.WriteLine("  3D layout check: N_total = TP x PP x DP, e.g. 8 x 8 x 16 = " + 8 * 8 * 16 + " GPUs");
+}
+
+static void ContinualDemo(Args a)
+{
+    var rng = new Rng(4);
+    (float[] X, int[] Y) Make(int n, bool left)
+    {
+        var x = new float[n * 2]; var y = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            float x1 = (float)rng.NextDouble(), x2 = (float)(rng.NextDouble() * 2 - 1);
+            if (left) x1 = -x1;
+            x[i * 2] = x1; x[i * 2 + 1] = x2;
+            y[i] = left ? (x2 > 0 ? 1 : 0) : (x2 < 0 ? 1 : 0); // the two regions need OPPOSITE rules
+        }
+        return (x, y);
+    }
+    var (xa, ya) = Make(3000, true); var (xb, yb) = Make(3000, false);
+    var (xat, yat) = Make(1000, true); var (xbt, ybt) = Make(1000, false);
+
+    double Acc(Network net, float[] x, int[] y)
+    {
+        int ok = 0, n = y.Length;
+        for (int i = 0; i < n; i++) { var o = net.Forward(x.AsSpan(i * 2, 2)); if ((o[1] > o[0] ? 1 : 0) == y[i]) ok++; }
+        return (double)ok / n;
+    }
+    var trng = new Rng(9);
+    void Train(Network net, float[] x, int[] y, int steps, float[]? mx = null, int[]? my = null, int mem = 0)
+    {
+        var bx = new float[64 * 2]; var by = new int[64];
+        for (int s = 0; s < steps; s++)
+        {
+            int cur = mem > 0 ? 64 - 16 : 64;
+            for (int b = 0; b < 64; b++)
+            {
+                bool fromMem = b >= cur;
+                int i = fromMem ? trng.NextInt(mem) : trng.NextInt(y.Length);
+                var sx = fromMem ? mx! : x; var sy = fromMem ? my! : y;
+                bx[b * 2] = sx[i * 2]; bx[b * 2 + 1] = sx[i * 2 + 1]; by[b] = sy[i];
+            }
+            net.TrainStepClassify(bx, by, 64);
+        }
+    }
+    Network Fresh() => Mlp.Build(2, new[] { 32, 32 }, 2, Act.Gelu, maxBatch: 64, seed: 3, lr: 0.01f);
+
+    Console.WriteLine("Task A: points with x1<0, class = (x2>0).  Task B: points with x1>0, class = (x2<0).  Opposite rules, one network, no task label.");
+    Console.WriteLine($"{"strategy",-34} {"A after A",10} {"A after B",10} {"B after B",10}");
+    void Row(string name, Network net, Action trainB)
+    {
+        double a1 = Acc(net, xat, yat);
+        trainB();
+        Console.WriteLine($"{name,-34} {a1,10:P1} {Acc(net, xat, yat),10:P1} {Acc(net, xbt, ybt),10:P1}");
+    }
+    var n1 = Fresh(); Train(n1, xa, ya, 400);
+    Row("naive sequential", n1, () => Train(n1, xb, yb, 400));
+
+    var n2 = Fresh(); Train(n2, xa, ya, 400);
+    int mem = 200; var mx = xa.AsSpan(0, mem * 2).ToArray(); var my = ya.AsSpan(0, mem).ToArray();
+    Row("replay (200 stored A samples, 25%)", n2, () => Train(n2, xb, yb, 400, mx, my, mem));
+
+    var n3 = Fresh(); Train(n3, xa, ya, 400);
+    var ewc = new Ewc(float.Parse(a.Str("lambda") ?? "5000", System.Globalization.CultureInfo.InvariantCulture)); ewc.Consolidate(n3, xa, ya, 1000);
+    Row($"EWC (lambda {ewc.Lambda})", n3, () => Train(n3, xb, yb, 400));
+
+    var n4 = Fresh();
+    var xj = xa.Concat(xb).ToArray(); var yj = ya.Concat(yb).ToArray();
+    Train(n4, xj, yj, 800);
+    Console.WriteLine($"{"joint training (upper bound)",-34} {"-",10} {Acc(n4, xat, yat),10:P1} {Acc(n4, xbt, ybt),10:P1}");
+}
+
 static void RunVision(Args a)
 {
     int eps = (int)a.Lng("episodes", 6);
@@ -471,3 +691,5 @@ sealed class Args
     public long Lng(string k, long d) => _kv.TryGetValue(k, out var v) ? long.Parse(v) : d;
     public double Dbl(string k, double d) => _kv.TryGetValue(k, out var v) ? double.Parse(v, System.Globalization.CultureInfo.InvariantCulture) : d;
 }
+
+record ToyGpt(TransformerModel Model, BpeTokenizer Tok, int[] Ids, int Split, int T);
