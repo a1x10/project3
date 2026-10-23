@@ -3,6 +3,7 @@ using GLF.Agent;
 using GLF.Agent.Vision;
 using GLF.Core;
 using GLF.Neural;
+using GLF.Neural.Transformer;
 using GLF.Market;
 using GLF.Trading;
 using GLF.Trading.Sim;
@@ -16,6 +17,7 @@ switch (a.Command)
     case "agent": RunAgent(a); break;
     case "vision": RunVision(a); break;
     case "neural": NeuralDemo(a); break;
+    case "gpt": GptDemo(a); break;
     case "live": await Live(a); break;
     default:
         Console.WriteLine("""
@@ -27,6 +29,7 @@ switch (a.Command)
           agent     [--episodes N]                     model-based agent escapes a locked room it knows nothing about
           vision    [--episodes N] [--noise 12] [--shuffle] [--palette 3]   agent learns the room from raw pixels
           neural    fit | trade [--events N]          neurons learn an unknown formula and print it / compete with linear models in trading
+          gpt       [--steps N --dim 64 --layers 2]      tiny decoder transformer (BPE, RoPE, GQA, KV-cache, SwiGLU, sampling) trained from scratch
           live      --symbol btcusdt [--seconds 60] [--record f.jsonl] [--paper] [--tick 0.01 --lot 0.001 --fee 4]
                     public market data only; --paper simulates fills locally. No real orders are ever sent.
         """);
@@ -209,6 +212,105 @@ static void NeuralTrade(Args a)
         Console.WriteLine($"  predict-nothing RMSE {Math.Sqrt(seB / cnt):F3}   linear {Math.Sqrt(seL / cnt):F3}   neural {Math.Sqrt(seN / cnt):F3}   (noise floor 0.500)");
     }
     Console.WriteLine("\nSynthetic data: the edge is injected by construction; this shows the learning machinery, not real profitability.");
+}
+
+static void GptDemo(Args a)
+{
+    var rng = new Rng(11);
+    string[] subj = { "Агент", "Робот", "Трейдер", "Система" };
+    var sb = new System.Text.StringBuilder();
+    for (int i = 0; i < 700; i++)
+    {
+        string S = subj[rng.NextInt(4)];
+        if (rng.NextInt(2) == 0)
+            sb.Append($"{S} ищет ключ. {S} находит ключ и открывает дверь. {S} выходит из комнаты.\n");
+        else if (rng.NextInt(2) == 0)
+            sb.Append($"{S} читает стакан. Спрос больше предложения, и {S} покупает. Цена растёт.\n");
+        else
+            sb.Append($"{S} читает стакан. Спрос меньше предложения, и {S} продаёт. Цена падает.\n");
+    }
+    string corpus = sb.ToString();
+
+    var tk = BpeTokenizer.Train(corpus, a.Has("vocab") ? (int)a.Lng("vocab", 400) : 400);
+    var ids = tk.Encode(corpus);
+    Console.WriteLine($"[I] BPE: {System.Text.Encoding.UTF8.GetByteCount(corpus)} bytes -> {ids.Length} tokens (x{System.Text.Encoding.UTF8.GetByteCount(corpus) / (double)ids.Length:F1} shorter), vocab {tk.VocabSize}");
+    Console.WriteLine("    sample tokens: " + string.Join(" | ", Enumerable.Range(256, 12).Select(i => tk.TokenText(i).Replace("\n", "⏎"))));
+
+    int D = (int)a.Lng("dim", 64), L = (int)a.Lng("layers", 2), T = 96;
+    var cfg = new TransformerConfig(tk.VocabSize, D, L, Heads: 4, KvHeads: 2, FfnDim: D * 2, MaxSeq: T);
+    var model = new TransformerModel(cfg, 5);
+    Console.WriteLine($"[II-IV] decoder: {L} layers, d_model {D}, 4 query heads / 2 KV heads (GQA), SwiGLU ffn {cfg.FfnDim}, RoPE, RMSNorm, tied LM head -> {model.ParameterCount:N0} parameters");
+
+    int split = ids.Length * 9 / 10;
+    var opt = new Adam(3e-3f, weightDecay: 0.01f, clipNorm: 1f);
+    int steps = (int)a.Lng("steps", 500), batchSize = 8;
+    var trng = new Rng(3);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    (int[] Tok, int[] Tgt) Window(int lo, int hi)
+    {
+        int st = lo + trng.NextInt(hi - lo - T - 1);
+        return (ids.AsSpan(st, T).ToArray(), ids.AsSpan(st + 1, T).ToArray());
+    }
+    for (int step = 1; step <= steps; step++)
+    {
+        opt.Lr = 3e-3f * (step < 30 ? step / 30f : 0.1f + 0.9f * 0.5f * (1 + MathF.Cos(MathF.PI * (step - 30) / (steps - 30))));
+        var batch = new List<(int[], int[])>();
+        for (int b = 0; b < batchSize; b++) batch.Add(Window(0, split));
+        float loss = model.TrainBatch(batch, opt);
+        if (step == 1 || step % 100 == 0)
+        {
+            var (vt, vg) = Window(split, ids.Length);
+            Console.WriteLine($"    step {step,4}: train loss {loss:F3}  val loss {model.Evaluate(vt, vg):F3}  (random guess = {Math.Log(tk.VocabSize):F2})  {sw.Elapsed.TotalSeconds:F0}s");
+        }
+    }
+
+    var dec = new KvDecoder(model);
+    string Gen(string prompt, int n, float temp, int k, float p, ulong seed)
+    {
+        var r = new Rng(seed);
+        var pr = tk.Encode(prompt);
+        var o = dec.Generate(pr, n, temp, k, p, ref r);
+        return prompt + tk.Decode(o.ToArray());
+    }
+    Console.WriteLine("\n[V] sampling from the same prompt: 'Трейдер читает стакан. Спрос больше предложения, и'");
+    foreach (var (name, temp, k, p) in new[] { ("greedy (T=0)", 0f, 0, 1f), ("T=0.8 top-k 20 top-p 0.9", 0.8f, 20, 0.9f), ("T=2.0 no filtering", 2f, 0, 1f) })
+        Console.WriteLine($"  {name,-26} -> {Gen("Трейдер читает стакан. Спрос больше предложения, и", 28, temp, k, p, 9).Replace("\n", "⏎")}");
+
+    // does attention carry information across the sentence? subject must be repeated, condition must match the action.
+    int ok = 0, n = 200;
+    var er = new Rng(77);
+    for (int i = 0; i < n; i++)
+    {
+        string S = subj[er.NextInt(4)]; bool more = er.NextInt(2) == 0;
+        string prompt = $"{S} читает стакан. Спрос {(more ? "больше" : "меньше")} предложения, и";
+        string g = Gen(prompt, 40, 0f, 0, 1f, 1);
+        string line = g.Split('\n')[0];
+        string want = $"{prompt} {S} {(more ? "покупает. Цена растёт." : "продаёт. Цена падает.")}";
+        if (line == want) ok++;
+    }
+    Console.WriteLine($"\nlong-range consistency (subject copied, action matches the condition, price follows): {ok}/{n} exact");
+
+    // KV cache vs recomputing the prefix
+    var prompt0 = tk.Encode("Агент ищет ключ.");
+    int total = 60;
+    var rr = new Rng(1);
+    var tok = new List<int>(prompt0);
+    var sw2 = System.Diagnostics.Stopwatch.StartNew();
+    while (tok.Count < total)
+    {
+        model.Forward(tok.ToArray(), tok.Count);
+        int V = cfg.Vocab;
+        tok.Add(Sampler.Sample(model.Logits.Slice((tok.Count - 1) * V, V), 0f, 0, 1f, ref rr));
+    }
+    double naive = sw2.Elapsed.TotalMilliseconds;
+    sw2.Restart();
+    var rr2 = new Rng(1);
+    var cached = dec.Generate(prompt0, total - prompt0.Length, 0f, 0, 1f, ref rr2);
+    double fast = sw2.Elapsed.TotalMilliseconds;
+    bool same = cached.SequenceEqual(tok.Skip(prompt0.Length));
+    Console.WriteLine($"[III] generating up to {total} tokens: recompute whole prefix each step {naive:F1} ms | KV cache {fast:F1} ms (x{naive / fast:F1}), identical output: {same}");
+    dec.Reset(); dec.Step(1); long m1 = dec.LastStepAttentionMacs; for (int i = 0; i < 49; i++) dec.Step(2);
+    Console.WriteLine($"    attention work per new token: position 1 = {m1:N0} MACs, position 50 = {dec.LastStepAttentionMacs:N0} MACs (linear in context length)");
 }
 
 static void RunVision(Args a)
