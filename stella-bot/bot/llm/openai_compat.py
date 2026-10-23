@@ -18,6 +18,49 @@ from .base import Image, LLMError, LLMReply, ToolSpec
 log = logging.getLogger("stella.llm.openai_compat")
 
 RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
+# Бесплатные лимиты маленькие (у Groq gpt-oss — 8000 токенов в минуту на ВЕСЬ запрос), поэтому запрос ужимаем:
+# короткие описания инструментов, без страниц/студии (они только у Anthropic), переписка — сколько влезет.
+MAX_INPUT_TOKENS = 5200
+MAX_OUTPUT_TOKENS = 1200
+# студия страниц — только Anthropic; файлы со сложной схемой (мультик, видео, документы) в лимит не влезают
+SKIP_TOOLS = {"make_html", "make_presentation", "make_cartoon", "make_video", "make_document", "make_spreadsheet"}
+
+
+def _tokens(obj: Any) -> int:
+    """Грубая оценка: русский текст и JSON — примерно 3 символа на токен."""
+    return len(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False)) // 3 + 1
+
+
+def _slim_schema(schema: Any) -> Any:
+    """Схема параметров без описаний полей (их смысл — в описании инструмента)."""
+    if isinstance(schema, dict):
+        return {k: _slim_schema(v) for k, v in schema.items() if k != "description"}
+    if isinstance(schema, list):
+        return [_slim_schema(v) for v in schema]
+    return schema
+
+
+def _slim_tools(tools: Sequence[ToolSpec], desc_chars: int) -> list[dict[str, Any]]:
+    out = []
+    for t in tools:
+        if t.name in SKIP_TOOLS:
+            continue
+        desc = t.description if len(t.description) <= desc_chars else t.description[:desc_chars].rsplit(" ", 1)[0] + "…"
+        out.append({"type": "function", "function": {"name": t.name, "description": desc,
+                                                     "parameters": _slim_schema(t.input_schema)}})
+    return out
+
+
+def _fit_prompt(prompt: str, budget_tokens: int) -> str:
+    """Переписка не влезает — оставляем конец (последние сообщения и указание, что делать)."""
+    if _tokens(prompt) <= budget_tokens:
+        return prompt
+    keep = max(1500, budget_tokens * 3)
+    return "…(начало переписки не поместилось)\n" + prompt[-keep:]
+
+
+class _TooLarge(Exception):
+    pass
 
 
 def _retry_after(resp: httpx.Response) -> float:
@@ -84,6 +127,8 @@ class OpenAICompatLLM:
                 if resp.status_code in (401, 403):
                     await self.store.failed(item, f"ключ не принят ({text})")
                     continue
+                if resp.status_code == 413 or "too large" in text.lower():  # запрос больше лимита — ключ ни при чём
+                    raise _TooLarge(text)
                 if resp.status_code == 400 and "image" in text.lower() and _has_images(body):
                     raise _NoImages()
                 raise LLMError(f"{self.provider.name} {text}")
@@ -93,8 +138,11 @@ class OpenAICompatLLM:
                   max_turns: int = 5, images: Sequence[Image] = (), effort: str | None = None) -> LLMReply:
         model = self._model(model)
         by_name = {t.name: t for t in tools}
-        tool_defs = [{"type": "function", "function": {"name": t.name, "description": t.description[:1024],
-                                                       "parameters": t.input_schema}} for t in tools]
+        budget = MAX_INPUT_TOKENS
+        tool_defs = _slim_tools(tools, 300)
+        if _tokens(system) + _tokens(tool_defs) > budget * 0.7:
+            tool_defs = _slim_tools(tools, 120)
+        prompt = _fit_prompt(prompt, budget - _tokens(system) - _tokens(tool_defs))
         if images:
             content: Any = [{"type": "text", "text": prompt}] + [
                 {"type": "image_url", "image_url": {"url": f"data:{i.media_type};base64,{i.data_b64}"}}
@@ -104,13 +152,19 @@ class OpenAICompatLLM:
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": content}]
         text = ""
         for _ in range(max(1, max_turns)):
-            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": 4096}
+            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS}
             if tool_defs:
                 body["tools"] = tool_defs
-            level = effort or self.effort
-            if level and "gpt-oss" in model:  # у gpt-oss есть глубина обдумывания: low / medium / high
-                body["reasoning_effort"] = {"xhigh": "high", "max": "high"}.get(level, level)
+            if "gpt-oss" in model:  # обдумывание тоже съедает лимит токенов в минуту — коротко
+                body["reasoning_effort"] = "low"
             try:
+                data = await self._post(body)
+            except _TooLarge:  # всё равно велико — переписку вдвое короче и без инструментов
+                log.warning("%s: запрос больше лимита — ужимаю", self.provider.name)
+                short = _fit_prompt(prompt, max(600, (budget - _tokens(system)) // 2))
+                messages[1]["content"] = short if not images else [{"type": "text", "text": short}, *content[1:]]
+                body = {k: v for k, v in body.items() if k != "tools"} | {"messages": messages}
+                tool_defs = []
                 data = await self._post(body)
             except _NoImages:  # модель не видит картинки — без них, но с пометкой
                 messages[1]["content"] = prompt + "\n\n(Фото приложены, но эта модель их не видит — скажи об этом.)"
