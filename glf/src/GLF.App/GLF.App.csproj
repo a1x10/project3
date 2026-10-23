@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\GLF.Core\GLF.Core.csproj" />
+    <ProjectReference Include="..\GLF.Market\GLF.Market.csproj" />
+    <ProjectReference Include="..\GLF.Trading\GLF.Trading.csproj" />
+    <ProjectReference Include="..\GLF.Agent\GLF.Agent.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>
