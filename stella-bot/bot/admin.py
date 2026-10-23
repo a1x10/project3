@@ -742,7 +742,8 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         brain = get_brain(request)
         if body.backend in PROVIDERS and not KEYS.has(body.backend):
             raise HTTPException(400, detail=f"сначала добавь ключ {PROVIDERS[body.backend].name}")
-        changes: dict[str, Any] = {"llm_backend": body.backend}
+        # и «после окончания бонусных кредитов» тоже — иначе после LLM_SWITCH_AT выбор не действовал бы
+        changes: dict[str, Any] = {"llm_backend": body.backend, "llm_backend_after": body.backend}
         if body.backend in PROVIDERS:
             changes["alt_model"] = body.model.strip()
         row = await brain.db.kv_get(OVERRIDES_KV)
