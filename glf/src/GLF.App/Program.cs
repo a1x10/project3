@@ -1,5 +1,6 @@
 using System.Text;
 using GLF.Agent;
+using GLF.Agent.Vision;
 using GLF.Core;
 using GLF.Market;
 using GLF.Trading;
@@ -12,6 +13,7 @@ switch (a.Command)
     case "backtest": Backtest(a); break;
     case "sweep": Sweep(a); break;
     case "agent": RunAgent(a); break;
+    case "vision": RunVision(a); break;
     case "live": await Live(a); break;
     default:
         Console.WriteLine("""
@@ -21,6 +23,7 @@ switch (a.Command)
           backtest  [--events N] [--fee bps] [--latency events] [--file f.jsonl --tick 0.01 --lot 0.001]
           sweep     [--events N]                       PnL vs fee and latency (synthetic)
           agent     [--episodes N]                     model-based agent escapes a locked room it knows nothing about
+          vision    [--episodes N] [--noise 12] [--shuffle] [--palette 3]   agent learns the room from raw pixels
           live      --symbol btcusdt [--seconds 60] [--record f.jsonl] [--paper] [--tick 0.01 --lot 0.001 --fee 4]
                     public market data only; --paper simulates fills locally. No real orders are ever sent.
         """);
@@ -90,6 +93,50 @@ static void Sweep(Args a)
             var r = Backtester.Run(new SyntheticMarket(n), cfg, lat);
             Console.WriteLine($"{fee,7:F1} {lat,7} {r.Fills,7} {r.Pnl,10:F2}");
         }
+}
+
+static void RunVision(Args a)
+{
+    int eps = (int)a.Lng("episodes", 6);
+    var env = new PixelRoom(noise: (int)a.Lng("noise", 0), shuffleActions: a.Has("shuffle"), paletteSeed: (int)a.Lng("palette", 0));
+    var agent = new VisualAgent(env.ActionCount);
+    string[] dir = { "up", "right", "down", "left" };
+
+    var first = env.Reset();
+    var an = new SceneAnalyzer();
+    var scene = new Scene();
+    an.Analyze(first, scene);
+    Console.WriteLine($"Screen {first.Width}x{first.Height} px = {first.Width * first.Height * 3} bytes. What the vision layer sees on frame 0:");
+    Console.WriteLine("  class color(rgb)        blobs  total_px");
+    foreach (var g in scene.Blobs.GroupBy(b => b.Cls).OrderBy(g => g.Key))
+    {
+        var c = an.Colors.Center(g.Key);
+        Console.WriteLine($"  {g.Key,5}  ({c.R,3},{c.G,3},{c.B,3})   {g.Count(),8}  {g.Sum(b => b.Area),8}");
+    }
+
+    var log = PixelTrainer.Run(env, agent, eps);
+    Console.WriteLine();
+    for (int i = 0; i < log.Count; i++)
+        Console.WriteLine($"episode {i + 1}: {(log[i].Solved ? "ESCAPED" : "failed ")} in {log[i].Steps,5} steps  ({log[i].Ms:F1} ms)");
+
+    var d = agent.Discovery;
+    Console.WriteLine();
+    if (d.Ready)
+    {
+        var ac = agent.Analyzer.Colors.Center(d.AvatarClass);
+        var tc = env.AvatarColor;
+        Console.WriteLine($"Discovered avatar: class {d.AvatarClass} rgb({ac.R},{ac.G},{ac.B})  [truth rgb({tc.R},{tc.G},{tc.B})]  after {agent.BabbleSteps} babbling steps");
+        var (sx, sy) = d.StepSize();
+        Console.WriteLine($"Grid step inferred: {sx:F1} x {sy:F1} px");
+        for (int act = 0; act < 4; act++)
+        {
+            var (tx, ty) = env.TrueMove(act);
+            string learned = d.TryEffect(act, out var dx, out var dy) ? $"({dx:+0.#;-0.#;0},{dy:+0.#;-0.#;0}) px" : "never observed";
+            Console.WriteLine($"  action {act}: learned {learned,-18} truth: ({tx},{ty}) tiles");
+        }
+    }
+    else Console.WriteLine("avatar not identified");
+    Console.WriteLine(agent.VisionTime.Summary("vision per frame"));
 }
 
 static void RunAgent(Args a)
