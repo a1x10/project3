@@ -133,3 +133,33 @@ async def test_panel_keys_flow(panel, brain, monkeypatch):  # noqa: F811
     assert (await panel.delete(f"/admin/api/keys/{kid}", headers=h)).json()["ok"]
     assert (await panel.delete(f"/admin/api/keys/{kid}", headers=h)).status_code == 404
     assert (await panel.get("/admin/api/keys")).status_code == 401
+
+
+async def test_big_request_is_slimmed_and_413_retried_without_tools():
+    store = KeyStore()
+    await store.add("groq", KEY_A)
+    bodies = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        bodies.append(body)
+        if "tools" in body:
+            return httpx.Response(413, json={"error": {"message": "Request too large for model on tokens per minute"}})
+        return httpx.Response(200, json=chat_reply("привет!"))
+
+    async def noop(args):
+        return "ok"
+
+    tools = [ToolSpec(name, "описание " * 200, {"type": "object", "properties": {"x": {"type": "string",
+                                                                                     "description": "длинно " * 50}}},
+                      noop) for name in ("make_cartoon", "make_html", "set_reminder")]
+    llm = OpenAICompatLLM("groq", "", store, transport=httpx.MockTransport(handler))
+    reply = await llm.ask(system="ты Стелла", prompt="старое " * 20000 + "ПОСЛЕДНЕЕ", tools=tools)
+    assert reply.text == "привет!"
+    first = bodies[0]
+    assert [t["function"]["name"] for t in first["tools"]] == ["set_reminder"]  # тяжёлые и студия — убраны
+    assert "description" not in json.dumps(first["tools"][0]["function"]["parameters"])
+    assert len(first["tools"][0]["function"]["description"]) <= 301
+    user = first["messages"][1]["content"]
+    assert user.endswith("ПОСЛЕДНЕЕ") and len(user) < 20000 and first["max_tokens"] <= 1200
+    assert "tools" not in bodies[1] and store.keys[0].last_error is None  # ключ не виноват
