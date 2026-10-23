@@ -39,6 +39,10 @@ public sealed class EscapeRoom : IEnvironment
 
     public EscapeRoom(string[]? map = null, int maxSteps = 3000) { _map = map ?? DefaultMap; _maxSteps = maxSteps; }
     public int ActionCount => 4;
+    public string[] Map => _map;
+    public int X => _x;
+    public int Y => _y;
+    public bool HasKey => _key;
 
     long Obs() => ((long)_x << 16) | ((long)_y << 1) | (_key ? 1L : 0L);
 

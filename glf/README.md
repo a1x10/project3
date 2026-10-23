@@ -8,8 +8,8 @@
 | `GLF.Core` | lock-free SPSC-кольцо, гистограмма задержек без аллокаций, закрепление потока за ядром |
 | `GLF.Market` | фиксированная точка 1e-8, стакан на плоских массивах, zero-alloc парсер Binance depth, WebSocket-фид (только публичные данные), реплей записей |
 | `GLF.Trading` | признаки стакана, ансамбль из 6 гипотез (онлайн RLS, веса по свежей ошибке), стратегия, риск-шлюз + kill switch, бумажная биржа с задержкой, бэктестер, синтетический рынок |
-| `GLF.Agent` | модель мира + планировщик + любопытство; среда «запертая комната» |
-| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `live` |
+| `GLF.Agent` | модель мира + планировщик + любопытство; среда «запертая комната»; `Vision/` — зрение по пикселям (см. `docs/VISION.md`) |
+| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `vision`, `live` |
 
 ## Запуск
 ```
@@ -18,6 +18,7 @@ cd src/GLF.App
 dotnet run -c Release -- bench
 dotnet run -c Release -- sweep
 dotnet run -c Release -- agent
+dotnet run -c Release -- vision --noise 12 --shuffle --palette 3
 dotnet run -c Release -- live --symbol btcusdt --seconds 600 --record btc.jsonl --paper
 dotnet run -c Release -- backtest --file btc.jsonl --tick 0.01 --lot 0.001 --fee 4
 ```
