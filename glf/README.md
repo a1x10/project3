@@ -10,7 +10,7 @@
 | `GLF.Neural` | нейросети с нуля: Dense/Activation/LayerNorm/Residual, Adam, потери, SIMD, онлайн-обучение, автоматический вывод формул (`docs/NEURAL.md`); декодерный трансформер: BPE, RoPE, GQA, KV-кэш, SwiGLU, RMSNorm, сэмплинг (`docs/TRANSFORMER.md`); квантование INT8/INT4 (SmoothQuant, AWQ), симуляция тензорного параллелизма, конвейер 1F1B, ZeRO, EWC и повтор (`docs/SYSTEMS.md`) |
 | `GLF.Trading` | признаки стакана, ансамбль гипотез (гребневая регрессия + онлайн-нейросети, веса по свежей ошибке), стратегия, риск-шлюз + kill switch, бумажная биржа с задержкой, бэктестер, синтетический рынок |
 | `GLF.Agent` | модель мира + планировщик + любопытство; среда «запертая комната»; `Vision/` — зрение по пикселям (см. `docs/VISION.md`) |
-| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `vision`, `neural`, `gpt`, `quant`, `scale`, `continual`, `live` |
+| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `vision`, `neural`, `gpt`, `quant`, `scale`, `continual`, `regime-test`, `evaluate`, `make-test-data`, `live` |
 
 ## Запуск
 ```
@@ -25,6 +25,8 @@ dotnet run -c Release -- gpt --steps 600
 dotnet run -c Release -- quant
 dotnet run -c Release -- scale
 dotnet run -c Release -- continual
+dotnet run -c Release -- regime-test
+dotnet run -c Release -- make-test-data --out syn.jsonl && dotnet run -c Release -- evaluate --file syn.jsonl --tick 0.01 --lot 1 --fee 0
 dotnet run -c Release -- vision --noise 12 --shuffle --palette 3
 dotnet run -c Release -- live --symbol btcusdt --seconds 600 --record btc.jsonl --paper
 dotnet run -c Release -- backtest --file btc.jsonl --tick 0.01 --lot 0.001 --fee 4

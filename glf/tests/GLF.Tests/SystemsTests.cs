@@ -143,3 +143,59 @@ public class SystemsTests
         Assert.True(Acc(rep) > 0.9, $"replay {Acc(rep)}");
     }
 }
+
+public class RegimeReplayTests
+{
+    [Fact]
+    public void Detector_finds_two_stable_regimes_without_flicker_and_reuses_labels_on_return()
+    {
+        var det = new GLF.Trading.Models.RegimeDetector(new[] { 0.4, 0.7 });
+        var rng = new Rng(1); var ctx = new double[2];
+        var labelAtEnd = new List<int>();
+        for (int q = 0; q < 12000; q++)
+        {
+            int block = q / 2000;
+            double spread = block % 2 == 0 ? 1.08 : 1.92;
+            // EMA-like ramp at the start of every block, as the real context has
+            ctx[0] = spread + 0.03 * rng.NextGaussian(); ctx[1] = 0.3 + 0.1 * rng.NextGaussian();
+            det.Update(ctx);
+            if (q % 2000 == 1999) labelAtEnd.Add(det.Current);
+        }
+        Assert.Equal(2, det.Count);
+        Assert.Equal(5, det.Switches);                                   // exactly the 5 real changes
+        Assert.Equal(labelAtEnd[0], labelAtEnd[2]); Assert.Equal(labelAtEnd[2], labelAtEnd[4]);
+        Assert.Equal(labelAtEnd[1], labelAtEnd[3]); Assert.NotEqual(labelAtEnd[0], labelAtEnd[1]);
+    }
+
+    [Fact]
+    public void Regime_memory_remembers_a_mapping_the_plain_window_has_forgotten()
+    {
+        // regime 0: y = +3*a*sign(b); regime 1: y = -3*a*sign(b); the regime is visible to the network through a third input
+        var plain = new GLF.Trading.Models.NeuralModel(3, new[] { 32, 16 }, 2e-3f, seed: 7);
+        var mem = new GLF.Trading.Models.NeuralModel(3, new[] { 32, 16 }, 2e-3f, seed: 7, regimeMemory: true);
+        var rng = new Rng(5); var x = new double[3];
+        void Feed(int regime, int n)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                double a = rng.NextDouble() * 2 - 1, b = rng.NextDouble() * 2 - 1;
+                x[0] = a; x[1] = b; x[2] = regime;
+                double y = (regime == 0 ? 3 : -3) * a * Math.Sign(b) + 0.3 * rng.NextGaussian();
+                plain.Learn(x, y, regime); mem.Learn(x, y, regime);
+            }
+        }
+        Feed(0, 8000);                 // learn regime 0
+        Feed(1, 8000);                 // long stretch of regime 1 only: plain window (1024) now holds nothing of regime 0
+        double ep = 0, em = 0; int n2 = 0;
+        for (int i = 0; i < 2000; i++)
+        {
+            double a = rng.NextDouble() * 2 - 1, b = rng.NextDouble() * 2 - 1;
+            x[0] = a; x[1] = b; x[2] = 0;
+            double y = 3 * a * Math.Sign(b);
+            ep += Math.Pow(plain.Predict(x) - y, 2); em += Math.Pow(mem.Predict(x) - y, 2); n2++;
+        }
+        double rp = Math.Sqrt(ep / n2), rm = Math.Sqrt(em / n2);
+        Assert.True(rm < 0.6 * rp, $"with memory {rm:F2}, plain {rp:F2}");
+        Assert.True(mem.MemorySize(0) > 0 && mem.MemorySize(1) > 0);
+    }
+}
