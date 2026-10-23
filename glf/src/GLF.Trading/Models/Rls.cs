@@ -1,18 +1,25 @@
 namespace GLF.Trading.Models;
 
-/// <summary>Recursive least squares with forgetting factor. Online, O(d^2), allocation-free after construction.</summary>
+/// <summary>
+/// Exponentially weighted ridge regression, solved from sufficient statistics (A = Σλᵏ·xxᵀ, b = Σλᵏ·y·x) by Cholesky every few updates.
+/// The classic recursive-least-squares covariance update was replaced because with a forgetting factor it winds up and
+/// loses positive-definiteness over long runs (found in the 400k-event test: single hypotheses drifted to RMSE in the tens of thousands).
+/// The ridge term keeps unexcited directions bounded by construction. Allocation-free after construction.
+/// </summary>
 public sealed class Rls
 {
-    const double MaxTrace = 1e4;
     readonly int _d;
     readonly double _lambda;
-    readonly double[] _w, _p, _px, _k;
+    readonly double[] _a, _b, _w, _l, _z;
+    int _since;
+
+    public int SolveEvery = 4;
+    public double RidgeFraction = 1e-3;
 
     public Rls(int d, double lambda, double delta = 100)
     {
         _d = d; _lambda = lambda;
-        _w = new double[d]; _p = new double[d * d]; _px = new double[d]; _k = new double[d];
-        for (int i = 0; i < d; i++) _p[i * d + i] = delta;
+        _a = new double[d * d]; _b = new double[d]; _w = new double[d]; _l = new double[d * d]; _z = new double[d];
     }
 
     public ReadOnlySpan<double> Weights => _w;
@@ -29,25 +36,37 @@ public sealed class Rls
         int d = _d;
         for (int i = 0; i < d; i++)
         {
-            double s = 0;
-            for (int j = 0; j < d; j++) s += _p[i * d + j] * x[j];
-            _px[i] = s;
+            for (int j = 0; j < d; j++) _a[i * d + j] = _lambda * _a[i * d + j] + x[i] * x[j];
+            _b[i] = _lambda * _b[i] + y * x[i];
         }
-        double denom = _lambda;
-        for (int i = 0; i < d; i++) denom += x[i] * _px[i];
-        double err = y - Predict(x);
-        double inv = 1.0 / _lambda;
-        for (int i = 0; i < d; i++) { _k[i] = _px[i] / denom; _w[i] += _k[i] * err; }
+        if (++_since >= SolveEvery) { _since = 0; Solve(); }
+    }
+
+    void Solve()
+    {
+        int d = _d;
         double tr = 0;
+        for (int i = 0; i < d; i++) tr += _a[i * d + i];
+        double ridge = RidgeFraction * tr / d + 1e-9;
+
         for (int i = 0; i < d; i++)
+            for (int j = 0; j <= i; j++)
+            {
+                double s = _a[i * d + j] + (i == j ? ridge : 0);
+                for (int k = 0; k < j; k++) s -= _l[i * d + k] * _l[j * d + k];
+                if (i == j)
+                {
+                    if (s <= 1e-14) return; // not positive definite: keep previous weights
+                    _l[i * d + i] = Math.Sqrt(s);
+                }
+                else _l[i * d + j] = s / _l[j * d + j];
+            }
+        for (int i = 0; i < d; i++) { double s = _b[i]; for (int k = 0; k < i; k++) s -= _l[i * d + k] * _z[k]; _z[i] = s / _l[i * d + i]; }
+        for (int i = d - 1; i >= 0; i--)
         {
-            for (int j = 0; j < d; j++) _p[i * d + j] = (_p[i * d + j] - _k[i] * _px[j]) * inv;
-            tr += _p[i * d + i];
-        }
-        if (tr > MaxTrace)
-        {
-            double sc = MaxTrace / tr;
-            for (int i = 0; i < _p.Length; i++) _p[i] *= sc;
+            double s = _z[i];
+            for (int k = i + 1; k < d; k++) s -= _l[k * d + i] * _w[k];
+            _w[i] = s / _l[i * d + i];
         }
     }
 }

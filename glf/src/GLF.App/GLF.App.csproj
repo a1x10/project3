@@ -5,6 +5,7 @@
     <ProjectReference Include="..\GLF.Market\GLF.Market.csproj" />
     <ProjectReference Include="..\GLF.Trading\GLF.Trading.csproj" />
     <ProjectReference Include="..\GLF.Agent\GLF.Agent.csproj" />
+    <ProjectReference Include="..\GLF.Neural\GLF.Neural.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

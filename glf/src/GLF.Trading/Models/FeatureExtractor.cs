@@ -5,7 +5,7 @@ namespace GLF.Trading.Models;
 /// <summary>Microstructure features from the book. x[0] is a bias term.</summary>
 public sealed class FeatureExtractor
 {
-    public const int Dim = 6;
+    public const int Dim = 7;
     readonly double _tick;
     bool _has;
     long _pb, _pa, _pbq, _paq;
@@ -42,5 +42,6 @@ public sealed class FeatureExtractor
         x[3] = (b.Microprice - mid) / _tick;
         x[4] = _ofi;
         x[5] = _ret;
+        x[6] = (ask - bid) / _tick;
     }
 }

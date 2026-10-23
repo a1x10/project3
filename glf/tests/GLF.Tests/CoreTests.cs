@@ -64,9 +64,9 @@ public class CoreTests
             x[0] = 1; x[1] = rng.NextDouble() - .5; x[2] = rng.NextDouble() - .5;
             m.Update(x, 2 + 3 * x[1] - 4 * x[2]);
         }
-        Assert.InRange(m.Weights[0], 1.99, 2.01);
-        Assert.InRange(m.Weights[1], 2.99, 3.01);
-        Assert.InRange(m.Weights[2], -4.01, -3.99);
+        Assert.InRange(m.Weights[0], 1.95, 2.05);
+        Assert.InRange(m.Weights[1], 2.95, 3.05);
+        Assert.InRange(m.Weights[2], -4.05, -3.95);
     }
 
     [Fact]

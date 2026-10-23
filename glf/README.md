@@ -7,9 +7,10 @@
 |---|---|
 | `GLF.Core` | lock-free SPSC-кольцо, гистограмма задержек без аллокаций, закрепление потока за ядром |
 | `GLF.Market` | фиксированная точка 1e-8, стакан на плоских массивах, zero-alloc парсер Binance depth, WebSocket-фид (только публичные данные), реплей записей |
-| `GLF.Trading` | признаки стакана, ансамбль из 6 гипотез (онлайн RLS, веса по свежей ошибке), стратегия, риск-шлюз + kill switch, бумажная биржа с задержкой, бэктестер, синтетический рынок |
+| `GLF.Neural` | нейросети с нуля: Dense/Activation/LayerNorm/Residual, Adam, потери, SIMD, онлайн-обучение, автоматический вывод формул (`docs/NEURAL.md`) |
+| `GLF.Trading` | признаки стакана, ансамбль гипотез (гребневая регрессия + онлайн-нейросети, веса по свежей ошибке), стратегия, риск-шлюз + kill switch, бумажная биржа с задержкой, бэктестер, синтетический рынок |
 | `GLF.Agent` | модель мира + планировщик + любопытство; среда «запертая комната»; `Vision/` — зрение по пикселям (см. `docs/VISION.md`) |
-| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `vision`, `live` |
+| `GLF.App` | CLI: `bench`, `backtest`, `sweep`, `agent`, `vision`, `neural`, `live` |
 
 ## Запуск
 ```
@@ -18,13 +19,15 @@ cd src/GLF.App
 dotnet run -c Release -- bench
 dotnet run -c Release -- sweep
 dotnet run -c Release -- agent
+dotnet run -c Release -- neural fit
+dotnet run -c Release -- neural trade
 dotnet run -c Release -- vision --noise 12 --shuffle --palette 3
 dotnet run -c Release -- live --symbol btcusdt --seconds 600 --record btc.jsonl --paper
 dotnet run -c Release -- backtest --file btc.jsonl --tick 0.01 --lot 0.001 --fee 4
 ```
 
 ## Измерено (синтетические данные, 1 ядро, Linux x64)
-- Решение (стакан → признаки → 6 гипотез → стратегия → риск): p50 ≈ 0.8 мкс, p99 ≈ 2 мкс, 0 байт в куче, 0 GC.
+- Решение (стакан → признаки → 8 гипотез, из них 2 нейросети обучаются на каждом событии → стратегия → риск): p50 ≈ 33 мкс, p99 ≈ 66 мкс, 0 байт в куче, 0 GC. Только линейные гипотезы (`UseNeural=false`): p50 ≈ 0.7 мкс.
   Редкие выбросы до миллисекунд — джиттер ОС; для боя нужны изолированные ядра (`isolcpus`) и отдельная машина.
 - Агент: запертая комната (ключ далеко, выход за дверью), ~20 мс обучения, 1-й эпизод 364 шага, затем 62 (оптимум).
 

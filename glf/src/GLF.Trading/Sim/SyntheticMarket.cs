@@ -15,6 +15,12 @@ public sealed class SyntheticMarket : ISnapshotSource
     long _i;
     readonly long _max;
     public double Kappa = 1.2;
+    /// <summary>Regime mode: the sign of the pressure->drift relation flips with a persistent wide-spread regime (an interaction a linear model cannot express).</summary>
+    public bool Regime;
+    public double RegimeStrength = 3.0;
+    bool _wide;
+    readonly double[] _g = new double[10];
+    int _gi;
 
     public SyntheticMarket(long events, ulong seed = 42) { _max = events; _s = seed * 0x9E3779B97F4A7C15UL + 1; }
 
@@ -24,12 +30,30 @@ public sealed class SyntheticMarket : ISnapshotSource
     public bool Next(BookSnapshot s)
     {
         if (_i >= _max) return false;
-        _pressure = 0.97 * _pressure + 0.25 * N();
-        _fair += Kappa * _pressure + 0.8 * N();
+        int spread;
+        double imb;
+        if (Regime)
+        {
+            // Each displayed imbalance is fresh (no persistence, so momentum features cannot reveal it) and is absorbed into the
+            // price over the next 10 events, with a sign that depends on a persistent spread regime: an interaction, not a line.
+            double drift = 0;
+            for (int k = 0; k < _g.Length; k++) drift += _g[k];
+            _fair += RegimeStrength / _g.Length * drift + 0.8 * N();
+            if (U() < 0.03) _wide = !_wide;
+            spread = (_wide ^ (U() < 0.08)) ? 2 : 1;
+            imb = Math.Tanh(N());
+            _g[_gi] = imb * (_wide ? -1.0 : 1.0);
+            _gi = (_gi + 1) % _g.Length;
+        }
+        else
+        {
+            _pressure = 0.97 * _pressure + 0.25 * N();
+            _fair += Kappa * _pressure + 0.8 * N();
+            spread = U() < 0.7 ? 1 : 2;
+            imb = Math.Tanh(_pressure + 0.4 * N());
+        }
 
         long bidTick = (long)Math.Floor(_fair);
-        int spread = U() < 0.7 ? 1 : 2;
-        double imb = Math.Tanh(_pressure + 0.4 * N());
         const long TickScaled = 1_000_000; // 0.01 in 1e-8
 
         s.BidCount = s.AskCount = 20;

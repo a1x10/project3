@@ -11,6 +11,7 @@ public sealed class BacktestResult
     public bool Killed;
     public string KillReason = "";
     public readonly LatencyHistogram Compute = new();
+    public TradingEngine? Engine;
 
     public override string ToString() =>
         $"events={Events} fills={Fills} rejects={Rejects} riskRejects={RiskRejects} pnl={Pnl:F2} fees={Fees:F2} maxDD={MaxDrawdown:F2}"
@@ -48,6 +49,7 @@ public static class Backtester
             }
             i++;
         }
+        res.Engine = engine;
         res.Events = i; res.Fees = ex.FeesPaid; res.Fills = ex.Fills; res.Rejects = ex.Rejects;
         res.RiskRejects = engine.Risk.Rejected; res.Killed = engine.Risk.Killed; res.KillReason = engine.Risk.KillReason;
         return res;

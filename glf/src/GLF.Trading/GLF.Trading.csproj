@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\GLF.Core\GLF.Core.csproj" />
     <ProjectReference Include="..\GLF.Market\GLF.Market.csproj" />
+    <ProjectReference Include="..\GLF.Neural\GLF.Neural.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
