@@ -124,6 +124,7 @@ async def test_panel_keys_flow(panel, brain, monkeypatch):  # noqa: F811
     r = await panel.put("/admin/api/keys/active", json={"backend": "groq", "model": "llama-3.3-70b-versatile"},
                         headers=h)
     assert r.json()["active"]["backend"] == "groq" and brain.s.llm_backend == "groq"
+    assert brain.s.llm_backend_after == "groq"  # и после окончания бонусных кредитов — тоже Groq
     assert brain.s.alt_model == "llama-3.3-70b-versatile"
     # ключи переживают перезапуск
     STORE.keys = []
