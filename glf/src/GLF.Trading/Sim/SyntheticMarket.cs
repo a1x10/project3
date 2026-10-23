@@ -15,9 +15,13 @@ public sealed class SyntheticMarket : ISnapshotSource
     long _i;
     readonly long _max;
     public double Kappa = 1.2;
+    /// <summary>Per-event price diffusion in ticks (the unpredictable part).</summary>
+    public double Noise = 0.8;
     /// <summary>Regime mode: the sign of the pressure->drift relation flips with a persistent wide-spread regime (an interaction a linear model cannot express).</summary>
     public bool Regime;
     public double RegimeStrength = 3.0;
+    /// <summary>&gt; 0: the regime flips on a fixed schedule of this many events (long stretches), instead of randomly every ~33 events.</summary>
+    public int BlockLength;
     bool _wide;
     readonly double[] _g = new double[10];
     int _gi;
@@ -38,8 +42,8 @@ public sealed class SyntheticMarket : ISnapshotSource
             // price over the next 10 events, with a sign that depends on a persistent spread regime: an interaction, not a line.
             double drift = 0;
             for (int k = 0; k < _g.Length; k++) drift += _g[k];
-            _fair += RegimeStrength / _g.Length * drift + 0.8 * N();
-            if (U() < 0.03) _wide = !_wide;
+            _fair += RegimeStrength / _g.Length * drift + Noise * N();
+            if (BlockLength > 0) _wide = (_i / BlockLength) % 2 == 1; else if (U() < 0.03) _wide = !_wide;
             spread = (_wide ^ (U() < 0.08)) ? 2 : 1;
             imb = Math.Tanh(N());
             _g[_gi] = imb * (_wide ? -1.0 : 1.0);
@@ -48,7 +52,7 @@ public sealed class SyntheticMarket : ISnapshotSource
         else
         {
             _pressure = 0.97 * _pressure + 0.25 * N();
-            _fair += Kappa * _pressure + 0.8 * N();
+            _fair += Kappa * _pressure + Noise * N();
             spread = U() < 0.7 ? 1 : 2;
             imb = Math.Tanh(_pressure + 0.4 * N());
         }

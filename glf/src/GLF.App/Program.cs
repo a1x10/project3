@@ -7,6 +7,7 @@ using GLF.Neural.Transformer;
 using GLF.Market;
 using GLF.Trading;
 using GLF.Trading.Sim;
+using GLF.Trading.Models;
 
 var a = new Args(args);
 switch (a.Command)
@@ -21,6 +22,9 @@ switch (a.Command)
     case "quant": QuantDemo(a); break;
     case "scale": ScaleDemo(a); break;
     case "continual": ContinualDemo(a); break;
+    case "regime-test": RegimeTest(a); break;
+    case "evaluate": Evaluate(a); break;
+    case "make-test-data": MakeTestData(a); break;
     case "live": await Live(a); break;
     default:
         Console.WriteLine("""
@@ -36,6 +40,9 @@ switch (a.Command)
           quant     [--steps N]                          INT8/INT4 quantisation: naive vs SmoothQuant vs AWQ, measured perplexity
           scale                                          tensor parallelism (exact), 1F1B pipeline schedule, ZeRO memory
           continual                                      catastrophic forgetting vs replay vs EWC
+          regime-test [--block 15000 --blocks 6 --strength 8]   long alternating regimes: does regime replay stop forgetting?
+          evaluate  --file f.jsonl [--chunk 20000]       the same forecasting report on recorded real data
+          make-test-data --out f.jsonl [--events N]      write a synthetic file in the recorded-feed format (tests the evaluate pipeline end to end)
           live      --symbol btcusdt [--seconds 60] [--record f.jsonl] [--paper] [--tick 0.01 --lot 0.001 --fee 4]
                     public market data only; --paper simulates fills locally. No real orders are ever sent.
         """);
@@ -531,6 +538,82 @@ static void ContinualDemo(Args a)
     var xj = xa.Concat(xb).ToArray(); var yj = ya.Concat(yb).ToArray();
     Train(n4, xj, yj, 800);
     Console.WriteLine($"{"joint training (upper bound)",-34} {"-",10} {Acc(n4, xat, yat),10:P1} {Acc(n4, xbt, ybt),10:P1}");
+}
+
+static void PrintChunks(List<ChunkReport> chunks, HypothesisEnsemble ens, long early)
+{
+    string[] cols = { "rls-all/0.99", "nn-32x16", "nn-32x16+regime-replay" };
+    Console.WriteLine($"RMSE of the {ens.Horizon}-event price change, in ticks. 'early' = first {early} events of each chunk (re-adaptation speed), 'late' = the rest.");
+    Console.Write($"{"chunk",5} {"regime",6} {"known",5} |");
+    Console.Write($" {"naive",6} {"naive",6} |");
+    foreach (var c in cols) Console.Write($" {Short(c) + " early",-12} {"late",6} |");
+    Console.WriteLine();
+    foreach (var ch in chunks)
+    {
+        Console.Write($"{ch.Index,5} {ch.Regime,6} {ch.RegimesKnown,5} |");
+        Console.Write($" {ch.Early.NaiveRmse,6:F2} {ch.Late.NaiveRmse,6:F2} |");
+        foreach (var c in cols)
+        {
+            int i = Array.IndexOf(ch.Early.Names, c);
+            Console.Write($" {(i < 0 ? double.NaN : ch.Early.Rmse(i)),12:F2} {(i < 0 ? double.NaN : ch.Late.Rmse(i)),6:F2} |");
+        }
+        Console.WriteLine();
+    }
+    static string Short(string n) => n.Replace("nn-32x16+regime-replay", "nn+replay").Replace("nn-32x16", "nn-plain").Replace("rls-all/0.99", "linear");
+    Console.WriteLine($"regime detector: {ens.RegimeCount} regimes found, {ens.RegimeSwitches} label switches");
+}
+
+static void RegimeTest(Args a)
+{
+    long block = a.Lng("block", 8000); int blocks = (int)a.Lng("blocks", 8); long early = a.Lng("early", 500);
+    double strength = a.Dbl("strength", 8);
+    Console.WriteLine($"Synthetic market, {blocks} blocks of {block} events; the pressure->price relation flips sign every block (narrow-spread regime vs wide-spread regime).");
+    Console.WriteLine("Plain network: sees only the last 1024 events, so it forgets the other regime. Regime-replay network: also rehearses a fixed-size memory of every regime seen.");
+    var cfg = new EngineConfig();
+    var (chunks, ens) = StreamEvaluator.Run(new SyntheticMarket(block * blocks, 21) { Regime = true, RegimeStrength = strength, BlockLength = (int)block, Noise = a.Dbl("noise", 0.3) }, cfg, block, early);
+    PrintChunks(chunks, ens, early);
+    Console.WriteLine("\nEnd of run, whole-stream RMSE:");
+    Console.WriteLine(ens.Report());
+}
+
+static void Evaluate(Args a)
+{
+    string? f = a.Str("file");
+    if (f == null) { Console.WriteLine("usage: evaluate --file recorded.jsonl [--chunk 20000] [--tick 0.01] [--lot 0.001]"); return; }
+    long chunk = a.Lng("chunk", 20000), early = a.Lng("early", 2000);
+    var cfg = Cfg(a, 0.01, 0.001, 4.0);
+    using var rp = new JsonLinesReplay(f);
+    var (chunks, ens) = StreamEvaluator.Run(rp, cfg, chunk, early);
+    if (chunks.Count == 0) { Console.WriteLine($"fewer than {chunk} usable events in the file (skipped lines: {rp.Skipped}); record longer or lower --chunk."); return; }
+    PrintChunks(chunks, ens, early);
+    Console.WriteLine("\nWhole-file RMSE (prequential: each sample is predicted before it is learned):");
+    Console.WriteLine(ens.Report());
+    var s = ens.Snapshot();
+    int plain = Array.IndexOf(s.Names, "nn-32x16"), rep = Array.IndexOf(s.Names, "nn-32x16+regime-replay");
+    Console.WriteLine($"\nregime replay vs plain network: {s.Rmse(rep):F3} vs {s.Rmse(plain):F3} ticks ({(1 - s.Rmse(rep) / s.Rmse(plain)):P1} {(s.Rmse(rep) < s.Rmse(plain) ? "better" : "worse")}); naive baseline {s.NaiveRmse:F3}");
+}
+
+static void MakeTestData(Args a)
+{
+    string path = a.Str("out") ?? "synthetic.jsonl";
+    long n = a.Lng("events", 200_000);
+    var src = new SyntheticMarket(n, 21) { Regime = true, RegimeStrength = 8, BlockLength = 20_000, Noise = 0.3 };
+    var snap = new BookSnapshot();
+    var inv = System.Globalization.CultureInfo.InvariantCulture;
+    using var w = new StreamWriter(path);
+    string F(long v, int d) => (v / (double)FixedDecimal.Scale).ToString("F" + d, inv);
+    long i = 0;
+    while (src.Next(snap))
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(snap.TsNs).Append('\t').Append("{\"lastUpdateId\":").Append(i++).Append(",\"bids\":[");
+        for (int k = 0; k < snap.BidCount; k++) sb.Append(k > 0 ? "," : "").Append("[\"").Append(F(snap.BidPx[k], 2)).Append("\",\"").Append(F(snap.BidQty[k], 8)).Append("\"]");
+        sb.Append("],\"asks\":[");
+        for (int k = 0; k < snap.AskCount; k++) sb.Append(k > 0 ? "," : "").Append("[\"").Append(F(snap.AskPx[k], 2)).Append("\",\"").Append(F(snap.AskQty[k], 8)).Append("\"]");
+        sb.Append("]}");
+        w.WriteLine(sb.ToString());
+    }
+    Console.WriteLine($"wrote {i} synthetic snapshots to {path} (tick 0.01, regimes alternate every 20000 events)");
 }
 
 static void RunVision(Args a)

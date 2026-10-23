@@ -16,6 +16,7 @@ public sealed class EngineConfig
     public int MaxHoldEvents = 40;
     public double SlippageTicks = 2;     // IOC limit tolerance beyond the touch
     public bool UseNeural = true;        // add online neural hypotheses to the ensemble
+    public bool RegimeReplay = true;     // one neural hypothesis also rehearses samples from every past market regime
     public RiskLimits Risk = new();
 
     public long TickScaled => (long)Math.Round(TickSize * FixedDecimal.Scale);
@@ -44,7 +45,7 @@ public sealed class TradingEngine
     {
         _c = c;
         _fx = new FeatureExtractor(c.TickScaled);
-        Ensemble = new HypothesisEnsemble(c.Horizon, c.UseNeural);
+        Ensemble = new HypothesisEnsemble(c.Horizon, c.UseNeural, c.RegimeReplay);
         Risk = new RiskGate(c.Risk);
     }
 
