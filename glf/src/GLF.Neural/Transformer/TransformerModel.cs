@@ -34,6 +34,14 @@ public sealed class TransformerModel
     readonly float[] _invF, _nf, _logits, _dlog, _dcur, _dx2, _dtmp, _dn, _dhh, _da, _du, _dao, _dq, _dk, _dv, _dp;
     int _T;
 
+    /// <summary>When &gt; 0, the inputs of every linear layer are fake-quantised per token to this many bits (inference-time W8A8 study).</summary>
+    public int ActBits;
+    internal float[] N1(int l) => _n1[l];
+    internal float[] N2(int l) => _n2[l];
+
+    public void CopyWeightsFrom(TransformerModel o) { for (int i = 0; i < Params.Count; i++) Array.Copy(o.Params[i].W, Params[i].W, Params[i].W.Length); }
+    public TransformerModel Clone() { var m = new TransformerModel(C); m.CopyWeightsFrom(this); return m; }
+
     public int ParameterCount { get { int n = 0; foreach (var p in Params) n += p.W.Length; return n; } }
     public ReadOnlySpan<float> Logits => _logits.AsSpan(0, _T * C.Vocab);
 
@@ -168,6 +176,7 @@ public sealed class TransformerModel
         {
             var w = Layer[l];
             RmsForward(_xs[l], w.G1.W, _inv1[l], _n1[l], T, D, C.Eps);
+            if (ActBits > 0) Quant.FakeQuantRows(_n1[l].AsSpan(0, T * D), T, D, ActBits);
             Linear(w.Wq.W, D, D, _n1[l], _q[l], T);
             Linear(w.Wk.W, kv, D, _n1[l], _k[l], T);
             Linear(w.Wv.W, kv, D, _n1[l], _v[l], T);
@@ -203,13 +212,16 @@ public sealed class TransformerModel
             }
 
             var x2 = _x2[l];
+            if (ActBits > 0) Quant.FakeQuantRows(ao.AsSpan(0, T * D), T, D, ActBits);
             Linear(w.Wo.W, D, D, ao, x2, T);
             for (int i = 0; i < T * D; i++) x2[i] += _xs[l][i];
 
             RmsForward(x2, w.G2.W, _inv2[l], _n2[l], T, D, C.Eps);
+            if (ActBits > 0) Quant.FakeQuantRows(_n2[l].AsSpan(0, T * D), T, D, ActBits);
             Linear(w.Wg.W, F, D, _n2[l], _a[l], T);
             Linear(w.Wu.W, F, D, _n2[l], _u[l], T);
             for (int i = 0; i < T * F; i++) _hh[l][i] = Silu(_a[l][i]) * _u[l][i];
+            if (ActBits > 0) Quant.FakeQuantRows(_hh[l].AsSpan(0, T * F), T, F, ActBits);
             var xo = _xs[l + 1];
             Linear(w.Wd.W, D, F, _hh[l], xo, T);
             for (int i = 0; i < T * D; i++) xo[i] += x2[i];

@@ -9,6 +9,8 @@ public sealed class Network
     public Adam Opt;
     readonly float[] _out, _dOut, _dIn;
     public float LastGradNorm { get; private set; }
+    /// <summary>Called after backprop and before the optimiser step; may add extra gradient terms (e.g. an EWC penalty).</summary>
+    public Action<List<Param>>? BeforeStep;
 
     public Network(Sequential body, Adam? opt = null)
     {
@@ -36,7 +38,19 @@ public sealed class Network
         Body.Forward(x, batch, o);
         float loss = Loss.Compute(kind, o, target, _dOut.AsSpan(0, batch * Out), batch, Out, huberDelta);
         Body.Backward(x, o, _dOut.AsSpan(0, batch * Out), batch, default, true);
+        BeforeStep?.Invoke(Params);
         LastGradNorm = Opt.Step(Params);
+        return loss;
+    }
+
+    /// <summary>Gradients of the classification loss into Param.G without an optimiser step.</summary>
+    public float GradientsClassify(ReadOnlySpan<float> x, ReadOnlySpan<int> labels, int batch)
+    {
+        ZeroGrads();
+        var o = _out.AsSpan(0, batch * Out);
+        Body.Forward(x, batch, o);
+        float loss = Loss.SoftmaxCrossEntropy(o, labels, _dOut.AsSpan(0, batch * Out), batch, Out);
+        Body.Backward(x, o, _dOut.AsSpan(0, batch * Out), batch, default, true);
         return loss;
     }
 
@@ -47,6 +61,7 @@ public sealed class Network
         Body.Forward(x, batch, o);
         float loss = Loss.SoftmaxCrossEntropy(o, labels, _dOut.AsSpan(0, batch * Out), batch, Out);
         Body.Backward(x, o, _dOut.AsSpan(0, batch * Out), batch, default, true);
+        BeforeStep?.Invoke(Params);
         LastGradNorm = Opt.Step(Params);
         return loss;
     }
