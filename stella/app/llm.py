@@ -13,7 +13,9 @@ async def chat(messages: list[dict], tools: list[dict] | None = None, model: str
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{config.LLM_BASE_URL}/chat/completions", json=body,
                          headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"})
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # в логах нужна причина от провайдера (неверная модель, лимит, ключ), а не только код
+            raise RuntimeError(f"LLM {r.status_code} model={body['model']}: {r.text[:400]}")
         return r.json()["choices"][0]["message"]
 
 
