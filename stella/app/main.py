@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 import os
+import re
 import uuid
 
 from . import agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
@@ -61,10 +62,19 @@ async def habits_tick():
         habits.check_suggestions()
 
 
+def _preload_stt():
+    try:
+        stt.load()
+        print("[stt] whisper loaded")
+    except Exception as e:
+        print(f"[stt] load failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(_loop(calendar_reminders, 60))
     asyncio.create_task(_loop(habits_tick, 60))
+    asyncio.create_task(asyncio.to_thread(_preload_stt))
 
 
 @app.get("/health")
@@ -159,16 +169,26 @@ async def alert(a: AlertIn):
 # ---------- зрение ----------
 @app.post("/vision/look", dependencies=Auth)
 async def vision_look(image: UploadFile = File(...)):
-    ans = await vision.look(await image.read())
+    try:
+        ans = await vision.look(await image.read())
+    except Exception as e:
+        bus.publish("hud", text=f"Зрение не работает: {str(e)[:120]}")
+        return {"text": None, "error": str(e)[:200]}
     if ans:
         bus.publish("hud", text=ans)
+        bus.publish("speak", text=ans)
     return {"text": ans}
 
 
 @app.post("/vision/remember", dependencies=Auth)
 async def vision_remember(image: UploadFile = File(...)):
-    desc = await vision.remember(await image.read())
+    try:
+        desc = await vision.remember(await image.read())
+    except Exception as e:
+        bus.publish("hud", text=f"Память не работает: {str(e)[:120]}")
+        return {"description": "", "error": str(e)[:200]}
     bus.publish("hud", text="Запомнила: " + desc)
+    bus.publish("speak", text="Запомнила")
     return {"description": desc}
 
 
@@ -286,6 +306,11 @@ async def meeting_chunk(audio: UploadFile = File(...)):
     data = await audio.read()
     ext = (audio.filename or "a.webm").rsplit(".", 1)[-1]
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    if meeting.state["on"] and re.search(r"стел+а.*(заверш|законч|стоп|останов|выключ)", text.lower()):
+        summary = await meeting.stop()
+        bus.publish("hud", text=summary or "Совещание завершено.")
+        bus.publish("speak", text="Совещание завершено.")
+        return {"text": text, "stopped": True}
     return {"text": text, "hint": await meeting.chunk(text)}
 
 
@@ -336,3 +361,32 @@ async def api_calendar():
 @app.get("/api/home", dependencies=Auth)
 async def api_home():
     return await home.list_devices()
+
+
+# ---------- всегда слушаю: обращение «Стелла, ...» ----------
+WAKE = re.compile(r"\b(стел+а|стэл+а|стеля|stel+a|stella)\b[\s,.:!?-]*", re.I)
+JUNK = re.compile(r"субтитры|продолжение следует|спасибо за просмотр|подписывайтесь", re.I)
+
+
+@app.post("/voice/listen", dependencies=Auth)
+async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
+    """Фразы приходят постоянно. Реагируем на обращение по имени или внутри окна диалога (awake=1).
+    Остальной разговор сразу отбрасывается и нигде не сохраняется."""
+    data = await audio.read()
+    ext = (audio.filename or "u.webm").rsplit(".", 1)[-1]
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    if not text or JUNK.search(text):
+        return {"handled": False}
+    m = WAKE.search(text[:40])
+    if m:
+        cmd = (text[:m.start()] + " " + text[m.end():]).strip(" ,.!?-")
+    elif awake:
+        cmd = text.strip()
+    else:
+        return {"handled": False}
+    if len(cmd) < 2:
+        return {"handled": True, "ack": True}
+    ans = await agent.ask(cmd)
+    bus.publish("hud", text=ans)
+    bus.publish("speak", text=ans)
+    return {"handled": True, "heard": cmd, "text": ans}

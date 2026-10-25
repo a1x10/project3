@@ -21,6 +21,9 @@ def system_prompt() -> str:
         "- Замок и стиралка: сначала переспроси; confirmed=true только после явного 'да' пользователя.\n"
         "- «Ответь голосом/голосовым»: start_voice_reply; потом покажи расшифровку и спроси, отправлять ли.\n"
         "- Стирка: washer_start; назови выбранный режим, спроси, запускать ли; бельё пользователь загружает сам.\n"
+        "- Управление только голосом: «что это/прочитай/переведи» — look_around(look); «кто это» — look_around(face); "
+        "«запомни» — look_around(memory); «покажи сообщения/календарь/дом» — open_screen; «построй/покажи модель» — model3d.\n"
+        "- После look_around ответь коротко («Смотрю»), результат придёт сам.\n"
         "- Не выдумывай результаты инструментов.\n"
         f"Что ты знаешь о пользователе:\n{facts}"
     )
@@ -53,6 +56,9 @@ TOOLS = [
     _tool("start_meeting", "Включить режим подсказок: meeting/interview/exam", {"mode": S, "context": S}, ["mode"]),
     _tool("stop_meeting", "Выключить режим совещания и вернуть резюме", {}),
     _tool("model3d", "Построить разборную 3D-модель механизма и показать на линзе", {"prompt": S}, ["prompt"]),
+    _tool("look_around", "Камера очков. what: look (прочитать/понять, что вижу), face (кто напротив — только база лиц), "
+          "memory (запомнить, что вижу и где лежит)", {"what": S}, ["what"]),
+    _tool("open_screen", "Показать экран на очках: messages, calendar, home, vision, faces, memory, meeting, lab, menu", {"screen": S}, ["screen"]),
     _tool("find_item", "Где пользователь оставил предмет: возвращает последние снимки с описаниями", {"item": S}, ["item"]),
 ]
 
@@ -106,6 +112,14 @@ async def run_tool(name: str, a: dict):
             spec = await model3d.generate(a["prompt"])
             bus.publish("model3d", spec=spec)
             return {"status": "shown", "title": spec["title"], "parts": len(spec["parts"])}
+        if name == "look_around":
+            if a["what"] not in ("look", "face", "memory"):
+                return {"error": "what: look/face/memory"}
+            bus.publish("capture", what=a["what"])
+            return {"status": "camera_started", "note": "Результат появится на линзе сам; отвечайте одним словом"}
+        if name == "open_screen":
+            bus.publish("open", screen=a["screen"])
+            return {"status": "shown"}
         if name == "find_item":
             return vision.find(a["item"])
     except Exception as e:   # инструмент не должен ронять диалог
@@ -118,7 +132,7 @@ TOOL_LABELS = {
     "calendar_move": "Переношу событие", "recent_messages": "Читаю сообщения", "draft_reply": "Пишу ответ",
     "send_reply": "Отправляю", "home_list": "Опрашиваю дом", "home_action": "Управляю домом",
     "washer_start": "Готовлю стирку", "start_voice_reply": "Включаю запись", "start_meeting": "Запускаю режим",
-    "stop_meeting": "Готовлю резюме", "model3d": "Строю 3D-модель", "find_item": "Ищу в памяти",
+    "stop_meeting": "Готовлю резюме", "look_around": "Включаю камеру", "open_screen": "Открываю", "model3d": "Строю 3D-модель", "find_item": "Ищу в памяти",
 }
 
 
