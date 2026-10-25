@@ -77,3 +77,11 @@ async def list_devices() -> list[dict]:
             out.append({"entity": s["entity_id"], "state": s["state"],
                         "name": s["attributes"].get("friendly_name", "")})
     return out
+
+
+async def call(domain: str, service: str, entity: str, data: dict | None = None) -> dict:
+    """Низкоуровневый вызов службы HA (без подтверждений — только для внутренних шагов)."""
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(f"{config.HA_URL}/api/services/{domain}/{service}", headers=_headers(),
+                         json={"entity_id": entity, **(data or {})})
+    return {"error": f"HA {r.status_code}: {r.text[:200]}"} if r.status_code >= 400 else {"status": "done"}

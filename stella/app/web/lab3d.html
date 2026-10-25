@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stella 3D Lab</title>
+<style>
+html,body{margin:0;height:100%;background:#000;color:#33ff66;font:15px "Courier New",monospace;overflow:hidden}
+canvas{display:block}
+#ui{position:absolute;left:8px;right:8px;top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#ui input,#ui button{background:#000;color:#33ff66;border:1px solid #33ff66;font:inherit;padding:4px 8px}
+#ui input[type=text]{flex:1;min-width:120px}
+#info{position:absolute;left:8px;bottom:6px;right:8px;display:flex;justify-content:space-between}
+video{position:absolute;right:6px;bottom:30px;width:120px;opacity:.35;transform:scaleX(-1)}
+#cur{position:absolute;width:22px;height:22px;border:2px solid #33ff66;border-radius:50%;margin:-11px;pointer-events:none;display:none}
+#cur.pinch{background:#33ff66}
+</style></head><body>
+<div id="ui">
+  <input id="q" type="text" placeholder="Что построить? напр.: редуктор с тремя шестернями">
+  <button id="go">Построить</button>
+  <label>Разбор <input id="ex" type="range" min="0" max="1" step="0.01" value="0"></label>
+  <button id="hands">Руки</button>
+</div>
+<div id="cur"></div><video id="v" playsinline muted style="display:none"></video>
+<div id="info"><span id="sel">—</span><span id="hint">мышь: вращать · колесо: зум · щипок: взять деталь · две руки: разобрать</span></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const store=k=>{try{return localStorage.getItem(k)||""}catch(e){return""}};
+const KEY=store("stella_key");
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,100);cam.position.set(5,4,8);cam.lookAt(0,0,0);
+const rdr=new THREE.WebGLRenderer({antialias:true});rdr.setSize(innerWidth,innerHeight);document.body.appendChild(rdr.domElement);
+scene.add(new THREE.AmbientLight(0x33ff66,0.5));const dl=new THREE.DirectionalLight(0xffffff,0.8);dl.position.set(3,6,5);scene.add(dl);
+scene.add(new THREE.GridHelper(12,12,0x0b3a1a,0x0b3a1a));
+const root=new THREE.Group();scene.add(root);
+let parts=[],explode=0,spec=null;
+
+function mesh(p){
+  const s=p.size;let g;
+  if(p.shape==="cylinder")g=new THREE.CylinderGeometry(s[0],s[0],s[1]||1,32);
+  else if(p.shape==="sphere")g=new THREE.SphereGeometry(s[0]||1,24,16);
+  else if(p.shape==="torus")g=new THREE.TorusGeometry(s[0]||1,s[1]||0.3,12,32);
+  else g=new THREE.BoxGeometry(s[0]||1,s[1]||1,s[2]||1);
+  const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:p.color||"#33ff66",metalness:.3,roughness:.6}));
+  m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g),new THREE.LineBasicMaterial({color:0x33ff66})));
+  return m;
+}
+function load(sp){
+  spec=sp;parts.forEach(x=>root.remove(x.m));parts=[];
+  sp.parts.forEach(p=>{const m=mesh(p);m.position.set(...p.pos);root.add(m);
+    parts.push({m,name:p.name,base:new THREE.Vector3(...p.pos),ex:new THREE.Vector3(...p.explode),grab:new THREE.Vector3()})});
+  $("sel").textContent=sp.title+" · деталей: "+parts.length;
+}
+const DEMO={title:"Демо: редуктор",parts:[
+ {name:"корпус",shape:"box",size:[3,1,2],pos:[0,-1,0],explode:[0,-2,0],color:"#1a5c2e"},
+ {name:"вал 1",shape:"cylinder",size:[0.2,3,0],pos:[-0.8,0.3,0],explode:[-1.5,0.5,0],color:"#9aa"},
+ {name:"вал 2",shape:"cylinder",size:[0.2,3,0],pos:[0.8,0.3,0],explode:[1.5,0.5,0],color:"#9aa"},
+ {name:"шестерня A",shape:"torus",size:[0.7,0.25,0],pos:[-0.8,0.3,0],explode:[-1.5,2,0],color:"#33ff66"},
+ {name:"шестерня B",shape:"torus",size:[0.5,0.2,0],pos:[0.8,0.3,0],explode:[1.5,2,0],color:"#33ff66"},
+ {name:"крышка",shape:"box",size:[3,0.3,2],pos:[0,1.1,0],explode:[0,3,0],color:"#2a8a47"}]};
+load(DEMO);
+
+/* мышь */
+let drag=false,lx=0,ly=0;
+addEventListener("mousedown",e=>{if(e.target.tagName==="CANVAS"){drag=true;lx=e.clientX;ly=e.clientY}});
+addEventListener("mouseup",()=>drag=false);
+addEventListener("mousemove",e=>{if(!drag)return;root.rotation.y+=(e.clientX-lx)*.01;root.rotation.x+=(e.clientY-ly)*.01;lx=e.clientX;ly=e.clientY});
+addEventListener("wheel",e=>{cam.position.multiplyScalar(e.deltaY>0?1.06:.94)});
+$("ex").oninput=e=>explode=+e.target.value;
+addEventListener("resize",()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();rdr.setSize(innerWidth,innerHeight)});
+
+/* ввод запроса */
+async function build(){
+  const q=$("q").value.trim();if(!q)return;$("sel").textContent="строю…";
+  try{const r=await fetch("/model3d",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+KEY},body:JSON.stringify({prompt:q})});
+    if(!r.ok)throw new Error(r.status);load(await r.json())}catch(e){$("sel").textContent="ошибка: "+e.message}
+}
+$("go").onclick=build;$("q").onkeydown=e=>{if(e.key==="Enter")build()};
+addEventListener("message",e=>{if(e.data&&e.data.model)load(e.data.model)});
+if(KEY){try{const es=new EventSource("/events?key="+encodeURIComponent(KEY));es.onmessage=ev=>{const m=JSON.parse(ev.data);if(m.type==="model3d")load(m.spec)}}catch(e){}}
+
+/* руки (MediaPipe Hands): щипок = взять и двигать, две руки = разбор/сборка */
+let handsOn=false,held=null,lastTwo=null;
+function loadScript(src){return new Promise((ok,no)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)})}
+$("hands").onclick=async()=>{
+  if(handsOn)return;handsOn=true;$("hint").textContent="загружаю трекинг рук…";
+  try{
+    await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js");
+    const v=$("v");v.srcObject=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}});await v.play();v.style.display="block";
+    const hands=new Hands({locateFile:f=>"https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/"+f});
+    hands.setOptions({maxNumHands:2,modelComplexity:0,minDetectionConfidence:.6,minTrackingConfidence:.6});
+    hands.onResults(onHands);
+    (async function loop(){await hands.send({image:v});requestAnimationFrame(loop)})();
+    $("hint").textContent="щипок: взять · две руки врозь/вместе: разобрать/собрать";
+  }catch(e){$("hint").textContent="трекинг недоступен: "+e.message;handsOn=false}
+};
+const pinchOf=h=>{const a=h[4],b=h[8];return{d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2}};
+const ray=new THREE.Raycaster();
+function onHands(r){
+  const L=r.multiHandLandmarks||[],cur=$("cur");
+  if(L.length===2){ /* две руки: расстояние между кистями -> разбор */
+    const d=Math.hypot(L[0][0].x-L[1][0].x,L[0][0].y-L[1][0].y);
+    if(lastTwo!==null){explode=Math.max(0,Math.min(1,explode+(d-lastTwo)*3));$("ex").value=explode}
+    lastTwo=d;cur.style.display="none";return;
+  }
+  lastTwo=null;
+  if(L.length!==1){cur.style.display="none";held=null;return}
+  const p=pinchOf(L[0]),sx=(1-p.x)*innerWidth,sy=p.y*innerHeight,pinch=p.d<0.05;
+  cur.style.display="block";cur.style.left=sx+"px";cur.style.top=sy+"px";cur.className=pinch?"pinch":"";
+  const ndc=new THREE.Vector2(sx/innerWidth*2-1,-(sy/innerHeight)*2+1);
+  if(pinch&&!held){ray.setFromCamera(ndc,cam);const hit=ray.intersectObjects(parts.map(x=>x.m))[0];
+    if(hit){held=parts.find(x=>x.m===hit.object);held.plane=new THREE.Plane(cam.getWorldDirection(new THREE.Vector3()).negate(),0);
+      held.plane.constant=-held.plane.normal.dot(hit.point);$("sel").textContent="деталь: "+held.name}}
+  else if(!pinch&&held){held=null}
+  else if(pinch&&held){ray.setFromCamera(ndc,cam);const pt=new THREE.Vector3();
+    if(ray.ray.intersectPlane(held.plane,pt)){root.worldToLocal(pt);held.grab.copy(pt).sub(held.base).sub(held.ex.clone().multiplyScalar(explode))}}
+}
+
+/* рендер */
+(function anim(){requestAnimationFrame(anim);
+  parts.forEach(x=>{const t=x.base.clone().add(x.ex.clone().multiplyScalar(explode)).add(x.grab);x.m.position.lerp(t,.25)});
+  if(!drag&&!held)root.rotation.y+=0.002;rdr.render(scene,cam)})();
+</script></body></html>
