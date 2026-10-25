@@ -3,7 +3,7 @@ import datetime as dt
 import json
 import time
 
-from . import bus, calendar_g, config, db, home, llm, notifs, vision
+from . import bus, calendar_g, config, db, home, llm, meeting, model3d, notifs, vision, washer
 
 _drafts: dict[str, dict] = {}   # черновики ответов, ждущие «отправляй»
 
@@ -19,6 +19,8 @@ def system_prompt() -> str:
         "- Важные факты о пользователе сохраняй инструментом remember.\n"
         "- Ответ на чужое сообщение: сначала draft_reply, покажи текст, отправляй (send_reply) только после явного согласия.\n"
         "- Замок и стиралка: сначала переспроси; confirmed=true только после явного 'да' пользователя.\n"
+        "- «Ответь голосом/голосовым»: start_voice_reply; потом покажи расшифровку и спроси, отправлять ли.\n"
+        "- Стирка: washer_start; назови выбранный режим, спроси, запускать ли; бельё пользователь загружает сам.\n"
         "- Не выдумывай результаты инструментов.\n"
         f"Что ты знаешь о пользователе:\n{facts}"
     )
@@ -43,6 +45,14 @@ TOOLS = [
     _tool("home_action", "Управление домом. action: on/off/toggle/lock/unlock/volume_up/volume_down/mute/set. "
           "Для замков и стиралки сервер потребует confirmed=true.",
           {"device": S, "action": S, "data": {"type": "object"}, "confirmed": B}, ["device", "action"]),
+    _tool("start_voice_reply", "Пользователь хочет ответить голосовым: очки запишут его речь, затем покажут текст на подтверждение",
+          {"sender": S}, ["sender"]),
+    _tool("washer_start", "Стирка: items — что стираем словами пользователя. Сервер подберёт режим. "
+          "Сначала вызов без confirmed, назовите режим, спросите; потом confirmed=true.",
+          {"items": S, "confirmed": B}, ["items"]),
+    _tool("start_meeting", "Включить режим подсказок: meeting/interview/exam", {"mode": S, "context": S}, ["mode"]),
+    _tool("stop_meeting", "Выключить режим совещания и вернуть резюме", {}),
+    _tool("model3d", "Построить разборную 3D-модель механизма и показать на линзе", {"prompt": S}, ["prompt"]),
     _tool("find_item", "Где пользователь оставил предмет: возвращает последние снимки с описаниями", {"item": S}, ["item"]),
 ]
 
@@ -72,12 +82,30 @@ async def run_tool(name: str, a: dict):
             d = _drafts.pop(a["sender"].lower(), None)
             if not d:
                 return {"error": "нет черновика"}
-            bus.publish("action", action="reply", key=d["key"], app=d["app"], sender=d["sender"], text=d["text"])
+            bus.publish("action", action="reply_voice" if d.get("audio") else "reply", key=d["key"], app=d["app"],
+                        sender=d["sender"], text=d["text"], audio=d.get("audio", ""))
             return {"status": "sent"}
         if name == "home_list":
             return await home.list_devices()
         if name == "home_action":
             return await home.act(a["device"], a["action"], a.get("data"), bool(a.get("confirmed")))
+        if name == "start_voice_reply":
+            n = notifs.find_recent(sender=a["sender"])
+            if not n:
+                return {"error": "нет сообщения от этого контакта"}
+            bus.publish("record", purpose="voice_reply", sender=n["sender"], seconds=30)
+            return {"status": "recording_started", "note": "Скажите: слушаю, диктуйте"}
+        if name == "washer_start":
+            return await washer.start(a["items"], bool(a.get("confirmed")))
+        if name == "start_meeting":
+            meeting.start(a["mode"], a.get("context", ""))
+            return {"status": "on"}
+        if name == "stop_meeting":
+            return {"summary": await meeting.stop()}
+        if name == "model3d":
+            spec = await model3d.generate(a["prompt"])
+            bus.publish("model3d", spec=spec)
+            return {"status": "shown", "title": spec["title"], "parts": len(spec["parts"])}
         if name == "find_item":
             return vision.find(a["item"])
     except Exception as e:   # инструмент не должен ронять диалог

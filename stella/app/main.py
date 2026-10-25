@@ -8,7 +8,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import agent, bus, calendar_g, config, db, faces, habits, home, notifs, stt, vision
+import os
+import uuid
+
+from . import agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
 
 app = FastAPI(title="Stella Core")
 
@@ -175,6 +178,8 @@ async def faces_identify(image: UploadFile = File(...)):
     data = await image.read()
     bus.publish("scan", text="Сканирую лицо…")
     res = await asyncio.to_thread(faces.identify, data)
+    import base64
+    bus.publish("photo", image="data:image/jpeg;base64," + base64.b64encode(data).decode(), seconds=3)
     if res["found"]:
         bus.publish("card", name=res["name"], note=res["note"])
     else:
@@ -220,3 +225,114 @@ class HomeIn(BaseModel):
 @app.post("/home/act", dependencies=Auth)
 async def home_act(h: HomeIn):
     return await home.act(h.device, h.action, h.data, h.confirmed)
+
+
+# ---------- голосовой ответ ----------
+def _to_ogg_opus(name: str) -> str:
+    import shutil
+    import subprocess
+    if name.endswith(".ogg") or not shutil.which("ffmpeg"):
+        return name
+    src = os.path.join(config.DATA_DIR, "voice", name)
+    out = src.rsplit(".", 1)[0] + ".ogg"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-c:a", "libopus", "-b:a", "32k", out])
+    return os.path.basename(out) if r.returncode == 0 else name
+
+
+@app.post("/voice/reply", dependencies=Auth)
+async def voice_reply(sender: str = Query(...), audio: UploadFile = File(...)):
+    """Очки записали голосовой ответ. Расшифровка идёт на HUD, отправка — после подтверждения."""
+    n = notifs.find_recent(sender=sender)
+    if not n:
+        raise HTTPException(404, "нет сообщения от этого контакта")
+    data = await audio.read()
+    ext = (audio.filename or "a.wav").rsplit(".", 1)[-1]
+    name = f"{uuid.uuid4().hex}.{ext}"
+    os.makedirs(os.path.join(config.DATA_DIR, "voice"), exist_ok=True)
+    with open(os.path.join(config.DATA_DIR, "voice", name), "wb") as f:
+        f.write(data)
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    name = await asyncio.to_thread(_to_ogg_opus, name)   # WhatsApp воспроизводит голосовые в ogg/opus
+    agent._drafts[sender.lower()] = {"key": n["key"], "app": n["app"], "sender": n["sender"],
+                                     "text": text, "audio": f"/voice/files/{name}"}
+    msg = f"Голосовое для {n['sender']}: «{text}». Отправить?"
+    bus.publish("hud", text=msg)
+    bus.publish("speak", text=msg)
+    return {"text": text}
+
+
+@app.get("/voice/files/{name}", dependencies=Auth)
+async def voice_file(name: str):
+    path = os.path.join(config.DATA_DIR, "voice", os.path.basename(name))
+    if not os.path.exists(path):
+        raise HTTPException(404)
+    return FileResponse(path)
+
+
+# ---------- совещание ----------
+class MeetIn(BaseModel):
+    mode: str = "meeting"
+    context: str = ""
+
+
+@app.post("/meeting/start", dependencies=Auth)
+async def meeting_start(m: MeetIn):
+    meeting.start(m.mode, m.context)
+    return {"ok": True}
+
+
+@app.post("/meeting/chunk", dependencies=Auth)
+async def meeting_chunk(audio: UploadFile = File(...)):
+    data = await audio.read()
+    ext = (audio.filename or "a.webm").rsplit(".", 1)[-1]
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    return {"text": text, "hint": await meeting.chunk(text)}
+
+
+@app.post("/meeting/stop", dependencies=Auth)
+async def meeting_stop():
+    return {"summary": await meeting.stop()}
+
+
+# ---------- 3D ----------
+class M3DIn(BaseModel):
+    prompt: str
+
+
+@app.post("/model3d", dependencies=Auth)
+async def model3d_make(m: M3DIn):
+    spec = await model3d.generate(m.prompt)
+    bus.publish("model3d", spec=spec)
+    return spec
+
+
+# ---------- клиент для очков (HUD) ----------
+_WEB = os.path.join(os.path.dirname(__file__), "web")
+
+
+@app.get("/hud", response_class=HTMLResponse)
+async def hud():
+    return FileResponse(os.path.join(_WEB, "hud.html"))
+
+
+@app.get("/lab3d", response_class=HTMLResponse)
+async def lab3d():
+    return FileResponse(os.path.join(_WEB, "lab3d.html"))
+
+
+# ---------- данные для экранов HUD ----------
+@app.get("/api/messages", dependencies=Auth)
+async def api_messages():
+    return [{"id": r["id"], "app": r["app"], "sender": r["sender"], "text": r["text"], "importance": r["importance"]}
+            for r in db.q("SELECT * FROM notifs ORDER BY ts DESC LIMIT 15")]
+
+
+@app.get("/api/calendar", dependencies=Auth)
+async def api_calendar():
+    now = dt.datetime.now(config.TZ)
+    return await asyncio.to_thread(calendar_g.list_events, now.isoformat(), (now + dt.timedelta(days=2)).isoformat())
+
+
+@app.get("/api/home", dependencies=Auth)
+async def api_home():
+    return await home.list_devices()

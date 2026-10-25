@@ -31,6 +31,10 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 CONFIRM_ENTITIES = set(_list("CONFIRM_ENTITIES"))
 HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{}")).items()}
 
+WASHER_ENTITY = os.getenv("WASHER_ENTITY", "")                # switch/button запуска
+WASHER_PROGRAM_SELECT = os.getenv("WASHER_PROGRAM_SELECT", "")  # select.* выбора режима
+WASHER_PROGRAMS = json.loads(os.getenv("WASHER_PROGRAMS", "{}"))  # {"cotton":"Cotton 60","delicate":"..."}
+
 HABIT_MIN_DAYS = int(os.getenv("HABIT_MIN_DAYS", "4"))
 HABIT_WINDOW_DAYS = int(os.getenv("HABIT_WINDOW_DAYS", "14"))
 HABIT_LEAD_MIN = int(os.getenv("HABIT_LEAD_MIN", "20"))
