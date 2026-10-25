@@ -12,6 +12,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek/deepseek-chat")
 VISION_MODEL = os.getenv("VISION_MODEL", "google/gemini-2.0-flash-001")
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "")   # low/medium/high для моделей-рассуждателей (gpt-oss)
 
 USER_NAME = os.getenv("USER_NAME", "Алексей")
 TZ = ZoneInfo(os.getenv("TZ", "Asia/Almaty"))

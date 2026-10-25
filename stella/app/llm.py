@@ -6,10 +6,12 @@ from . import config
 
 
 async def chat(messages: list[dict], tools: list[dict] | None = None, model: str | None = None,
-               max_tokens: int = 400) -> dict:
+               max_tokens: int = 900) -> dict:
     body = {"model": model or config.LLM_MODEL, "messages": messages, "max_tokens": max_tokens}
     if tools:
         body["tools"] = tools
+    if config.LLM_REASONING_EFFORT and (model or config.LLM_MODEL) == config.LLM_MODEL:
+        body["reasoning_effort"] = config.LLM_REASONING_EFFORT
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{config.LLM_BASE_URL}/chat/completions", json=body,
                          headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"})
