@@ -35,7 +35,7 @@
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;z-index:8}
 #cfg{padding:20px}#cfg input{width:100%;background:#000;color:var(--g);border:1px solid var(--g);padding:8px;font:inherit;margin:6px 0}
 </style></head><body>
-<div id="top"><span>STELLA</span><span id="clock"></span><span id="st" class="off">● offline</span></div>
+<div id="top"><span>STELLA <span id="mic" class="dim"></span></span><span id="clock"></span><span id="st" class="off">● offline</span></div>
 <div id="main"></div>
 <div id="toast"></div>
 <div id="busy"><div class="l"><span id="spin">⠋</span><span id="blabel"></span></div><div class="bar"><i></i></div><div id="wave" style="display:none"></div></div>
@@ -78,7 +78,13 @@ function bootAnim(title,lines,after){
 }
 
 /* ---------- голос на выход ---------- */
-function speak(t){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="ru-RU";speechSynthesis.speak(u)}catch(e){}}
+let speaking=false,awakeUntil=0,speakT;
+function doneSpeaking(){speaking=false;awakeUntil=Date.now()+9000}   // после ответа 9 с можно говорить без «Стелла»
+function speak(t){
+  speaking=true;clearTimeout(speakT);speakT=setTimeout(doneSpeaking,Math.min(25000,2500+t.length*90));  // страховка, если TTS не сообщит о конце
+  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="ru-RU";
+    u.onend=u.onerror=()=>{clearTimeout(speakT);setTimeout(doneSpeaking,400)};speechSynthesis.speak(u)}catch(e){}}
+function beep(){try{const c=new AudioContext(),o=c.createOscillator(),g=c.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.12)}catch(e){}}
 
 /* ---------- тосты ---------- */
 let toastT;
@@ -90,7 +96,7 @@ const hideOverlay=()=>{$("overlay").style.display="none"};
 function render(){
   const m=$("main");
   if(!KEY){m.innerHTML='<div id="cfg"><div class="big">Stella</div>Адрес сервера и ключ:<input id="b" value="'+BASE+'"><input id="k" type="password" placeholder="STELLA_API_KEY"><div class="it sel" id="ok">Подключить</div></div>';
-    $("ok").onclick=()=>{BASE=$("b").value.replace(/\/$/,"");KEY=$("k").value;store.set("stella_key",KEY);store.set("stella_base",BASE);connect();render()};return}
+    $("ok").onclick=()=>{BASE=$("b").value.replace(/\/$/,"");KEY=$("k").value;store.set("stella_key",KEY);store.set("stella_base",BASE);connect();render();startListening()};return}
   if(screen==="menu"){
     m.className="";m.innerHTML='<div class="dim" style="margin-bottom:8px">'+esc(lastHud).slice(0,90)+'</div><div class="menu">'+
       MENU.map((x,i)=>'<div class="it'+(i===idx?' sel':'')+'">'+x[0]+'</div>').join("")+"</div>";return}
@@ -155,16 +161,21 @@ const ext=b=>b.type.includes("ogg")?"ogg":b.type.includes("mp4")?"m4a":"webm";
 const doVoice=()=>guarded(async()=>{busyOn("Слушаю",true);const b=await record(15000);busyOff(true);busyOn("Распознаю");const r=await post("/voice","audio",b,"v."+ext(b));if(!r.heard)toast("Не расслышала.",2500)});
 
 /* ---------- голосовой ответ (событие record) ---------- */
-async function voiceReply(sender,sec){await guarded(async()=>{busyOn("Диктуйте ответ для "+sender,true);const b=await record(sec*1000);busyOff(true);busyOn("Отправляю на проверку");await post("/voice/reply?sender="+encodeURIComponent(sender),"audio",b,"v."+ext(b))})}
+let recBusy=false;
+async function voiceReply(sender,sec){recBusy=true;await guarded(async()=>{busyOn("Диктуйте ответ для "+sender,true);const b=await record(sec*1000);busyOff(true);busyOn("Отправляю на проверку");await post("/voice/reply?sender="+encodeURIComponent(sender),"audio",b,"v."+ext(b))});recBusy=false}
 
 /* ---------- совещание ---------- */
 let meetOn=false;
-async function toggleMeeting(){
-  if(meetOn){meetOn=false;busyOn("Готовлю резюме");let r;try{r=await api("/meeting/stop",{method:"POST"})}finally{busyOff(true)}$("sub").style.display="none";toast(r.summary||"Совещание завершено.",15000);return}
+function startMeetLoop(){
+  if(meetOn)return;meetOn=true;
   bootAnim("РЕЖИМ: СОВЕЩАНИЕ",["Включаю микрофон…","Подключаю распознавание…","Готова слушать"]);
+  $("sub").style.display="block";
+  (async()=>{while(meetOn){try{const b=await record(4000,false);if(!meetOn)break;await post("/meeting/chunk","audio",b,"c."+ext(b))}catch(e){await new Promise(r=>setTimeout(r,1500))}}})();
+}
+function stopMeetLoop(){meetOn=false;$("sub").style.display="none"}
+async function toggleMeeting(){   // кнопка; обычно всё голосом: «Стелла, включи совещание»
+  if(meetOn){busyOn("Готовлю резюме");try{const r=await api("/meeting/stop",{method:"POST"});toast(r.summary||"Совещание завершено.",15000)}finally{busyOff(true)}return}
   await api("/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"meeting",context:""})});
-  meetOn=true;$("sub").style.display="block";(async()=>{
-    while(meetOn){try{const b=await record(4000,false);if(!meetOn)break;await post("/meeting/chunk","audio",b,"c."+ext(b))}catch(e){await new Promise(r=>setTimeout(r,1500))}}})();
 }
 
 /* ---------- 3D ---------- */
@@ -185,6 +196,9 @@ function connect(){
 }
 function onEvent(m){
   switch(m.type){
+    case"capture":if(m.what==="look")doVision();else if(m.what==="face")doFace();else if(m.what==="memory")doMemory();break;
+    case"open":if(m.screen==="menu"){closeLab();screen="menu";idx=0;render()}else if(m.screen==="lab")openLab();else if(MENU.some(x=>x[1]===m.screen)){closeLab();openScreen(m.screen)}break;
+    case"meeting":if(m.state==="on")startMeetLoop();else stopMeetLoop();break;
     case"busy":if(m.on)busyOn(m.label||"Думаю");else busyOff(true);break;
     case"hud":toast(m.text);if(screen==="menu")render();break;
     case"speak":speak(m.text);break;
@@ -225,5 +239,40 @@ addEventListener("touchend",e=>{if(e.target.tagName==="INPUT")return;const dx=e.
   if(Math.abs(dx)>40&&Math.abs(dx)>Math.abs(dy))act(dx>0?"prev":"next");
   else if(dy<-40)act("back");else if(Date.now()-tt>600)act("voice");else if(Math.abs(dx)<10)act("ok")});
 setInterval(()=>{$("clock").textContent=new Date().toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})},1000);
-connect();render();
+
+/* ---------- всегда слушаю: «Стелла, ...» без кнопок ---------- */
+let listenOn=false;
+const listenPaused=()=>speaking||meetOn||recBusy||busyN>0;
+function setMic(st){const e=$("mic");if(!e)return;e.textContent=st==="awake"?"🎙 слушаю вас":st==="pause"?"🎙 …":st==="off"?"🎙 нажмите":"🎙 «Стелла»";e.style.color=st==="awake"?"#fff":""}
+async function startListening(){
+  if(listenOn||!KEY)return;
+  let s;try{s=await micStream()}catch(e){setMic("off");return}
+  listenOn=true;
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();try{await ctx.resume()}catch(e){}
+  const an=ctx.createAnalyser();an.fftSize=1024;ctx.createMediaStreamSource(s).connect(an);
+  const buf=new Uint8Array(an.fftSize);let noise=6,rec=null,spoke=false,t0=0,lastV=0;
+  const level=()=>{an.getByteTimeDomainData(buf);let m=0;for(const b of buf)m=Math.max(m,Math.abs(b-128));return m};
+  function start(){const arr=[];rec=new MediaRecorder(s);rec.arr=arr;rec.ondataavailable=e=>arr.push(e.data);rec.start();t0=Date.now();spoke=false;lastV=0}
+  function finish(send){const r=rec;rec=null;r.onstop=()=>{if(send)sendUtterance(new Blob(r.arr,{type:r.mimeType||"audio/webm"}))};try{r.stop()}catch(e){}}
+  setInterval(()=>{
+    const now=Date.now();
+    if(listenPaused()){if(rec)finish(false);setMic("pause");return}
+    if(!rec)start();
+    const l=level();
+    if(l>Math.max(14,noise*2.5)){spoke=true;lastV=now}else if(!spoke)noise=noise*0.97+Math.min(l,25)*0.03;
+    setMic(now<awakeUntil?"awake":"idle");
+    if(spoke&&(now-lastV>1000||now-t0>15000))finish(true);         // фраза закончилась
+    else if(!spoke&&now-t0>4000)finish(false);                      // тишина: перезапуск записи
+  },100);
+}
+async function sendUtterance(blob){
+  if(blob.size<3000)return;
+  try{const f=new FormData();f.append("audio",blob,"u."+ext(blob));
+    const r=await api("/voice/listen?awake="+(Date.now()<awakeUntil?1:0),{method:"POST",body:f});
+    if(r.ack){awakeUntil=Date.now()+8000;beep();toast("Слушаю вас…",3000)}
+    else if(r.handled&&!speaking)awakeUntil=Date.now()+8000;
+  }catch(e){}
+}
+addEventListener("pointerdown",()=>startListening(),{once:true});addEventListener("keydown",()=>startListening(),{once:true});
+connect();render();startListening();
 </script></body></html>
