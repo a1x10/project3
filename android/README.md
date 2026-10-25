@@ -39,3 +39,12 @@ cd C:\platform-tools
 ```
 Логи: `.\adb logcat | Select-String "Stella"` (тег `Stella`). Удаление: `.\adb shell pm uninstall com.stels.stella`.
 Имя родного лончера (`com.rokid.glass.launcher`) проверьте через `pm list packages | Select-String rokid` — оно может отличаться.
+
+## Очки без клавиатуры: адрес и ключ зашиваются в APK
+Создайте файл `android/local.properties` (в git не попадает) и добавьте строки:
+```
+stella.url=https://stellaalex.duckdns.org
+stella.key=ВАШ_STELLA_API_KEY
+```
+Пересоберите `glasses` — приложение откроется сразу с подключением, вводить ничего не нужно.
+Ключ лежит внутри APK: не выкладывайте его в открытый доступ.

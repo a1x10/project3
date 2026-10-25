@@ -2,6 +2,7 @@ package com.stels.stella
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -55,8 +56,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun open() {
-        val url = prefs.getString("url", null)
-        if (url == null) askUrl() else web.loadUrl("$url/hud")
+        val url = BuildConfig.STELLA_URL.ifEmpty { prefs.getString("url", null) }
+        if (url == null) { askUrl(); return }
+        // ключ передаём во fragment (#...): он не уходит на сервер и не попадает в его логи
+        val key = if (BuildConfig.STELLA_KEY.isNotEmpty()) "#key=${Uri.encode(BuildConfig.STELLA_KEY)}&base=${Uri.encode(url)}" else ""
+        Log.i(TAG, "open $url/hud (key baked: ${key.isNotEmpty()})")
+        web.loadUrl("$url/hud$key")
     }
 
     private fun askUrl() {
