@@ -48,6 +48,9 @@ iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000
 "use strict";
 const $=id=>document.getElementById(id);
 const store={get:k=>{try{return localStorage.getItem(k)||""}catch(e){return""}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+// автонастройка для очков без клавиатуры: /hud#key=...&base=...
+try{const h=new URLSearchParams(location.hash.slice(1));
+  if(h.get("key")){store.set("stella_key",h.get("key"));store.set("stella_base",h.get("base")||location.origin);history.replaceState(null,"",location.pathname)}}catch(e){}
 let KEY=store.get("stella_key"),BASE=store.get("stella_base")||location.origin;
 const H=()=>({Authorization:"Bearer "+KEY});
 const MENU=[["Сообщения","messages"],["Календарь","calendar"],["Дом","home"],["Зрение","vision"],["Лица","faces"],["Память","memory"],["Совещание","meeting"],["3D-модель","lab"]];
