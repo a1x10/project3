@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stella — лица</title>
+<style>body{font:16px system-ui;max-width:560px;margin:2rem auto;padding:0 1rem}input,button{font:inherit;margin:.25rem 0;width:100%;padding:.5rem;box-sizing:border-box}li{display:flex;justify-content:space-between;padding:.4rem 0}</style>
+<h1>База знакомых лиц</h1>
+<input id="key" type="password" placeholder="STELLA_API_KEY">
+<form id="f">
+  <input name="name" placeholder="Имя" required>
+  <input name="note" placeholder="Заметка (кто это, что важно)">
+  <input name="photo" type="file" accept="image/*" required>
+  <label><input name="consent" type="checkbox" value="true" style="width:auto"> Человек согласен на хранение отпечатка лица</label>
+  <button>Добавить</button>
+</form>
+<p id="msg"></p><ul id="list"></ul>
+<script>
+const key=document.getElementById('key');key.value=sessionStorage.k||'';
+const H=()=>({Authorization:'Bearer '+key.value});
+async function load(){sessionStorage.k=key.value;
+  const r=await fetch('/admin/faces',{headers:H()});
+  if(!r.ok){msg.textContent='Неверный ключ';return}
+  const l=await r.json();list.innerHTML='';
+  l.forEach(p=>{const li=document.createElement('li');li.textContent=p.name+' — '+p.note;
+    const b=document.createElement('button');b.textContent='×';b.style.width='3rem';
+    b.onclick=async()=>{await fetch('/admin/faces/'+p.id,{method:'DELETE',headers:H()});load()};
+    li.append(b);list.append(li)})}
+key.onchange=load;if(key.value)load();
+f.onsubmit=async e=>{e.preventDefault();
+  const r=await fetch('/admin/faces',{method:'POST',headers:H(),body:new FormData(f)});
+  msg.textContent=r.ok?'Добавлено':'Ошибка: '+((await r.json()).detail||r.status);if(r.ok){f.reset();load()}};
+</script>
