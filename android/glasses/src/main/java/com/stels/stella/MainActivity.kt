@@ -1,8 +1,9 @@
-package ai.stella.glasses
+package com.stels.stella
 
 import android.Manifest
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -19,19 +20,25 @@ import androidx.appcompat.app.AppCompatActivity
  * Камера и микрофон отдаются странице; тачпад дужки приходит как DPAD/Enter/Back и обрабатывается в JS.
  */
 class MainActivity : AppCompatActivity() {
+    private companion object { const val TAG = "Stella" }
     private lateinit var web: WebView
     private val prefs by lazy { getSharedPreferences("stella", MODE_PRIVATE) }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        Log.i(TAG, "start")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         web = WebView(this).apply {
             setBackgroundColor(0xFF000000.toInt())
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onReceivedError(v: WebView, r: android.webkit.WebResourceRequest, e: android.webkit.WebResourceError) {
+                    Log.w(TAG, "load error: ${e.description}")
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(r: PermissionRequest) = r.grant(r.resources)
             }

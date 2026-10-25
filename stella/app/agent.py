@@ -113,7 +113,24 @@ async def run_tool(name: str, a: dict):
     return {"error": f"неизвестный инструмент {name}"}
 
 
+TOOL_LABELS = {
+    "remember": "Запоминаю", "calendar_list": "Смотрю календарь", "calendar_add": "Записываю в календарь",
+    "calendar_move": "Переношу событие", "recent_messages": "Читаю сообщения", "draft_reply": "Пишу ответ",
+    "send_reply": "Отправляю", "home_list": "Опрашиваю дом", "home_action": "Управляю домом",
+    "washer_start": "Готовлю стирку", "start_voice_reply": "Включаю запись", "start_meeting": "Запускаю режим",
+    "stop_meeting": "Готовлю резюме", "model3d": "Строю 3D-модель", "find_item": "Ищу в памяти",
+}
+
+
 async def ask(text: str) -> str:
+    bus.publish("busy", on=True, label="Думаю")
+    try:
+        return await _ask(text)
+    finally:
+        bus.publish("busy", on=False)
+
+
+async def _ask(text: str) -> str:
     db.x("INSERT INTO history(role,content,ts) VALUES('user',?,?)", (text, time.time()))
     hist = [{"role": r["role"], "content": r["content"]} for r in
             reversed(db.q("SELECT role,content FROM history ORDER BY id DESC LIMIT 12"))]
@@ -131,6 +148,7 @@ async def ask(text: str) -> str:
                 args = json.loads(c["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
+            bus.publish("busy", on=True, label=TOOL_LABELS.get(c["function"]["name"], "Выполняю"))
             res = await run_tool(c["function"]["name"], args)
             msgs.append({"role": "tool", "tool_call_id": c["id"],
                          "content": json.dumps(res, ensure_ascii=False)})

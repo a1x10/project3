@@ -23,12 +23,23 @@
 #cam{position:absolute;width:1px;height:1px;opacity:0}
 #sub{position:absolute;left:0;right:0;bottom:30px;padding:8px 12px;background:#000c;font-size:19px;display:none}
 #hint{color:#000;background:var(--g);padding:4px 8px;margin-top:4px;display:none}
+#busy{position:absolute;left:0;right:0;bottom:30px;padding:6px 14px;background:#000;border-top:1px solid var(--g);display:none;z-index:6}
+#busy .l{display:flex;gap:8px;align-items:center}#spin{display:inline-block;width:1.2em}
+#busy .bar{width:100%;margin:6px 0 0}
+#wave{display:flex;gap:3px;align-items:flex-end;height:34px;margin-top:6px}#wave i{flex:1;background:var(--g);height:4px;transition:height .08s}
+#boot{position:absolute;inset:0;background:#000;z-index:10;display:none;flex-direction:column;justify-content:center;padding:0 18px}
+#boot .t{font-size:24px;margin-bottom:10px}#boot .p{height:12px;border:1px solid var(--g)}#boot .p i{display:block;height:100%;width:0;background:var(--g);transition:width .9s ease-out}
+#boot .s{margin-top:10px;color:#1f9a40;min-height:3.4em}
+.fade{animation:fd .25s ease-out}@keyframes fd{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.dots::after{content:"";animation:dt 1.2s steps(4) infinite}@keyframes dt{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;z-index:8}
 #cfg{padding:20px}#cfg input{width:100%;background:#000;color:var(--g);border:1px solid var(--g);padding:8px;font:inherit;margin:6px 0}
 </style></head><body>
 <div id="top"><span>STELLA</span><span id="clock"></span><span id="st" class="off">● offline</span></div>
 <div id="main"></div>
 <div id="toast"></div>
+<div id="busy"><div class="l"><span id="spin">⠋</span><span id="blabel"></span></div><div class="bar"><i></i></div><div id="wave" style="display:none"></div></div>
+<div id="boot"><div class="t"></div><div class="p"><i></i></div><div class="s"></div></div>
 <div id="overlay"></div>
 <div id="sub"><div id="subt"></div><div id="hint"></div></div>
 <div id="foot"><span>◀ ▶ выбор · ⏎ ок · ▲ назад</span><span>V голос · C камера</span></div>
@@ -41,6 +52,27 @@ let KEY=store.get("stella_key"),BASE=store.get("stella_base")||location.origin;
 const H=()=>({Authorization:"Bearer "+KEY});
 const MENU=[["Сообщения","messages"],["Календарь","calendar"],["Дом","home"],["Зрение","vision"],["Лица","faces"],["Память","memory"],["Совещание","meeting"],["3D-модель","lab"]];
 let screen="menu",idx=0,list=[],lastHud="Готова.",busy=false;
+
+
+/* ---------- анимации: занятость, запись, запуск режимов ---------- */
+const FR="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";let spinI=0,spinT=null,busyN=0;
+function busyOn(label,wave){
+  busyN++;$("blabel").textContent=label;$("blabel").className="dots";$("busy").style.display="block";$("wave").style.display=wave?"flex":"none";
+  if(!spinT)spinT=setInterval(()=>{$("spin").textContent=FR[spinI=(spinI+1)%FR.length]},90);
+}
+function busyOff(force){
+  busyN=force?0:Math.max(0,busyN-1);
+  if(busyN===0){$("busy").style.display="none";clearInterval(spinT);spinT=null}
+}
+const waveEl=$("wave");for(let i=0;i<14;i++)waveEl.appendChild(document.createElement("i"));
+function waveLevel(l){[...waveEl.children].forEach((b,i)=>{const v=Math.min(1,l*(0.6+0.4*Math.sin(Date.now()/90+i)));b.style.height=(4+v*30)+"px"})}
+function bootAnim(title,lines,after){
+  const b=$("boot");b.style.display="flex";b.querySelector(".t").textContent=title;
+  const bar=b.querySelector(".p i"),st=b.querySelector(".s");bar.style.transition="none";bar.style.width="0";st.textContent="";
+  requestAnimationFrame(()=>{bar.style.transition="width .9s ease-out";bar.style.width="100%"});
+  lines.forEach((t,i)=>setTimeout(()=>{st.textContent=t},i*300));
+  setTimeout(()=>{b.style.display="none";if(after)after()},1000+lines.length*0);
+}
 
 /* ---------- голос на выход ---------- */
 function speak(t){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="ru-RU";speechSynthesis.speak(u)}catch(e){}}
@@ -57,7 +89,7 @@ function render(){
   if(!KEY){m.innerHTML='<div id="cfg"><div class="big">Stella</div>Адрес сервера и ключ:<input id="b" value="'+BASE+'"><input id="k" type="password" placeholder="STELLA_API_KEY"><div class="it sel" id="ok">Подключить</div></div>';
     $("ok").onclick=()=>{BASE=$("b").value.replace(/\/$/,"");KEY=$("k").value;store.set("stella_key",KEY);store.set("stella_base",BASE);connect();render()};return}
   if(screen==="menu"){
-    m.innerHTML='<div class="dim" style="margin-bottom:8px">'+esc(lastHud).slice(0,90)+'</div><div class="menu">'+
+    m.className="";m.innerHTML='<div class="dim" style="margin-bottom:8px">'+esc(lastHud).slice(0,90)+'</div><div class="menu">'+
       MENU.map((x,i)=>'<div class="it'+(i===idx?' sel':'')+'">'+x[0]+'</div>').join("")+"</div>";return}
   const title=(MENU.find(x=>x[1]===screen)||[screen])[0];
   let body="";
@@ -67,20 +99,22 @@ function render(){
   else if(screen==="faces")body='<div class="big">Лица</div>⏎ — кто напротив? (только база /admin)';
   else if(screen==="memory")body='<div class="big">Память</div>⏎ — запомнить, что вижу.<br>Спросить «где ключи?» — клавиша V.';
   else if(screen==="meeting")body='<div class="big">Совещание</div>⏎ — старт/стоп.<br>Субтитры и подсказки на линзе.';
-  m.innerHTML='<div class="big" style="margin-bottom:8px">'+title+"</div>"+body;
+  m.className="fade";m.innerHTML='<div class="big" style="margin-bottom:8px">'+title+"</div>"+body;
 }
 const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
 async function api(path,opt={}){const r=await fetch(BASE+path,{...opt,headers:{...H(),...(opt.headers||{})}});if(!r.ok)throw new Error(r.status);return r.json()}
 
+const BOOT={vision:["ЗРЕНИЕ",["Включаю камеру…","Настраиваю модель зрения…","Готово"]],faces:["РАСПОЗНАВАНИЕ ЛИЦ",["Включаю камеру…","Загружаю базу…","Готово"]],memory:["ПАМЯТЬ",["Включаю камеру…","Открываю архив…","Готово"]]};
 async function openScreen(s){
-  screen=s;idx=0;list=[];render();
+  if(BOOT[s]){bootAnim(BOOT[s][0],BOOT[s][1]);frame().catch(()=>{})}
+  screen=s;idx=0;list=[];if(["messages","calendar","home"].includes(s))busyOn("Загружаю");render();
   try{
     if(s==="messages")list=(await api("/api/messages")).map(r=>(r.importance==="urgent"?"! ":"")+r.sender+": "+r.text);
     if(s==="calendar")list=(await api("/api/calendar")).map(e=>e.error||((e.start||"").slice(5,16).replace("T"," ")+" "+e.title));
     if(s==="home")list=(await api("/api/home")).map(d=>(d.name||d.entity)+" — "+d.state);
   }catch(e){list=["ошибка: "+e.message]}
-  render();
+  busyOff(true);render();
 }
 
 /* ---------- камера ---------- */
@@ -92,11 +126,11 @@ async function frame(){
   return new Promise(r=>c.toBlob(r,"image/jpeg",0.8));
 }
 async function post(path,field,blob,name){const f=new FormData();f.append(field,blob,name);return api(path,{method:"POST",body:f})}
-async function guarded(fn){if(busy)return;busy=true;try{await fn()}catch(e){toast("Ошибка: "+e.message)}finally{busy=false}}
+async function guarded(fn){if(busy)return;busy=true;try{await fn()}catch(e){toast("Ошибка: "+e.message)}finally{busy=false;busyOff(true)}}
 
-const doVision=()=>guarded(async()=>{toast("Смотрю…",3000);const r=await post("/vision/look","image",await frame(),"f.jpg");if(!r.text)toast("Ничего важного.",2000)});
-const doFace=()=>guarded(async()=>{await post("/faces/identify","image",await frame(),"f.jpg")});
-const doMemory=()=>guarded(async()=>{await post("/vision/remember","image",await frame(),"f.jpg")});
+const doVision=()=>guarded(async()=>{busyOn("Смотрю");const r=await post("/vision/look","image",await frame(),"f.jpg");if(!r.text)toast("Ничего важного.",2000)});
+const doFace=()=>guarded(async()=>{busyOn("Снимаю");await post("/faces/identify","image",await frame(),"f.jpg")});
+const doMemory=()=>guarded(async()=>{busyOn("Запоминаю");await post("/vision/remember","image",await frame(),"f.jpg")});
 
 /* ---------- запись голоса ---------- */
 let mic;
@@ -109,21 +143,22 @@ async function record(maxMs,stopOnSilence=true){
   const buf=new Uint8Array(an.fftSize);rec.start();
   const t0=Date.now();let lastVoice=t0,heard=false;
   const iv=setInterval(()=>{an.getByteTimeDomainData(buf);let m=0;for(const b of buf)m=Math.max(m,Math.abs(b-128));
-    if(m>12){lastVoice=Date.now();heard=true}
+    waveLevel(m/90);if(m>12){lastVoice=Date.now();heard=true}
     if(Date.now()-t0>maxMs||(stopOnSilence&&heard&&Date.now()-lastVoice>1400)||(stopOnSilence&&!heard&&Date.now()-t0>6000))rec.stop()},120);
   await done;clearInterval(iv);ctx.close();
   return new Blob(chunks,{type:rec.mimeType||"audio/webm"});
 }
 const ext=b=>b.type.includes("ogg")?"ogg":b.type.includes("mp4")?"m4a":"webm";
-const doVoice=()=>guarded(async()=>{toast("Слушаю…",8000);const b=await record(15000);toast("Думаю…",8000);const r=await post("/voice","audio",b,"v."+ext(b));if(!r.heard)toast("Не расслышала.",2500)});
+const doVoice=()=>guarded(async()=>{busyOn("Слушаю",true);const b=await record(15000);busyOff(true);busyOn("Распознаю");const r=await post("/voice","audio",b,"v."+ext(b));if(!r.heard)toast("Не расслышала.",2500)});
 
 /* ---------- голосовой ответ (событие record) ---------- */
-async function voiceReply(sender,sec){await guarded(async()=>{toast("Диктуйте ответ для "+sender+"…",sec*1000);const b=await record(sec*1000);await post("/voice/reply?sender="+encodeURIComponent(sender),"audio",b,"v."+ext(b))})}
+async function voiceReply(sender,sec){await guarded(async()=>{busyOn("Диктуйте ответ для "+sender,true);const b=await record(sec*1000);busyOff(true);busyOn("Отправляю на проверку");await post("/voice/reply?sender="+encodeURIComponent(sender),"audio",b,"v."+ext(b))})}
 
 /* ---------- совещание ---------- */
 let meetOn=false;
 async function toggleMeeting(){
-  if(meetOn){meetOn=false;const r=await api("/meeting/stop",{method:"POST"});$("sub").style.display="none";toast(r.summary||"Совещание завершено.",15000);return}
+  if(meetOn){meetOn=false;busyOn("Готовлю резюме");let r;try{r=await api("/meeting/stop",{method:"POST"})}finally{busyOff(true)}$("sub").style.display="none";toast(r.summary||"Совещание завершено.",15000);return}
+  bootAnim("РЕЖИМ: СОВЕЩАНИЕ",["Включаю микрофон…","Подключаю распознавание…","Готова слушать"]);
   await api("/meeting/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"meeting",context:""})});
   meetOn=true;$("sub").style.display="block";(async()=>{
     while(meetOn){try{const b=await record(4000,false);if(!meetOn)break;await post("/meeting/chunk","audio",b,"c."+ext(b))}catch(e){await new Promise(r=>setTimeout(r,1500))}}})();
@@ -131,7 +166,7 @@ async function toggleMeeting(){
 
 /* ---------- 3D ---------- */
 function openLab(spec){
-  closeLab();const f=document.createElement("iframe");f.id="lab";f.src="/lab3d";document.body.appendChild(f);
+  closeLab();bootAnim("3D-ЛАБОРАТОРИЯ",["Загружаю движок…","Строю сетку…","Готово"]);const f=document.createElement("iframe");f.id="lab";f.src="/lab3d";document.body.appendChild(f);
   f.onload=()=>{if(spec)f.contentWindow.postMessage({model:spec},"*")};
 }
 const closeLab=()=>{const f=$("lab");if(f)f.remove()};
@@ -147,6 +182,7 @@ function connect(){
 }
 function onEvent(m){
   switch(m.type){
+    case"busy":if(m.on)busyOn(m.label||"Думаю");else busyOff(true);break;
     case"hud":toast(m.text);if(screen==="menu")render();break;
     case"speak":speak(m.text);break;
     case"scan":overlay('<div class="big scan">Сканирую лицо…</div><div class="bar"><i></i></div>');break;
