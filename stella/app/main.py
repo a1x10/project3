@@ -93,7 +93,11 @@ class ChatIn(BaseModel):
 
 @app.post("/chat", dependencies=Auth)
 async def chat(body: ChatIn):
-    ans = await agent.ask(body.text)
+    try:
+        ans = await agent.ask(body.text)
+    except Exception as e:
+        print(f"[chat] brain error: {e}")
+        raise HTTPException(502, f"мозг недоступен: {str(e)[:200]}")
     bus.publish("hud", text=ans)
     if body.speak:
         bus.publish("speak", text=ans)
@@ -371,6 +375,18 @@ WAKE = re.compile(r"\b(стел+а|стэл+а|стеля|stel+a|stella)\b[\s,.:
 JUNK = re.compile(r"субтитры|продолжение следует|спасибо за просмотр|подписывайтесь", re.I)
 
 
+_last_warn = 0.0
+
+
+def _brain_warn(why: str):
+    """Не чаще раза в 20 с, чтобы не заспамить экран."""
+    global _last_warn
+    import time as _t
+    if _t.time() - _last_warn > 20:
+        _last_warn = _t.time()
+        bus.publish("hud", text=f"⚠ {why}")
+
+
 @app.post("/voice/listen", dependencies=Auth)
 async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     """Фразы приходят постоянно. Реагируем на обращение по имени или внутри окна диалога (awake=1).
@@ -406,7 +422,14 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
         bus.publish("action", action="tv", cmd=q[0], value=q[1])
         bus.publish("hud", text=q[2])
         return {"handled": True, "heard": cmd, "text": q[2]}
-    ans = await agent.ask(cmd, weak=(level == 2 and not awake), open_mode=(level == 3 and not awake))
+    try:
+        ans = await agent.ask(cmd, weak=(level == 2 and not awake), open_mode=(level == 3 and not awake))
+    except Exception as e:
+        # мозг (Groq и т.п.) недоступен или лимит — не роняем сервер, говорим причину
+        print(f"[listen] brain error: {e}")
+        why = "лимит запросов мозга" if "429" in str(e) else "мозг недоступен"
+        _brain_warn(why)
+        return {"handled": False, "dbg": text, "error": str(e)[:200]}
     if ans.strip(" .…") == "":
         return {"handled": False, "dbg": text}
     bus.publish("hud", text=ans)
