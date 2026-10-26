@@ -381,9 +381,14 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     if not text or JUNK.search(text):
         return {"handled": False}
     level, cmd = wake.split(text)
+    open_mode = not config.WAKE_REQUIRED
+    if config.STT_DEBUG:
+        print(f"[listen] heard={text!r} level={level} awake={awake} open={open_mode}")
     if level == 0 and not awake:
-        return {"handled": False}
-    if stt.use_scribe("accurate") and not stt.use_scribe("gate"):
+        if not open_mode:
+            return {"handled": False, "dbg": text if config.STT_DEBUG else None}
+        level, cmd = 3, text.strip()              # 3 = без обращения: решает мозг
+    if stt.use_scribe("accurate") and not stt.use_scribe("gate") and level != 3:
         # hybrid: к ней обращаются — перераспознаём ту же запись точнее и заново ищем имя
         better = await asyncio.to_thread(stt.transcribe, data, "." + ext, "accurate")
         if better and not JUNK.search(better):
@@ -391,18 +396,20 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
             if lv2 or awake:
                 level, cmd = lv2, cmd2
     if len(cmd) < 2:
+        if level == 3:
+            return {"handled": False}
         return {"handled": True, "ack": True}
     q = quick.match(cmd)
     if q:      # громче/тише/без звука — сразу на ТВ, без мозга
         bus.publish("action", action="tv", cmd=q[0], value=q[1])
         bus.publish("hud", text=q[2])
         return {"handled": True, "heard": cmd, "text": q[2]}
-    ans = await agent.ask(cmd, weak=(level == 2 and not awake))
+    ans = await agent.ask(cmd, weak=(level == 2 and not awake), open_mode=(level == 3 and not awake))
     if ans.strip(" .…") == "":
-        return {"handled": False}
+        return {"handled": False, "dbg": text if config.STT_DEBUG else None}
     bus.publish("hud", text=ans)
     bus.publish("speak", text=ans)
-    return {"handled": True, "heard": cmd, "text": ans}
+    return {"handled": True, "heard": cmd, "text": ans, "dbg": text if config.STT_DEBUG else None}
 
 
 # ---------- голос ElevenLabs ----------
