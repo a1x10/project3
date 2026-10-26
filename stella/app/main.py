@@ -420,7 +420,7 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "gate")
     if config.STT_DEBUG and not text:
         print(f"[listen] пусто: Whisper ничего не услышал ({len(data)} байт)")
-    if not text or JUNK.search(text):
+    if not text or JUNK.search(text) or stt.is_junk(text):
         return {"handled": False}
     level, cmd = wake.split(text)
     open_mode = not config.WAKE_REQUIRED
@@ -433,7 +433,7 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     if stt.use_scribe("accurate") and not stt.use_scribe("gate") and level != 3:
         # hybrid: к ней обращаются — перераспознаём ту же запись точнее и заново ищем имя
         better = await asyncio.to_thread(stt.transcribe, data, "." + ext, "accurate")
-        if better and not JUNK.search(better):
+        if better and not JUNK.search(better) and not stt.is_junk(better):
             lv2, cmd2 = wake.split(better)
             if lv2 or awake:
                 level, cmd = lv2, cmd2
