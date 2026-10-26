@@ -39,6 +39,8 @@ STT_SCRIBE_ON_EMPTY = os.getenv("STT_SCRIBE_ON_EMPTY", "1") == "1"   # пуст�
 STT_RATE_FIX = float(os.getenv("STT_RATE_FIX", "1.0"))
 # 1 = очки запрашивают микрофон без шумоподавления/усиления/моно (иногда помогает от искажения скорости)
 MIC_RAW = os.getenv("MIC_RAW", "0") == "1"
+# 1 = очки записывают «сырой» звук (PCM/WAV) вместо кодека браузера: лечит искажённый голос на старых WebView
+MIC_PCM = os.getenv("MIC_PCM", "1") == "1"
 STT_BOOST = os.getenv("STT_BOOST", "1") == "1"       # выравнивание громкости перед распознаванием
 STT_DEBUG = os.getenv("STT_DEBUG", "0") == "1"           # писать в лог, что услышала (на экране тоже)
 WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на искажения имени (стала, стол, что…) как на первое слово

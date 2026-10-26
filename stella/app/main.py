@@ -82,7 +82,7 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled(), "tts": tts.enabled(), "mic_raw": config.MIC_RAW}
+    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled(), "tts": tts.enabled(), "mic_raw": config.MIC_RAW, "mic_pcm": config.MIC_PCM}
 
 
 # ---------- диалог ----------
@@ -399,7 +399,7 @@ async def debug_last(n: int = 1, rate: float = 0):
         with open(os.path.join(d, name), "rb") as f:
             raw = f.read()
         return Response(await asyncio.to_thread(stt._boost, raw, "." + name.rsplit(".", 1)[-1], rate), media_type="audio/wav")
-    return FileResponse(os.path.join(d, name), media_type="audio/webm" if name.endswith("webm") else None)
+    return FileResponse(os.path.join(d, name), media_type="audio/webm" if name.endswith("webm") else ("audio/wav" if name.endswith("wav") else None))
 
 
 _last_warn = 0.0
