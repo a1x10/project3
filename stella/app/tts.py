@@ -10,6 +10,18 @@ _DIR = os.path.join(config.DATA_DIR, "tts")
 _MAX_FILES = 400
 
 
+FALLBACK = "eleven_flash_v2_5"
+
+
+async def _request(text: str, model: str, settings: dict) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=40) as c:
+        return await c.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{config.ELEVENLABS_VOICE_ID}",
+            params={"output_format": "mp3_44100_64"},
+            headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+            json={"text": text, "model_id": model, "voice_settings": settings})
+
+
 def enabled() -> bool:
     return bool(config.ELEVENLABS_API_KEY)
 
@@ -29,13 +41,14 @@ async def synth(text: str) -> bytes:
         os.utime(path)
         with open(path, "rb") as f:
             return f.read()
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{config.ELEVENLABS_VOICE_ID}",
-            params={"output_format": "mp3_44100_64"},
-            headers={"xi-api-key": config.ELEVENLABS_API_KEY},
-            json={"text": text, "model_id": config.ELEVENLABS_MODEL,
-                  "voice_settings": {"stability": 0.45, "similarity_boost": 0.8, "speed": 1.05}})
+    settings = {"stability": config.ELEVENLABS_STABILITY, "similarity_boost": config.ELEVENLABS_SIMILARITY}
+    if config.ELEVENLABS_SPEED:
+        settings["speed"] = float(config.ELEVENLABS_SPEED)
+    r = await _request(text, config.ELEVENLABS_MODEL, settings)
+    if r.status_code >= 400 and config.ELEVENLABS_MODEL != FALLBACK:
+        # неверное имя модели или модель недоступна на тарифе — один раз пробуем быструю
+        print(f"[tts] {config.ELEVENLABS_MODEL} -> {r.status_code}: {r.text[:200]}; fallback {FALLBACK}")
+        r = await _request(text, FALLBACK, {k: v for k, v in settings.items() if k != "speed"})
     if r.status_code >= 400:
         raise RuntimeError(f"ElevenLabs {r.status_code}: {r.text[:300]}")
     with open(path, "wb") as f:
