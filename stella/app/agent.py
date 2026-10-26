@@ -20,6 +20,8 @@ def system_prompt() -> str:
         "«перекинь на 4» = перенеси событие на 4 часа. Не переспрашивай по мелочам — действуй по самому вероятному смыслу. "
         "Переспрашивай одним коротким вопросом, только если от выбора зависит что-то необратимое (отправка, замок, стирка) или вариантов реально несколько.\n"
         "Если фраза явно не к тебе (обрывок чужого разговора) — ответь ровно: ...\n"
+        "Каждая новая фраза — самостоятельная; старую тему продолжай, только если пользователь явно на неё ссылается («да», «отправляй», «перенеси на 4»). "
+        "Простые вопросы («как дела», «привет», «кто ты») — просто отвечай, без инструментов.\n"
         "Правила:\n"
         "- Важные факты о пользователе сохраняй инструментом remember.\n"
         "- Ответ на чужое сообщение: сначала draft_reply, покажи текст, отправляй (send_reply) только после явного согласия.\n"
@@ -160,7 +162,7 @@ async def ask(text: str, weak: bool = False, open_mode: bool = False) -> str:
 async def _ask(text: str, weak: bool = False, open_mode: bool = False) -> str:
     db.x("INSERT INTO history(role,content,ts) VALUES('user',?,?)", (text, time.time()))
     hist = [{"role": r["role"], "content": r["content"]} for r in
-            reversed(db.q("SELECT role,content FROM history ORDER BY id DESC LIMIT 16"))]
+            reversed(db.q("SELECT role,content FROM history WHERE ts>? ORDER BY id DESC LIMIT 8", (time.time() - 480,)))]
     sys_p = system_prompt()
     if weak:
         sys_p += ("\nВАЖНО: обращение распознано неуверенно: первое слово фразы могло быть искажённым именем «Стелла» "
