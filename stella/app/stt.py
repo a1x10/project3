@@ -109,6 +109,10 @@ def _post(url: str, **kw) -> httpx.Response:     # отдельная функц
 
 
 def scribe(data: bytes, suffix: str = ".webm") -> str:
+    if config.STT_BOOST:                      # тихий микрофон очков: чистим гул и выравниваем громкость
+        boosted = _boost(data, suffix)
+        if boosted is not data:
+            data, suffix = boosted, ".wav"
     mime = mimetypes.types_map.get(suffix, "audio/webm")
     form = {"model_id": config.ELEVENLABS_STT_MODEL, "tag_audio_events": "false", "diarize": "false"}
     if config.WHISPER_LANG:
