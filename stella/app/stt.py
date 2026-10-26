@@ -40,17 +40,42 @@ def _boost(data: bytes, suffix: str) -> bytes:
         return data
 
 
+def _vad_params() -> dict:
+    """Мягкий фильтр речи для тихого микрофона. Имена параметров зависят от версии faster-whisper."""
+    try:
+        import dataclasses
+        from faster_whisper.vad import VadOptions
+        names = {f.name for f in dataclasses.fields(VadOptions)}
+    except Exception:
+        return {}
+    p = {}
+    if "onset" in names:
+        p.update(onset=0.25, offset=0.1)
+    elif "threshold" in names:
+        p["threshold"] = 0.25
+    if "min_silence_duration_ms" in names:
+        p["min_silence_duration_ms"] = 600
+    if "speech_pad_ms" in names:
+        p["speech_pad_ms"] = 300
+    return p
+
+
 def whisper(data: bytes, suffix: str = ".wav") -> str:
     load()
     data = _boost(data, suffix)
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         f.write(data)
         f.flush()
-        segs, _ = _model.transcribe(f.name, language=config.WHISPER_LANG or None, vad_filter=True,
-                                    vad_parameters={"threshold": 0.25, "min_silence_duration_ms": 600, "speech_pad_ms": 300},
-                                    no_speech_threshold=0.8, condition_on_previous_text=False,
-                                    initial_prompt="Стелла, привет. Стелла, запиши в календарь.")
-        return " ".join(s.text.strip() for s in segs).strip()
+        common = dict(language=config.WHISPER_LANG or None, condition_on_previous_text=False,
+                      initial_prompt="Стелла, привет. Стелла, запиши в календарь.")
+        try:
+            segs, _ = _model.transcribe(f.name, vad_filter=True, vad_parameters=_vad_params(),
+                                        no_speech_threshold=0.8, **common)
+            return " ".join(s.text.strip() for s in segs).strip()
+        except Exception as e:          # любая несовместимость параметров — простой режим, но не 500
+            print(f"[stt] whisper advanced params failed ({e}); retry simple")
+            segs, _ = _model.transcribe(f.name, vad_filter=True, **common)
+            return " ".join(s.text.strip() for s in segs).strip()
 
 
 def _post(url: str, **kw) -> httpx.Response:     # отдельная функция — удобно подменять в тестах
