@@ -60,6 +60,15 @@ def _vad_params() -> dict:
     return p
 
 
+def _segments(path: str, vad: bool, common: dict):
+    if vad:
+        segs, _ = _model.transcribe(path, vad_filter=True, vad_parameters=_vad_params(), no_speech_threshold=0.8, **common)
+        return [s.text.strip() for s in segs]
+    # без фильтра речи: отбрасываем сегменты, которые Whisper сам считает шумом
+    segs, _ = _model.transcribe(path, vad_filter=False, no_speech_threshold=0.6, **common)
+    return [s.text.strip() for s in segs if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0]
+
+
 def whisper(data: bytes, suffix: str = ".wav") -> str:
     load()
     data = _boost(data, suffix)
@@ -68,14 +77,15 @@ def whisper(data: bytes, suffix: str = ".wav") -> str:
         f.flush()
         common = dict(language=config.WHISPER_LANG or None, condition_on_previous_text=False,
                       initial_prompt="Стелла, привет. Стелла, запиши в календарь.")
-        try:
-            segs, _ = _model.transcribe(f.name, vad_filter=True, vad_parameters=_vad_params(),
-                                        no_speech_threshold=0.8, **common)
-            return " ".join(s.text.strip() for s in segs).strip()
-        except Exception as e:          # любая несовместимость параметров — простой режим, но не 500
-            print(f"[stt] whisper advanced params failed ({e}); retry simple")
-            segs, _ = _model.transcribe(f.name, vad_filter=True, **common)
-            return " ".join(s.text.strip() for s in segs).strip()
+        for vad in (True, False):       # сначала с фильтром речи, при пустом результате — без него
+            try:
+                text = " ".join(_segments(f.name, vad, common)).strip()
+            except Exception as e:
+                print(f"[stt] whisper vad={vad} failed: {e}")
+                continue
+            if text:
+                return text
+        return ""
 
 
 def _post(url: str, **kw) -> httpx.Response:     # отдельная функция — удобно подменять в тестах
@@ -110,4 +120,13 @@ def transcribe(data: bytes, suffix: str = ".wav", quality: str = "gate") -> str:
             return scribe(data, suffix)
         except Exception as e:         # нет интернета/кончились минуты — работаем на Whisper
             print(f"[stt] scribe failed, whisper fallback: {e}")
-    return whisper(data, suffix)
+    text = whisper(data, suffix)
+    # Whisper ничего не услышал, а запись не пустая — второе мнение у Scribe (STT_SCRIBE_ON_EMPTY=0 отключает)
+    if (not text and len(data) > 5000 and config.STT_SCRIBE_ON_EMPTY and config.ELEVENLABS_API_KEY
+            and config.STT_ENGINE != "whisper" and quality == "gate"):
+        try:
+            text = scribe(data, suffix)
+            print(f"[stt] whisper пусто -> scribe: {text!r}")
+        except Exception as e:
+            print(f"[stt] scribe (second opinion) failed: {e}")
+    return text

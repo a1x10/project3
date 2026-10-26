@@ -375,6 +375,28 @@ WAKE = re.compile(r"\b(стел+а|стэл+а|стеля|stel+a|stella)\b[\s,.:
 JUNK = re.compile(r"субтитры|продолжение следует|спасибо за просмотр|подписывайтесь", re.I)
 
 
+def _keep_debug_audio(data: bytes, ext: str):
+    """Последние 8 записей лежат в data/debug: можно послушать, что реально слышит микрофон очков."""
+    d = os.path.join(config.DATA_DIR, "debug")
+    os.makedirs(d, exist_ok=True)
+    import time as _t
+    with open(os.path.join(d, f"{int(_t.time()*1000)}.{ext}"), "wb") as f:
+        f.write(data)
+    files = sorted(os.listdir(d))
+    for old in files[:-8]:
+        os.remove(os.path.join(d, old))
+
+
+@app.get("/debug/last", dependencies=Auth)
+async def debug_last(n: int = 1):
+    d = os.path.join(config.DATA_DIR, "debug")
+    files = sorted(os.listdir(d)) if os.path.isdir(d) else []
+    if not files:
+        raise HTTPException(404, "нет записей (включите STT_DEBUG=1)")
+    name = files[-min(max(n, 1), len(files))]
+    return FileResponse(os.path.join(d, name), media_type="audio/webm" if name.endswith("webm") else None)
+
+
 _last_warn = 0.0
 
 
@@ -393,6 +415,8 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     Остальной разговор сразу отбрасывается и нигде не сохраняется."""
     data = await audio.read()
     ext = (audio.filename or "u.webm").rsplit(".", 1)[-1]
+    if config.STT_DEBUG:
+        _keep_debug_audio(data, ext)
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "gate")
     if config.STT_DEBUG and not text:
         print(f"[listen] пусто: Whisper ничего не услышал ({len(data)} байт)")
