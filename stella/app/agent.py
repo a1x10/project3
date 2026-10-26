@@ -176,6 +176,8 @@ async def _ask(text: str, weak: bool = False, open_mode: bool = False) -> str:
     for _ in range(6):
         m = await llm.chat(msgs, TOOLS)
         calls = m.get("tool_calls")
+        if config.STT_DEBUG:
+            print(f"[brain] in={text!r} tools={[c['function']['name'] for c in calls] if calls else None} out={(m.get('content') or '')[:160]!r}")
         if not calls:
             ans = (m.get("content") or "").strip() or "Готово."
             db.x("INSERT INTO history(role,content,ts) VALUES('assistant',?,?)", (ans, time.time()))
