@@ -12,7 +12,7 @@ import os
 import re
 import uuid
 
-from . import wake, tts, agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
+from . import quick, wake, tts, agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
 
 app = FastAPI(title="Stella Core")
 
@@ -377,12 +377,17 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
     if not text or JUNK.search(text):
         return {"handled": False}
-    addressed, cmd = wake.split(text)
-    if not addressed and not awake:
+    level, cmd = wake.split(text)
+    if level == 0 and not awake:
         return {"handled": False}
     if len(cmd) < 2:
         return {"handled": True, "ack": True}
-    ans = await agent.ask(cmd)
+    q = quick.match(cmd)
+    if q:      # громче/тише/без звука — сразу на ТВ, без мозга
+        bus.publish("action", action="tv", cmd=q[0], value=q[1])
+        bus.publish("hud", text=q[2])
+        return {"handled": True, "heard": cmd, "text": q[2]}
+    ans = await agent.ask(cmd, weak=(level == 2 and not awake))
     if ans.strip(" .…") == "":
         return {"handled": False}
     bus.publish("hud", text=ans)

@@ -32,6 +32,8 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 CONFIRM_ENTITIES = set(_list("CONFIRM_ENTITIES"))
 HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{}")).items()}
 
+WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на искажения имени (стала, стол, что…) как на первое слово
+
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")   # быстрая, понимает русский
