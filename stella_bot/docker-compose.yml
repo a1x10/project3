@@ -1,0 +1,9 @@
+services:
+  stella:
+    build: .
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    restart: always
