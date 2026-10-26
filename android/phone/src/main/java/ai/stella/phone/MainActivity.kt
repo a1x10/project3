@@ -19,15 +19,21 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(b)
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
+        val scroll = android.widget.ScrollView(this).apply { addView(root) }
         val url = EditText(this).apply { hint = "https://stella.example.com"; setText(Config.url(this@MainActivity)) }
         val key = EditText(this).apply { hint = "STELLA_API_KEY"; setText(Config.key(this@MainActivity)) }
+        val tvIp = EditText(this).apply { hint = "IP телевизора, например 192.168.1.50"; setText(Config.tvIp(this@MainActivity)) }
+        val tvKey = EditText(this).apply { hint = "Pre-Shared Key телевизора (PSK)"; setText(Config.tvKey(this@MainActivity)) }
         status = TextView(this)
         fun btn(t: String, f: () -> Unit) = Button(this).apply { text = t; setOnClickListener { f() } }
 
         root.addView(TextView(this).apply { text = "Stella — мост между очками, мессенджерами и сервером"; textSize = 18f })
         root.addView(url); root.addView(key)
+        root.addView(TextView(this).apply { text = "\nТелевизор Sony Bravia (по желанию):" })
+        root.addView(tvIp); root.addView(tvKey)
         root.addView(btn("1. Сохранить и запустить") {
             Config.set(this, url.text.toString().trim(), key.text.toString().trim())
+            Config.setTv(this, tvIp.text.toString().trim(), tvKey.text.toString().trim())
             if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
             startForegroundService(Intent(this, StellaService::class.java)); refresh()
         })
@@ -40,7 +46,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         })
         root.addView(status)
-        setContentView(root)
+        setContentView(scroll)
     }
 
     override fun onResume() { super.onResume(); refresh() }

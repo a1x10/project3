@@ -15,6 +15,11 @@ def system_prompt() -> str:
         f"Ты Стелла — личный ассистент в стиле Джарвиса для пользователя по имени {config.USER_NAME}. "
         "Отвечай по-русски, кратко: 1–2 предложения, ответ читают на маленьком экране очков. "
         f"Сейчас: {now}.\n"
+        "Речь пользователя распознаётся автоматически и часто с ошибками (имена, падежи, слова-паразиты, «эээ», обрывки). "
+        "Всегда восстанавливай смысл по контексту, истории диалога и памяти: «выруби телек» = выключи телевизор, «маме» = контакт «Мама», "
+        "«перекинь на 4» = перенеси событие на 4 часа. Не переспрашивай по мелочам — действуй по самому вероятному смыслу. "
+        "Переспрашивай одним коротким вопросом, только если от выбора зависит что-то необратимое (отправка, замок, стирка) или вариантов реально несколько.\n"
+        "Если фраза явно не к тебе (обрывок чужого разговора) — ответь ровно: ...\n"
         "Правила:\n"
         "- Важные факты о пользователе сохраняй инструментом remember.\n"
         "- Ответ на чужое сообщение: сначала draft_reply, покажи текст, отправляй (send_reply) только после явного согласия.\n"
@@ -24,6 +29,7 @@ def system_prompt() -> str:
         "- Управление только голосом: «что это/прочитай/переведи» — look_around(look); «кто это» — look_around(face); "
         "«запомни» — look_around(memory); «покажи сообщения/календарь/дом» — open_screen; «построй/покажи модель» — model3d.\n"
         "- После look_around ответь коротко («Смотрю»), результат придёт сам.\n"
+        "- Телевизор: tv_control. «Включи ютуб» — app=YouTube; «сделай потише» — volume_down; «hdmi 2» — input.\n"
         "- Не выдумывай результаты инструментов.\n"
         f"Что ты знаешь о пользователе:\n{facts}"
     )
@@ -56,6 +62,10 @@ TOOLS = [
     _tool("start_meeting", "Включить режим подсказок: meeting/interview/exam", {"mode": S, "context": S}, ["mode"]),
     _tool("stop_meeting", "Выключить режим совещания и вернуть резюме", {}),
     _tool("model3d", "Построить разборную 3D-модель механизма и показать на линзе", {"prompt": S}, ["prompt"]),
+    _tool("tv_control", "Телевизор Sony Bravia (команда уйдёт на телефон, он в домашней сети). command: power_on, power_off, "
+          "volume_up, volume_down, mute, volume_set (value 0-100), input (value: hdmi1..hdmi4, tv), app (value: название, напр. YouTube/Netflix), "
+          "key (value: home, back, up, down, left, right, confirm, play, pause, channel_up, channel_down), status",
+          {"command": S, "value": S}, ["command"]),
     _tool("look_around", "Камера очков. what: look (прочитать/понять, что вижу), face (кто напротив — только база лиц), "
           "memory (запомнить, что вижу и где лежит)", {"what": S}, ["what"]),
     _tool("open_screen", "Показать экран на очках: messages, calendar, home, vision, faces, memory, meeting, lab, menu", {"screen": S}, ["screen"]),
@@ -112,6 +122,9 @@ async def run_tool(name: str, a: dict):
             spec = await model3d.generate(a["prompt"])
             bus.publish("model3d", spec=spec)
             return {"status": "shown", "title": spec["title"], "parts": len(spec["parts"])}
+        if name == "tv_control":
+            bus.publish("action", action="tv", cmd=a["command"], value=str(a.get("value", "")))
+            return {"status": "sent_to_phone", "note": "Если не сработает, придёт сообщение об ошибке. Ответьте коротко."}
         if name == "look_around":
             if a["what"] not in ("look", "face", "memory"):
                 return {"error": "what: look/face/memory"}
@@ -132,7 +145,7 @@ TOOL_LABELS = {
     "calendar_move": "Переношу событие", "recent_messages": "Читаю сообщения", "draft_reply": "Пишу ответ",
     "send_reply": "Отправляю", "home_list": "Опрашиваю дом", "home_action": "Управляю домом",
     "washer_start": "Готовлю стирку", "start_voice_reply": "Включаю запись", "start_meeting": "Запускаю режим",
-    "stop_meeting": "Готовлю резюме", "look_around": "Включаю камеру", "open_screen": "Открываю", "model3d": "Строю 3D-модель", "find_item": "Ищу в памяти",
+    "stop_meeting": "Готовлю резюме", "look_around": "Включаю камеру", "tv_control": "Управляю телевизором", "open_screen": "Открываю", "model3d": "Строю 3D-модель", "find_item": "Ищу в памяти",
 }
 
 
@@ -147,7 +160,7 @@ async def ask(text: str) -> str:
 async def _ask(text: str) -> str:
     db.x("INSERT INTO history(role,content,ts) VALUES('user',?,?)", (text, time.time()))
     hist = [{"role": r["role"], "content": r["content"]} for r in
-            reversed(db.q("SELECT role,content FROM history ORDER BY id DESC LIMIT 12"))]
+            reversed(db.q("SELECT role,content FROM history ORDER BY id DESC LIMIT 16"))]
     msgs = [{"role": "system", "content": system_prompt()}, *hist]
     for _ in range(6):
         m = await llm.chat(msgs, TOOLS)

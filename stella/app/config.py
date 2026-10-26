@@ -32,6 +32,10 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 CONFIRM_ENTITIES = set(_list("CONFIRM_ENTITIES"))
 HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{}")).items()}
 
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")   # быстрая, понимает русский
+
 WASHER_ENTITY = os.getenv("WASHER_ENTITY", "")                # switch/button запуска
 WASHER_PROGRAM_SELECT = os.getenv("WASHER_PROGRAM_SELECT", "")  # select.* выбора режима
 WASHER_PROGRAMS = json.loads(os.getenv("WASHER_PROGRAMS", "{}"))  # {"cotton":"Cotton 60","delicate":"..."}

@@ -62,6 +62,10 @@ class StellaService : Service() {
         if (e.optString("type") != "action") return
         val sender = e.optString("sender"); val key = e.optString("key"); val text = e.optString("text")
         when (e.optString("action")) {
+            "tv" -> io.execute {
+                val err = BraviaClient.run(this, e.optString("cmd"), e.optString("value"))
+                if (err != null) Api.post(this, "/alert", JSONObject().put("source", "телевизор").put("text", err).put("speak", false))
+            }
             "reply" -> NotifListener.sendText(this, key, sender, text)
             "reply_voice" -> io.execute {
                 val f = File(cacheDir, "voice/reply.ogg")

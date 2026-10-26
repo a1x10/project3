@@ -12,7 +12,7 @@ import os
 import re
 import uuid
 
-from . import agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
+from . import wake, tts, agent, bus, calendar_g, config, db, faces, habits, home, meeting, model3d, notifs, stt, vision
 
 app = FastAPI(title="Stella Core")
 
@@ -79,7 +79,7 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled()}
+    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled(), "tts": tts.enabled()}
 
 
 # ---------- диалог ----------
@@ -377,16 +377,31 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
     if not text or JUNK.search(text):
         return {"handled": False}
-    m = WAKE.search(text[:40])
-    if m:
-        cmd = (text[:m.start()] + " " + text[m.end():]).strip(" ,.!?-")
-    elif awake:
-        cmd = text.strip()
-    else:
+    addressed, cmd = wake.split(text)
+    if not addressed and not awake:
         return {"handled": False}
     if len(cmd) < 2:
         return {"handled": True, "ack": True}
     ans = await agent.ask(cmd)
+    if ans.strip(" .…") == "":
+        return {"handled": False}
     bus.publish("hud", text=ans)
     bus.publish("speak", text=ans)
     return {"handled": True, "heard": cmd, "text": ans}
+
+
+# ---------- голос ElevenLabs ----------
+class TTSIn(BaseModel):
+    text: str
+
+
+@app.post("/tts", dependencies=Auth)
+async def tts_make(t: TTSIn):
+    from fastapi.responses import Response
+    if not tts.enabled():
+        raise HTTPException(503, "ELEVENLABS_API_KEY не задан")
+    try:
+        return Response(await tts.synth(t.text), media_type="audio/mpeg")
+    except Exception as e:
+        print(f"[tts] {e}")
+        raise HTTPException(502, str(e)[:200])
