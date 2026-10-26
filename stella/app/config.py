@@ -37,6 +37,9 @@ WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на �
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")   # быстрая, понимает русский
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.5"))
+ELEVENLABS_SIMILARITY = float(os.getenv("ELEVENLABS_SIMILARITY", "0.75"))
+ELEVENLABS_SPEED = os.getenv("ELEVENLABS_SPEED", "")   # пусто = по умолчанию (v3 параметр speed не принимает)
 
 WASHER_ENTITY = os.getenv("WASHER_ENTITY", "")                # switch/button запуска
 WASHER_PROGRAM_SELECT = os.getenv("WASHER_PROGRAM_SELECT", "")  # select.* выбора режима
