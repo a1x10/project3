@@ -6,6 +6,8 @@ quality:
   stream   — непрерывные куски совещания (Scribe только в режиме elevenlabs)
 """
 import mimetypes
+import shutil
+import subprocess
 import tempfile
 
 import httpx
@@ -24,12 +26,29 @@ def load():
     return _model
 
 
+def _boost(data: bytes, suffix: str) -> bytes:
+    """Тихий микрофон очков: убираем гул и выравниваем громкость (ffmpeg). Нет ffmpeg/ошибка — как есть."""
+    if not shutil.which("ffmpeg"):
+        return data
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ac", "1", "-ar", "16000",
+             "-af", "highpass=f=70,dynaudnorm=f=120:g=11:p=0.9:m=20", "-f", "wav", "pipe:1"],
+            input=data, capture_output=True, timeout=20)
+        return r.stdout if r.returncode == 0 and len(r.stdout) > 1000 else data
+    except Exception:
+        return data
+
+
 def whisper(data: bytes, suffix: str = ".wav") -> str:
     load()
-    with tempfile.NamedTemporaryFile(suffix=suffix) as f:
+    data = _boost(data, suffix)
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         f.write(data)
         f.flush()
         segs, _ = _model.transcribe(f.name, language=config.WHISPER_LANG or None, vad_filter=True,
+                                    vad_parameters={"threshold": 0.25, "min_silence_duration_ms": 600, "speech_pad_ms": 300},
+                                    no_speech_threshold=0.8, condition_on_previous_text=False,
                                     initial_prompt="Стелла, привет. Стелла, запиши в календарь.")
         return " ".join(s.text.strip() for s in segs).strip()
 
