@@ -53,6 +53,11 @@ const store={get:k=>{try{return localStorage.getItem(k)||""}catch(e){return""}},
 try{const h=new URLSearchParams(location.hash.slice(1));
   if(h.get("key")){store.set("stella_key",h.get("key"));store.set("stella_base",h.get("base")||location.origin);history.replaceState(null,"",location.pathname)}}catch(e){}
 let KEY=store.get("stella_key"),BASE=store.get("stella_base")||location.origin;
+let _ua=navigator.userAgent;
+function clog(m){try{console.log(m);const e=document.getElementById("dbg");if(e)e.textContent=String(m).slice(0,90);
+  if(KEY)fetch(BASE+"/client/log",{method:"POST",headers:{Authorization:"Bearer "+KEY,"Content-Type":"application/json"},body:JSON.stringify({msg:String(m),ua:_ua})}).catch(()=>{});_ua=""}catch(e){}}
+addEventListener("error",e=>clog("JS error: "+e.message+" @"+(e.lineno||"")));
+addEventListener("unhandledrejection",e=>clog("promise: "+(e.reason&&e.reason.message||e.reason)));
 const H=()=>({Authorization:"Bearer "+KEY});
 const MENU=[["Сообщения","messages"],["Календарь","calendar"],["Дом","home"],["Зрение","vision"],["Лица","faces"],["Память","memory"],["Совещание","meeting"],["3D-модель","lab"]];
 let screen="menu",idx=0,list=[],lastHud="Готова.",busy=false;
@@ -157,9 +162,10 @@ const doMemory=()=>guarded(async()=>{busyOn("Запоминаю");await post("/v
 
 /* ---------- запись голоса ---------- */
 let mic;
+function recOpts(){try{for(const t of ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/mp4"])if(MediaRecorder.isTypeSupported(t))return{mimeType:t}}catch(e){}return{}}
 async function micStream(){return mic||(mic=await navigator.mediaDevices.getUserMedia({audio:true}))}
 async function record(maxMs,stopOnSilence=true){
-  const s=await micStream(),rec=new MediaRecorder(s),chunks=[];
+  const s=await micStream(),rec=new MediaRecorder(s,recOpts()),chunks=[];
   rec.ondataavailable=e=>chunks.push(e.data);
   const done=new Promise(r=>rec.onstop=r);
   const ctx=new AudioContext(),src=ctx.createMediaStreamSource(s),an=ctx.createAnalyser();src.connect(an);
@@ -260,19 +266,22 @@ const listenPaused=()=>speaking||meetOn||recBusy||busyN>0;
 function setMic(st){const e=$("mic");if(!e)return;e.textContent=st==="awake"?"🎙 слушаю вас":st==="pause"?"🎙 …":st==="off"?"🎙 нажмите":"🎙 «Стелла»";e.style.color=st==="awake"?"#fff":""}
 async function startListening(){
   if(listenOn||!KEY)return;
-  let s;try{s=await micStream()}catch(e){setMic("off");return}
   listenOn=true;
+  clog("start: MediaRecorder="+(typeof MediaRecorder)+" mediaDevices="+(!!navigator.mediaDevices)+" AudioContext="+(typeof (window.AudioContext||window.webkitAudioContext))+" speech="+(typeof speechSynthesis)+" tts="+ttsOn+" fmt="+JSON.stringify(typeof MediaRecorder!=="undefined"?recOpts():{}));
+  let s;try{s=await micStream();clog("mic ok: "+s.getAudioTracks().map(t=>t.label+"/"+t.readyState).join(","))}catch(e){clog("MIC FAIL: "+e.name+" "+e.message);setMic("off");listenOn=false;return}
   const ctx=new (window.AudioContext||window.webkitAudioContext)();try{await ctx.resume()}catch(e){}
   const an=ctx.createAnalyser();an.fftSize=1024;ctx.createMediaStreamSource(s).connect(an);
   const buf=new Uint8Array(an.fftSize);let noise=6,rec=null,spoke=false,t0=0,lastV=0;
   const level=()=>{an.getByteTimeDomainData(buf);let m=0;for(const b of buf)m=Math.max(m,Math.abs(b-128));return m};
-  function start(){const arr=[];rec=new MediaRecorder(s);rec.arr=arr;rec.ondataavailable=e=>arr.push(e.data);rec.start();t0=Date.now();spoke=false;lastV=0}
+  function start(){const arr=[];rec=new MediaRecorder(s,recOpts());rec.arr=arr;rec.ondataavailable=e=>arr.push(e.data);rec.start();t0=Date.now();spoke=false;lastV=0}
   function finish(send){const r=rec;rec=null;r.onstop=()=>{if(send)sendUtterance(new Blob(r.arr,{type:r.mimeType||"audio/webm"}))};try{r.stop()}catch(e){}}
+  let peak=0,tick=0;
   setInterval(()=>{
     const now=Date.now();
+    if(++tick%100===0){clog("mic level peak="+peak+" noise="+noise.toFixed(1)+" ctx="+ctx.state+" paused="+listenPaused()+" speaking="+speaking+" busyN="+busyN);peak=0}
     if(listenPaused()){if(rec)finish(false);setMic("pause");return}
     if(!rec)start();
-    const l=level();
+    const l=level();peak=Math.max(peak,l);
     if(l>Math.max(14,noise*2.5)){spoke=true;lastV=now}else if(!spoke)noise=noise*0.97+Math.min(l,25)*0.03;
     setMic(now<awakeUntil?"awake":"idle");
     if(spoke&&(now-lastV>1000||now-t0>15000))finish(true);         // фраза закончилась
@@ -280,13 +289,14 @@ async function startListening(){
   },100);
 }
 async function sendUtterance(blob){
+  clog("utterance "+blob.type+" "+blob.size+"B");
   if(blob.size<3000)return;
   try{const f=new FormData();f.append("audio",blob,"u."+ext(blob));
     const r=await api("/voice/listen?awake="+(Date.now()<awakeUntil?1:0),{method:"POST",body:f});
     if(r.dbg)$("dbg").textContent="слышу: "+r.dbg;
     if(r.ack){awakeUntil=Date.now()+8000;beep();toast("Слушаю вас…",3000)}
     else if(r.handled&&!speaking)awakeUntil=Date.now()+8000;
-  }catch(e){}
+  }catch(e){clog("listen send FAIL: "+e.message)}
 }
 addEventListener("pointerdown",()=>startListening(),{once:true});addEventListener("keydown",()=>startListening(),{once:true});
 connect();render();startListening();

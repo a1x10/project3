@@ -427,3 +427,15 @@ async def tts_make(t: TTSIn):
     except Exception as e:
         print(f"[tts] {e}")
         raise HTTPException(502, str(e)[:200])
+
+
+# ---------- диагностика клиента (очки без консоли) ----------
+class ClientLog(BaseModel):
+    msg: str
+    ua: str = ""
+
+
+@app.post("/client/log", dependencies=Auth)
+async def client_log(m: ClientLog):
+    print(f"[client] {m.msg[:400]}" + (f" | {m.ua[:140]}" if m.ua else ""))
+    return {"ok": True}
