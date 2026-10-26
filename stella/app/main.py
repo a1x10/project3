@@ -82,7 +82,7 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled(), "tts": tts.enabled()}
+    return {"ok": True, "calendar": calendar_g.enabled(), "home": home.enabled(), "tts": tts.enabled(), "mic_raw": config.MIC_RAW}
 
 
 # ---------- диалог ----------
@@ -388,12 +388,17 @@ def _keep_debug_audio(data: bytes, ext: str):
 
 
 @app.get("/debug/last", dependencies=Auth)
-async def debug_last(n: int = 1):
+async def debug_last(n: int = 1, rate: float = 0):
     d = os.path.join(config.DATA_DIR, "debug")
     files = sorted(os.listdir(d)) if os.path.isdir(d) else []
     if not files:
         raise HTTPException(404, "нет записей (включите STT_DEBUG=1)")
     name = files[-min(max(n, 1), len(files))]
+    if rate:       # прослушать запись с поправкой скорости: /debug/last?rate=0.4
+        from fastapi.responses import Response
+        with open(os.path.join(d, name), "rb") as f:
+            raw = f.read()
+        return Response(await asyncio.to_thread(stt._boost, raw, "." + name.rsplit(".", 1)[-1], rate), media_type="audio/wav")
     return FileResponse(os.path.join(d, name), media_type="audio/webm" if name.endswith("webm") else None)
 
 
