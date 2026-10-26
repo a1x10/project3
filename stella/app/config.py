@@ -41,6 +41,11 @@ ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", "0.5"))
 ELEVENLABS_SIMILARITY = float(os.getenv("ELEVENLABS_SIMILARITY", "0.75"))
 ELEVENLABS_SPEED = os.getenv("ELEVENLABS_SPEED", "")   # пусто = по умолчанию (v3 параметр speed не принимает)
 
+# распознавание речи: whisper (локально) | elevenlabs (всё через Scribe) | hybrid (Whisper-фильтр + Scribe для команд)
+STT_ENGINE = os.getenv("STT_ENGINE", "hybrid" if ELEVENLABS_API_KEY else "whisper").lower()
+ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2")
+ELEVENLABS_STT_KEYTERMS = [x.strip() for x in os.getenv("ELEVENLABS_STT_KEYTERMS", "Стелла,Стела").split(",") if x.strip()]
+
 WASHER_ENTITY = os.getenv("WASHER_ENTITY", "")                # switch/button запуска
 WASHER_PROGRAM_SELECT = os.getenv("WASHER_PROGRAM_SELECT", "")  # select.* выбора режима
 WASHER_PROGRAMS = json.loads(os.getenv("WASHER_PROGRAMS", "{}"))  # {"cotton":"Cotton 60","delicate":"..."}

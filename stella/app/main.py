@@ -64,6 +64,9 @@ async def habits_tick():
 
 def _preload_stt():
     try:
+        if config.STT_ENGINE == "elevenlabs" and config.ELEVENLABS_API_KEY:
+            print("[stt] engine: elevenlabs")
+            return
         stt.load()
         print("[stt] whisper loaded")
     except Exception as e:
@@ -101,7 +104,7 @@ async def chat(body: ChatIn):
 async def voice(audio: UploadFile = File(...)):
     data = await audio.read()
     suffix = "." + (audio.filename or "a.wav").rsplit(".", 1)[-1]
-    text = await asyncio.to_thread(stt.transcribe, data, suffix)
+    text = await asyncio.to_thread(stt.transcribe, data, suffix, "accurate")
     if not text:
         return {"heard": "", "text": ""}
     ans = await agent.ask(text)
@@ -271,7 +274,7 @@ async def voice_reply(sender: str = Query(...), audio: UploadFile = File(...)):
     os.makedirs(os.path.join(config.DATA_DIR, "voice"), exist_ok=True)
     with open(os.path.join(config.DATA_DIR, "voice", name), "wb") as f:
         f.write(data)
-    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "accurate")
     name = await asyncio.to_thread(_to_ogg_opus, name)   # WhatsApp воспроизводит голосовые в ogg/opus
     agent._drafts[sender.lower()] = {"key": n["key"], "app": n["app"], "sender": n["sender"],
                                      "text": text, "audio": f"/voice/files/{name}"}
@@ -305,7 +308,7 @@ async def meeting_start(m: MeetIn):
 async def meeting_chunk(audio: UploadFile = File(...)):
     data = await audio.read()
     ext = (audio.filename or "a.webm").rsplit(".", 1)[-1]
-    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "stream")
     if meeting.state["on"] and re.search(r"стел+а.*(заверш|законч|стоп|останов|выключ)", text.lower()):
         summary = await meeting.stop()
         bus.publish("hud", text=summary or "Совещание завершено.")
@@ -374,12 +377,19 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     Остальной разговор сразу отбрасывается и нигде не сохраняется."""
     data = await audio.read()
     ext = (audio.filename or "u.webm").rsplit(".", 1)[-1]
-    text = await asyncio.to_thread(stt.transcribe, data, "." + ext)
+    text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "gate")
     if not text or JUNK.search(text):
         return {"handled": False}
     level, cmd = wake.split(text)
     if level == 0 and not awake:
         return {"handled": False}
+    if stt.use_scribe("accurate") and not stt.use_scribe("gate"):
+        # hybrid: к ней обращаются — перераспознаём ту же запись точнее и заново ищем имя
+        better = await asyncio.to_thread(stt.transcribe, data, "." + ext, "accurate")
+        if better and not JUNK.search(better):
+            lv2, cmd2 = wake.split(better)
+            if lv2 or awake:
+                level, cmd = lv2, cmd2
     if len(cmd) < 2:
         return {"handled": True, "ack": True}
     q = quick.match(cmd)
