@@ -32,13 +32,16 @@ object BraviaClient {
     }
 
     /** Коды кнопок пульта берём у самого телевизора, а не из памяти. */
+    private val codes = HashMap<String, String>()
+
     private fun irccCode(c: Context, name: String): String {
+        codes[name.lowercase()]?.let { return it }
         val list = rpc(c, "system", "getRemoteControllerInfo", JSONArray()).getJSONArray("result").getJSONArray(1)
         for (i in 0 until list.length()) {
             val o = list.getJSONObject(i)
-            if (o.getString("name").equals(name, ignoreCase = true)) return o.getString("value")
+            codes[o.getString("name").lowercase()] = o.getString("value")
         }
-        throw RuntimeException("у ТВ нет кнопки $name")
+        return codes[name.lowercase()] ?: throw RuntimeException("у ТВ нет кнопки $name")
     }
 
     private fun ircc(c: Context, name: String) {
@@ -55,8 +58,17 @@ object BraviaClient {
         rpc(c, "system", "setPowerStatus", JSONArray().put(JSONObject().put("status", on)))
     }
 
+    /** Громкость: пробуем версии API от новой к старой (ТВ отвечает кодом 14, если версию не знает), затем кнопками пульта. */
     private fun volume(c: Context, v: String) {
-        rpc(c, "audio", "setAudioVolume", JSONArray().put(JSONObject().put("target", "speaker").put("volume", v)), "1.2")
+        val params = JSONArray().put(JSONObject().put("target", "speaker").put("volume", v))
+        for (ver in listOf("1.2", "1.1", "1.0")) {
+            try { rpc(c, "audio", "setAudioVolume", params, ver); return } catch (e: RuntimeException) {
+                if (e.message?.contains("14") != true && e.message?.contains("12") != true) throw e   // другая ошибка — не маскируем
+            }
+        }
+        val n = v.trimStart('+', '-').toIntOrNull() ?: throw RuntimeException("громкость $v: ТВ не поддерживает такой запрос")
+        if (!v.startsWith("+") && !v.startsWith("-")) throw RuntimeException("точная громкость не поддерживается этим ТВ: скажите «громче/тише»")
+        repeat(n.coerceAtMost(25)) { ircc(c, if (v.startsWith("+")) "VolumeUp" else "VolumeDown"); Thread.sleep(90) }
     }
 
     private fun input(c: Context, v: String) {
