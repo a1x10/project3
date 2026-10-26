@@ -135,7 +135,9 @@ def transcribe(data: bytes, suffix: str = ".wav", quality: str = "gate") -> str:
         try:
             return scribe(data, suffix)
         except Exception as e:         # нет интернета/кончились минуты — работаем на Whisper
-            print(f"[stt] scribe failed, whisper fallback: {e}")
+            print(f"[stt] scribe failed: {e}" + ("; whisper fallback" if config.STT_FALLBACK_WHISPER else ""))
+            if not config.STT_FALLBACK_WHISPER:
+                return ""
     text = whisper(data, suffix)
     # Whisper ничего не услышал, а запись не пустая — второе мнение у Scribe (STT_SCRIBE_ON_EMPTY=0 отключает)
     if (not text and len(data) > 5000 and config.STT_SCRIBE_ON_EMPTY and config.ELEVENLABS_API_KEY
