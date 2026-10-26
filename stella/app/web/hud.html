@@ -163,7 +163,7 @@ const doMemory=()=>guarded(async()=>{busyOn("Запоминаю");await post("/v
 /* ---------- запись голоса ---------- */
 let mic;
 function recOpts(){try{for(const t of ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/mp4"])if(MediaRecorder.isTypeSupported(t))return{mimeType:t}}catch(e){}return{}}
-async function micStream(){return mic||(mic=await navigator.mediaDevices.getUserMedia({audio:true}))}
+async function micStream(){return mic||(mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}}))}
 async function record(maxMs,stopOnSilence=true){
   const s=await micStream(),rec=new MediaRecorder(s,recOpts()),chunks=[];
   rec.ondataavailable=e=>chunks.push(e.data);

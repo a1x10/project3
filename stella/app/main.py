@@ -378,6 +378,8 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
     data = await audio.read()
     ext = (audio.filename or "u.webm").rsplit(".", 1)[-1]
     text = await asyncio.to_thread(stt.transcribe, data, "." + ext, "gate")
+    if config.STT_DEBUG and not text:
+        print(f"[listen] пусто: Whisper ничего не услышал ({len(data)} байт)")
     if not text or JUNK.search(text):
         return {"handled": False}
     level, cmd = wake.split(text)
