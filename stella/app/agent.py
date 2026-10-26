@@ -149,15 +149,15 @@ TOOL_LABELS = {
 }
 
 
-async def ask(text: str, weak: bool = False) -> str:
+async def ask(text: str, weak: bool = False, open_mode: bool = False) -> str:
     bus.publish("busy", on=True, label="Думаю")
     try:
-        return await _ask(text, weak)
+        return await _ask(text, weak, open_mode)
     finally:
         bus.publish("busy", on=False)
 
 
-async def _ask(text: str, weak: bool = False) -> str:
+async def _ask(text: str, weak: bool = False, open_mode: bool = False) -> str:
     db.x("INSERT INTO history(role,content,ts) VALUES('user',?,?)", (text, time.time()))
     hist = [{"role": r["role"], "content": r["content"]} for r in
             reversed(db.q("SELECT role,content FROM history ORDER BY id DESC LIMIT 16"))]
@@ -166,6 +166,10 @@ async def _ask(text: str, weak: bool = False) -> str:
         sys_p += ("\nВАЖНО: обращение распознано неуверенно: первое слово фразы могло быть искажённым именем «Стелла» "
                   "(«стала», «стол», «что», «сто»…), а могло быть обычной речью рядом. Если фраза не похожа на команду или вопрос "
                   "ассистенту — ответь ровно: ... Если похожа — выполни, считая искажённое первое слово именем, если без него фраза не имеет смысла.")
+    if open_mode:
+        sys_p += ("\nРЕЖИМ ПОСТОЯННОГО ПРОСЛУШИВАНИЯ: тебе передают любую услышанную фразу, она может быть не к тебе "
+                  "(разговор рядом, телевизор, мысли вслух). Если фраза не похожа на команду или вопрос ассистенту — ответь ровно: ... "
+                  "Если похожа — выполни.")
     msgs = [{"role": "system", "content": sys_p}, *hist]
     for _ in range(6):
         m = await llm.chat(msgs, TOOLS)

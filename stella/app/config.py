@@ -32,6 +32,8 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 CONFIRM_ENTITIES = set(_list("CONFIRM_ENTITIES"))
 HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{}")).items()}
 
+WAKE_REQUIRED = os.getenv("WAKE_REQUIRED", "1") == "1"   # 0 = отвечать на любую фразу, без слова «Стелла»
+STT_DEBUG = os.getenv("STT_DEBUG", "0") == "1"           # писать в лог, что услышала (на экране тоже)
 WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на искажения имени (стала, стол, что…) как на первое слово
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
