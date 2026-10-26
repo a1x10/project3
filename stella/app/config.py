@@ -33,6 +33,7 @@ CONFIRM_ENTITIES = set(_list("CONFIRM_ENTITIES"))
 HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{}")).items()}
 
 WAKE_REQUIRED = os.getenv("WAKE_REQUIRED", "1") == "1"   # 0 = отвечать на любую фразу, без слова «Стелла»
+STT_FALLBACK_WHISPER = os.getenv("STT_FALLBACK_WHISPER", "1") == "1"   # 0 = Whisper не используется совсем (только Scribe)
 STT_SCRIBE_ON_EMPTY = os.getenv("STT_SCRIBE_ON_EMPTY", "1") == "1"   # пустое у Whisper -> второе мнение у Scribe
 STT_DEBUG = os.getenv("STT_DEBUG", "0") == "1"           # писать в лог, что услышала (на экране тоже)
 WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на искажения имени (стала, стол, что…) как на первое слово
