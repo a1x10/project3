@@ -58,17 +58,42 @@ object BraviaClient {
         rpc(c, "system", "setPowerStatus", JSONArray().put(JSONObject().put("status", on)))
     }
 
-    /** Громкость: пробуем версии API от новой к старой (ТВ отвечает кодом 14, если версию не знает), затем кнопками пульта. */
-    private fun volume(c: Context, v: String) {
-        val params = JSONArray().put(JSONObject().put("target", "speaker").put("volume", v))
+    /** Вызов audio-API: версии от новой к старой (код 14 = версия не поддерживается). */
+    private fun audio(c: Context, method: String, params: JSONArray): JSONObject {
+        var last: RuntimeException? = null
         for (ver in listOf("1.2", "1.1", "1.0")) {
-            try { rpc(c, "audio", "setAudioVolume", params, ver); return } catch (e: RuntimeException) {
-                if (e.message?.contains("14") != true && e.message?.contains("12") != true) throw e   // другая ошибка — не маскируем
+            try { return rpc(c, "audio", method, params, ver) } catch (e: RuntimeException) {
+                if (e.message?.contains("[14,") != true) throw e
+                last = e
             }
         }
-        val n = v.trimStart('+', '-').toIntOrNull() ?: throw RuntimeException("громкость $v: ТВ не поддерживает такой запрос")
-        if (!v.startsWith("+") && !v.startsWith("-")) throw RuntimeException("точная громкость не поддерживается этим ТВ: скажите «громче/тише»")
-        repeat(n.coerceAtMost(25)) { ircc(c, if (v.startsWith("+")) "VolumeUp" else "VolumeDown"); Thread.sleep(90) }
+        throw last ?: RuntimeException("audio API недоступен")
+    }
+
+    private fun setVolume(c: Context, level: Int) {
+        audio(c, "setAudioVolume", JSONArray().put(JSONObject().put("target", "speaker").put("volume", level.toString())))
+    }
+
+    /** v: «+5» / «-5» (относительно) или «30» (точно). Относительную считаем сами: этот ТВ воспринимает «-5» как «минимум». */
+    private fun volume(c: Context, v: String) {
+        val relative = v.startsWith("+") || v.startsWith("-")
+        if (!relative) { setVolume(c, v.toIntOrNull()?.coerceIn(0, 100) ?: throw RuntimeException("громкость $v")); return }
+        val delta = v.toIntOrNull() ?: throw RuntimeException("громкость $v")
+        try {
+            val info = audio(c, "getVolumeInformation", JSONArray()).getJSONArray("result").getJSONArray(0)
+            var cur = 0; var min = 0; var max = 100
+            for (i in 0 until info.length()) {
+                val o = info.getJSONObject(i)
+                if (o.optString("target") == "speaker" || i == 0) {
+                    cur = o.getInt("volume"); min = o.optInt("minVolume", 0); max = o.optInt("maxVolume", 100)
+                    if (o.optString("target") == "speaker") break
+                }
+            }
+            setVolume(c, (cur + delta).coerceIn(min, max))
+        } catch (e: RuntimeException) {
+            // запасной путь: кнопки пульта
+            repeat(kotlin.math.abs(delta).coerceAtMost(25)) { ircc(c, if (delta > 0) "VolumeUp" else "VolumeDown"); Thread.sleep(90) }
+        }
     }
 
     private fun input(c: Context, v: String) {
