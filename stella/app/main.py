@@ -488,3 +488,10 @@ class ClientLog(BaseModel):
 async def client_log(m: ClientLog):
     print(f"[client] {m.msg[:400]}" + (f" | {m.ua[:140]}" if m.ua else ""))
     return {"ok": True}
+
+
+@app.post("/reset", dependencies=Auth)
+async def reset():
+    """Забыть текущий разговор (память о тебе остаётся)."""
+    db.x("DELETE FROM history")
+    return {"ok": True}
