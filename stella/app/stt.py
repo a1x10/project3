@@ -6,6 +6,7 @@ quality:
   stream   — непрерывные куски совещания (Scribe только в режиме elevenlabs)
 """
 import mimetypes
+import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,21 @@ import httpx
 from . import config
 
 _model = None
+
+# типичные «галлюцинации» Whisper на шуме и тишине: подписи к видео, звуки, благодарности
+_JUNK = re.compile(
+    r"субтитр|редактор|корректор|продолжение следует|спасибо за просмотр|подписывайтесь|ставьте лайк|до новых встреч|"
+    r"музык|аплодисмент|смех|звонок|тишина|шум|пение|песня|\[.*\]|\(.*\)|dimatorzok|amara\.org", re.I)
+
+
+def is_junk(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return True
+    letters = [c for c in t if c.isalpha()]
+    if len(letters) > 4 and all(c.isupper() for c in letters):       # ЗАГЛАВНЫМИ — это «подпись к звуку», а не речь
+        return True
+    return bool(_JUNK.search(t))
 
 
 def load():
@@ -65,8 +81,8 @@ def _segments(path: str, vad: bool, common: dict):
         segs, _ = _model.transcribe(path, vad_filter=True, vad_parameters=_vad_params(), no_speech_threshold=0.8, **common)
         return [s.text.strip() for s in segs]
     # без фильтра речи: отбрасываем сегменты, которые Whisper сам считает шумом
-    segs, _ = _model.transcribe(path, vad_filter=False, no_speech_threshold=0.6, **common)
-    return [s.text.strip() for s in segs if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0]
+    segs, _ = _model.transcribe(path, vad_filter=False, no_speech_threshold=0.5, **common)
+    return [s.text.strip() for s in segs if s.no_speech_prob < 0.35 and s.avg_logprob > -0.7]
 
 
 def whisper(data: bytes, suffix: str = ".wav") -> str:
@@ -83,7 +99,7 @@ def whisper(data: bytes, suffix: str = ".wav") -> str:
             except Exception as e:
                 print(f"[stt] whisper vad={vad} failed: {e}")
                 continue
-            if text:
+            if text and not is_junk(text):
                 return text
         return ""
 
