@@ -7,5 +7,8 @@ object Config {
     fun url(c: Context) = p(c).getString("url", "")!!.trimEnd('/')
     fun key(c: Context) = p(c).getString("key", "")!!
     fun set(c: Context, url: String, key: String) = p(c).edit().putString("url", url).putString("key", key).apply()
+    fun tvIp(c: Context) = p(c).getString("tv_ip", "")!!.trim()
+    fun tvKey(c: Context) = p(c).getString("tv_key", "")!!
+    fun setTv(c: Context, ip: String, key: String) = p(c).edit().putString("tv_ip", ip).putString("tv_key", key).apply()
     fun configured(c: Context) = url(c).isNotEmpty() && key(c).isNotEmpty()
 }

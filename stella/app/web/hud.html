@@ -80,10 +80,23 @@ function bootAnim(title,lines,after){
 /* ---------- голос на выход ---------- */
 let speaking=false,awakeUntil=0,speakT;
 function doneSpeaking(){speaking=false;awakeUntil=Date.now()+9000}   // после ответа 9 с можно говорить без «Стелла»
-function speak(t){
-  speaking=true;clearTimeout(speakT);speakT=setTimeout(doneSpeaking,Math.min(25000,2500+t.length*90));  // страховка, если TTS не сообщит о конце
-  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="ru-RU";
-    u.onend=u.onerror=()=>{clearTimeout(speakT);setTimeout(doneSpeaking,400)};speechSynthesis.speak(u)}catch(e){}}
+let ttsAudio=null,ttsOn=false;
+async function speak(t){
+  t=String(t||"").trim();if(!t)return;
+  speaking=true;clearTimeout(speakT);speakT=setTimeout(doneSpeaking,Math.min(30000,4000+t.length*110));   // страховка
+  try{if(ttsAudio){ttsAudio.pause();ttsAudio=null}speechSynthesis.cancel()}catch(e){}
+  if(ttsOn){
+    try{
+      const r=await fetch(BASE+"/tts",{method:"POST",headers:{...H(),"Content-Type":"application/json"},body:JSON.stringify({text:t})});
+      if(!r.ok)throw new Error(r.status);
+      const url=URL.createObjectURL(await r.blob());const au=new Audio(url);ttsAudio=au;
+      au.onended=au.onerror=()=>{clearTimeout(speakT);URL.revokeObjectURL(url);setTimeout(doneSpeaking,300)};
+      await au.play();return;
+    }catch(e){/* нет ElevenLabs или ошибка — обычный голос устройства */}
+  }
+  try{const u=new SpeechSynthesisUtterance(t);u.lang="ru-RU";
+    u.onend=u.onerror=()=>{clearTimeout(speakT);setTimeout(doneSpeaking,400)};speechSynthesis.speak(u)}catch(e){}
+}
 function beep(){try{const c=new AudioContext(),o=c.createOscillator(),g=c.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.12)}catch(e){}}
 
 /* ---------- тосты ---------- */
@@ -190,7 +203,7 @@ let es;
 function connect(){
   if(!KEY)return;if(es)es.close();
   es=new EventSource(BASE+"/events?key="+encodeURIComponent(KEY));
-  es.onopen=()=>{$("st").textContent="● online";$("st").className=""};
+  es.onopen=()=>{$("st").textContent="● online";$("st").className="";fetch(BASE+"/health").then(r=>r.json()).then(h=>{ttsOn=!!h.tts}).catch(()=>{})};
   es.onerror=()=>{$("st").textContent="● offline";$("st").className="off"};
   es.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}onEvent(m)};
 }

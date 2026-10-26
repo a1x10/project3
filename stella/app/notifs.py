@@ -37,8 +37,16 @@ def find_recent(sender: str = "", notif_id: int = 0):
     if notif_id:
         rows = db.q("SELECT * FROM notifs WHERE id=?", (notif_id,))
     elif sender:
-        rows = db.q("SELECT * FROM notifs WHERE lower(sender) LIKE ? ORDER BY ts DESC LIMIT 1",
-                    (f"%{sender.lower()}%",))
+        # «маме», «маму», «Мама» -> по основе слова; затем по похожести имён
+        s = sender.lower().strip()
+        stem = s[:max(3, len(s) - 2)]
+        rows = db.q("SELECT * FROM notifs WHERE lower(sender) LIKE ? ORDER BY ts DESC LIMIT 1", (f"%{stem}%",))
+        if not rows:
+            import difflib
+            names = {r["sender"] for r in db.q("SELECT DISTINCT sender FROM notifs ORDER BY ts DESC LIMIT 60")}
+            best = difflib.get_close_matches(sender, list(names), n=1, cutoff=0.5)
+            if best:
+                rows = db.q("SELECT * FROM notifs WHERE sender=? ORDER BY ts DESC LIMIT 1", (best[0],))
     else:
         rows = db.q("SELECT * FROM notifs ORDER BY ts DESC LIMIT 1")
     return rows[0] if rows else None
