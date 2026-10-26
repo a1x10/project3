@@ -386,7 +386,7 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
         print(f"[listen] heard={text!r} level={level} awake={awake} open={open_mode}")
     if level == 0 and not awake:
         if not open_mode:
-            return {"handled": False, "dbg": text if config.STT_DEBUG else None}
+            return {"handled": False, "dbg": text}
         level, cmd = 3, text.strip()              # 3 = без обращения: решает мозг
     if stt.use_scribe("accurate") and not stt.use_scribe("gate") and level != 3:
         # hybrid: к ней обращаются — перераспознаём ту же запись точнее и заново ищем имя
@@ -406,10 +406,10 @@ async def voice_listen(audio: UploadFile = File(...), awake: int = Query(0)):
         return {"handled": True, "heard": cmd, "text": q[2]}
     ans = await agent.ask(cmd, weak=(level == 2 and not awake), open_mode=(level == 3 and not awake))
     if ans.strip(" .…") == "":
-        return {"handled": False, "dbg": text if config.STT_DEBUG else None}
+        return {"handled": False, "dbg": text}
     bus.publish("hud", text=ans)
     bus.publish("speak", text=ans)
-    return {"handled": True, "heard": cmd, "text": ans, "dbg": text if config.STT_DEBUG else None}
+    return {"handled": True, "heard": cmd, "text": ans, "dbg": text}
 
 
 # ---------- голос ElevenLabs ----------
