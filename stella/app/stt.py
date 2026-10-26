@@ -42,14 +42,16 @@ def load():
     return _model
 
 
-def _boost(data: bytes, suffix: str) -> bytes:
-    """Тихий микрофон очков: убираем гул и выравниваем громкость (ffmpeg). Нет ffmpeg/ошибка — как есть."""
+def _boost(data: bytes, suffix: str, rate: float | None = None) -> bytes:
+    """Звук очков: исправляем скорость (STT_RATE_FIX), убираем гул, выравниваем громкость (ffmpeg). Нет ffmpeg/ошибка — как есть."""
     if not shutil.which("ffmpeg"):
         return data
+    rate = config.STT_RATE_FIX if rate is None else rate
+    fx = f"asetrate={int(48000 * rate)},aresample=16000," if abs(rate - 1.0) > 0.01 else ""
     try:
         r = subprocess.run(
             ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ac", "1", "-ar", "16000",
-             "-af", "highpass=f=70,dynaudnorm=f=120:g=11:p=0.9:m=20", "-f", "wav", "pipe:1"],
+             "-af", fx + "highpass=f=70,dynaudnorm=f=120:g=11:p=0.9:m=20", "-f", "wav", "pipe:1"],
             input=data, capture_output=True, timeout=20)
         return r.stdout if r.returncode == 0 and len(r.stdout) > 1000 else data
     except Exception:

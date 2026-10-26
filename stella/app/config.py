@@ -35,6 +35,10 @@ HOME_ALIASES = {k.lower(): v for k, v in json.loads(os.getenv("HOME_ALIASES", "{
 WAKE_REQUIRED = os.getenv("WAKE_REQUIRED", "1") == "1"   # 0 = отвечать на любую фразу, без слова «Стелла»
 STT_FALLBACK_WHISPER = os.getenv("STT_FALLBACK_WHISPER", "1") == "1"   # 0 = Whisper не используется совсем (только Scribe)
 STT_SCRIBE_ON_EMPTY = os.getenv("STT_SCRIBE_ON_EMPTY", "1") == "1"   # пустое у Whisper -> второе мнение у Scribe
+# запись с микрофона очков приходит ускоренной: 0.33 ≈ в 3 раза медленнее, 0.5 ≈ в 2 раза (подбирается на слух: /debug/last?rate=0.4)
+STT_RATE_FIX = float(os.getenv("STT_RATE_FIX", "1.0"))
+# 1 = очки запрашивают микрофон без шумоподавления/усиления/моно (иногда помогает от искажения скорости)
+MIC_RAW = os.getenv("MIC_RAW", "0") == "1"
 STT_BOOST = os.getenv("STT_BOOST", "1") == "1"       # выравнивание громкости перед распознаванием
 STT_DEBUG = os.getenv("STT_DEBUG", "0") == "1"           # писать в лог, что услышала (на экране тоже)
 WAKE_WEAK = os.getenv("WAKE_WEAK", "1") == "1"   # реагировать на искажения имени (стала, стол, что…) как на первое слово

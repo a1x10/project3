@@ -163,7 +163,14 @@ const doMemory=()=>guarded(async()=>{busyOn("Запоминаю");await post("/v
 /* ---------- запись голоса ---------- */
 let mic;
 function recOpts(){try{for(const t of ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/mp4"])if(MediaRecorder.isTypeSupported(t))return{mimeType:t}}catch(e){}return{}}
-async function micStream(){return mic||(mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}}))}
+let micRaw=false;
+const cfgP=fetch(BASE+"/health").then(r=>r.json()).then(h=>{ttsOn=!!h.tts;micRaw=!!h.mic_raw;clog("health tts="+ttsOn+" mic_raw="+micRaw)}).catch(()=>{});
+async function micStream(){
+  if(mic)return mic;
+  await cfgP;
+  mic=await navigator.mediaDevices.getUserMedia({audio:micRaw?true:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}});
+  try{const st=mic.getAudioTracks()[0].getSettings();clog("mic settings: rate="+st.sampleRate+" ch="+st.channelCount+" agc="+st.autoGainControl)}catch(e){}
+  return mic}
 async function record(maxMs,stopOnSilence=true){
   const s=await micStream(),rec=new MediaRecorder(s,recOpts()),chunks=[];
   rec.ondataavailable=e=>chunks.push(e.data);
@@ -300,6 +307,5 @@ async function sendUtterance(blob){
   }catch(e){clog("listen send FAIL: "+e.message)}
 }
 addEventListener("pointerdown",()=>startListening(),{once:true});addEventListener("keydown",()=>startListening(),{once:true});
-fetch(BASE+"/health").then(r=>r.json()).then(h=>{ttsOn=!!h.tts;clog("health tts="+ttsOn)}).catch(()=>{});
 connect();render();startListening();
 </script></body></html>
