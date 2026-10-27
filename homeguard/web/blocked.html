@@ -3,31 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0509">
 <title>Сайт заблокирован — HomeGuard</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Unbounded:wght@700;800&display=swap" rel="stylesheet">
 <style>
+  :root{--red:#ff4d6d;--org:#ff9a5c}
   *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#150a0d;color:#f3e9eb;font-family:system-ui,Segoe UI,Roboto,sans-serif;padding:16px}
-  .card{display:flex;gap:32px;align-items:center;max-width:860px;width:100%;background:#1f1117;border:1px solid #4a1d28;border-radius:20px;padding:28px;box-shadow:0 0 60px #ff2a4d22}
-  .video{flex:0 0 260px;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:864/1080}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;color:#f6e9ec;font-family:Manrope,system-ui,sans-serif;overflow:hidden;
+    background:radial-gradient(900px 600px at 20% 10%,#3a0d1a 0,transparent 60%),radial-gradient(700px 600px at 90% 100%,#2a0b2e 0,transparent 55%),#0b0509}
+  .grid{position:fixed;inset:-50%;background-image:linear-gradient(rgba(255,77,109,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(255,77,109,.07) 1px,transparent 1px);
+    background-size:44px 44px;transform:perspective(600px) rotateX(60deg) translateY(10%);animation:gridmove 6s linear infinite;mask-image:radial-gradient(circle at 50% 40%,#000 0,transparent 60%)}
+  @keyframes gridmove{to{background-position:0 44px}}
+  .card{position:relative;display:flex;gap:34px;align-items:center;max-width:900px;width:100%;padding:30px;border-radius:26px;
+    background:rgba(28,12,20,.7);backdrop-filter:blur(18px);box-shadow:0 30px 120px -30px rgba(255,77,109,.55);animation:in .8s cubic-bezier(.2,.8,.2,1)}
+  .card::before{content:"";position:absolute;inset:-1px;border-radius:27px;padding:1px;background:conic-gradient(from var(--a),var(--red),transparent 30%,var(--org) 50%,transparent 70%,var(--red));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:spin 4s linear infinite}
+  @property --a{syntax:'<angle>';initial-value:0deg;inherits:false}
+  @keyframes spin{to{--a:360deg}}
+  @keyframes in{from{opacity:0;transform:translateY(20px) scale(.97)}}
+  .video{flex:0 0 270px;border-radius:18px;overflow:hidden;background:#000;aspect-ratio:864/1080;position:relative;box-shadow:0 0 0 1px rgba(255,77,109,.3)}
+  .video::after{content:"";position:absolute;left:0;right:0;height:30%;background:linear-gradient(transparent,rgba(255,77,109,.18),transparent);animation:scan 3s linear infinite}
+  @keyframes scan{from{top:-30%}to{top:100%}}
   video{width:100%;height:100%;object-fit:cover;display:block}
-  .shield{width:56px;height:56px;animation:pulse 1.6s ease-in-out infinite}
-  @keyframes pulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 #ff2a4d)}50%{transform:scale(1.12);filter:drop-shadow(0 0 14px #ff2a4d)}}
-  h1{margin:12px 0 6px;font-size:28px}
-  .reason{color:#ff7a8f;font-weight:600;margin:0 0 16px}
-  .domain{font-family:ui-monospace,Consolas,monospace;background:#2a1820;padding:8px 12px;border-radius:8px;word-break:break-all;display:inline-block}
-  p{line-height:1.5;color:#cdb9be}
-  @media(max-width:640px){.card{flex-direction:column}.video{flex-basis:auto;width:70%}}
+  .shield{width:62px;height:62px;filter:drop-shadow(0 0 18px var(--red));animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{50%{transform:scale(1.1)}}
+  h1{margin:14px 0 8px;font:800 clamp(26px,3.4vw,38px)/1.1 Unbounded,Manrope,sans-serif;background:linear-gradient(120deg,#fff,#ffc3cd);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .reason{display:inline-flex;gap:8px;align-items:center;color:#ff8ea1;font-weight:700;margin:0 0 16px;padding:6px 12px;border-radius:999px;background:rgba(255,77,109,.12);border:1px solid rgba(255,77,109,.3)}
+  .reason::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 10px var(--red)}
+  .domain{display:block;font-family:ui-monospace,Consolas,monospace;background:rgba(0,0,0,.35);padding:10px 14px;border-radius:12px;word-break:break-all;border:1px solid rgba(255,255,255,.06)}
+  p{line-height:1.6;color:#d6bcc3}
+  .brand{display:flex;align-items:center;gap:8px;margin-top:20px;color:#a98c94;font-size:13px}
+  .brand svg{width:16px;height:16px}
+  @media(max-width:680px){.card{flex-direction:column;gap:18px;padding:20px}.video{flex-basis:auto;width:62%}}
 </style>
 </head>
 <body>
+<div class="grid"></div>
 <div class="card">
   <div class="video"><video src="/static/blocked.mp4" autoplay loop muted playsinline></video></div>
   <div>
-    <svg class="shield" viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z" fill="#ff2a4d"/><path d="M12 7v6M12 16.5v.5" stroke="#150a0d" stroke-width="2.2" stroke-linecap="round"/></svg>
+    <svg class="shield" viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z" fill="#ff4d6d"/><path d="M12 7v6M12 16.5v.5" stroke="#1a070d" stroke-width="2.2" stroke-linecap="round"/></svg>
     <h1>Стоп! Сайт заблокирован</h1>
-    <p class="reason">{{reason}}</p>
+    <div class="reason">{{reason}}</div>
     <span class="domain">{{domain}}</span>
-    <p>HomeGuard остановил переход, потому что этот адрес считается небезопасным. Лучше закрыть страницу и ничего не вводить и не скачивать.</p>
+    <p>HomeGuard остановил переход: этот адрес считается небезопасным. Закрой страницу — ничего не вводи и не скачивай. Если это ошибка, напиши владельцу сети.</p>
+    <div class="brand"><svg viewBox="0 0 24 24" fill="#3cf2b0"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z"/></svg>Защищено HomeGuard</div>
   </div>
 </div>
 </body>
