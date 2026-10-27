@@ -1,0 +1,5 @@
+google-analytics.com
+scorecardresearch.com
+hotjar.com
+mixpanel.com
+stats.g.doubleclick.net

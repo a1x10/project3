@@ -1,0 +1,3 @@
+data/homeguard.db*
+data/blocklists/*.remote.txt
+__pycache__/

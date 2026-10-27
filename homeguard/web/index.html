@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeGuard</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <div class="brand"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z" fill="#14b87a"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#0e0e16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> HomeGuard</div>
+  <nav id="tabs">
+    <button data-tab="devices" class="active">Устройства</button>
+    <button data-tab="log">Журнал</button>
+    <button data-tab="protection">Защита</button>
+    <button data-tab="stats">Статистика</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-devices">
+    <div class="toolbar">
+      <span id="devSummary" class="muted"></span>
+      <button id="scanBtn" class="btn">Сканировать сеть</button>
+    </div>
+    <div id="devGrid" class="grid"></div>
+  </section>
+
+  <section id="tab-log" hidden>
+    <div class="toolbar">
+      <input id="logSearch" placeholder="Поиск по домену…">
+      <label class="check"><input type="checkbox" id="logBlocked"> только заблокированные</label>
+      <select id="logDevice"><option value="">Все устройства</option></select>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Время</th><th>Устройство</th><th>Сайт</th><th>Результат</th></tr></thead>
+      <tbody id="logBody"></tbody>
+    </table></div>
+  </section>
+
+  <section id="tab-protection" hidden>
+    <h2>Уровень защиты</h2>
+    <div id="levels" class="levels"></div>
+  </section>
+
+  <section id="tab-stats" hidden>
+    <div id="statTiles" class="tiles"></div>
+    <div class="two">
+      <div class="panel"><h3>Популярные сайты</h3><div id="topDomains"></div></div>
+      <div class="panel"><h3>Чаще всего блокировалось</h3><div id="topBlocked"></div></div>
+    </div>
+    <div class="panel"><h3>Базы блокировки</h3><div id="listSizes" class="muted"></div></div>
+  </section>
+</main>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <h3 id="mTitle"></h3>
+    <p class="muted" id="mInfo"></p>
+    <label>Название <input id="mName"></label>
+    <label>Тип <select id="mType"></select></label>
+    <div class="row"><button class="btn ghost" id="mCancel">Отмена</button><button class="btn" id="mSave">Сохранить</button></div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
