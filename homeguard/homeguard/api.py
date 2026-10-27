@@ -288,13 +288,15 @@ def stats():
     since = time.time() - 24 * 3600
     total = db.query("SELECT COUNT(*) n FROM queries WHERE ts > ?", (since,))[0]["n"]
     blocked = db.query("SELECT COUNT(*) n FROM queries WHERE ts > ? AND action='blocked'", (since,))[0]["n"]
+    threats = db.query("SELECT COUNT(*) n FROM queries WHERE ts > ? AND action='blocked' "
+                       "AND reason IN ('malware','phishing')", (since,))[0]["n"]
     top = db.query("SELECT domain, COUNT(*) n FROM queries WHERE ts > ? AND action='allowed' "
                    "GROUP BY domain ORDER BY n DESC LIMIT 8", (since,))
     top_blocked = db.query("SELECT domain, reason, COUNT(*) n FROM queries WHERE ts > ? AND action='blocked' "
                            "GROUP BY domain ORDER BY n DESC LIMIT 8", (since,))
     devs = db.query("SELECT last_seen FROM devices")
     online = sum((time.time() - d["last_seen"]) < config.ONLINE_WINDOW for d in devs)
-    return {"queries_24h": total, "blocked_24h": blocked,
+    return {"queries_24h": total, "blocked_24h": blocked, "threats_24h": threats,
             "devices_total": len(devs), "devices_online": online,
             "top_domains": top, "top_blocked": top_blocked, "list_sizes": blocklists.counts()}
 

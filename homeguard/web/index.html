@@ -2,132 +2,330 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060d">
 <title>HomeGuard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z' fill='%233cf2b0'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header>
-  <div class="brand"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z" fill="#14b87a"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#0e0e16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> HomeGuard</div>
-  <nav id="tabs">
-    <button data-tab="devices" class="active">Устройства</button>
-    <button data-tab="log">Журнал</button>
-    <button data-tab="protection">Защита</button>
-    <button data-tab="vpn">VPN</button>
-    <button data-tab="tv">Телевизоры</button>
-    <button data-tab="home">Умный дом</button>
-    <button data-tab="speakers">Колонки</button>
-    <button data-tab="stats">Статистика</button>
-  </nav>
-</header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gMint" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3cf2b0"/><stop offset="1" stop-color="#4cc9ff"/></linearGradient>
+  </defs>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.3v5.9c0 4.7 3.2 8.9 7.5 10.3 4.3-1.4 7.5-5.6 7.5-10.3V5.3L12 2.5Z"/><path d="m8.7 12 2.3 2.3 4.3-4.6"/></symbol>
+  <symbol id="i-overview" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+  <symbol id="i-devices" viewBox="0 0 24 24"><rect x="2.5" y="4" width="13" height="10" rx="2"/><path d="M6 18h6M9 14v4"/><rect x="17" y="8" width="4.5" height="11" rx="1.2"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-protect" viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.3v5.9c0 4.7 3.2 8.9 7.5 10.3 4.3-1.4 7.5-5.6 7.5-10.3V5.3L12 2.5Z"/><path d="M12 8v5M12 16v.5"/></symbol>
+  <symbol id="i-av" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2 19 19M5 19l2.8-2.8M16.2 7.8 19 5"/></symbol>
+  <symbol id="i-vpn" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19M12 2.5c2.6 2.6 3.9 6 3.9 9.5S14.6 18.9 12 21.5c-2.6-2.6-3.9-6-3.9-9.5S9.4 5.1 12 2.5Z"/></symbol>
+  <symbol id="i-tv" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="12.5" rx="2"/><path d="M8 21h8M9 2l3 3 3-3"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 10.5 12 3.5l8.5 7V20a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-9.5Z"/><circle cx="12" cy="14.5" r="3"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3.5"/><circle cx="12" cy="14.5" r="3.2"/><circle cx="12" cy="7" r="1"/></symbol>
+  <symbol id="i-stats" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-tg" viewBox="0 0 24 24"><path d="M21.5 4.5 2.8 11.7c-.9.4-.9 1.6.1 1.9l4.7 1.5 1.8 5.6c.3.8 1.3 1 1.9.4l2.6-2.5 4.8 3.5c.7.5 1.7.1 1.9-.7l3.2-15.4c.2-1-.8-1.8-1.7-1.5ZM9.5 14.6l8.6-7.7"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l-5-5 5-5M5 12h11"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+</svg>
 
-<main>
-  <section id="tab-devices">
-    <div class="toolbar">
-      <span id="devSummary" class="muted"></span>
-      <button id="scanBtn" class="btn">Сканировать сеть</button>
+<canvas id="bg3d" aria-hidden="true"></canvas>
+<div class="noise" aria-hidden="true"></div>
+
+<!-- ================= Знакомство / вход ================= -->
+<div id="onb" class="onb" hidden>
+  <div class="onb-stage" id="onbStage"></div>
+  <div class="onb-panel">
+    <div class="brand onb-brand"><svg class="logo"><use href="#i-shield"/></svg><span>HomeGuard</span></div>
+
+    <div class="onb-steps">
+      <article class="onb-step" data-step="0">
+        <div class="eyebrow">Домашний щит нового поколения</div>
+        <h1 class="mega" data-split>Твоя сеть.<br><span class="grad">Под защитой.</span></h1>
+        <p class="lead">HomeGuard встаёт между интернетом и домом: видит каждое устройство, отсекает вирусы, рекламу и мошенников, прячет трафик в VPN и управляет умным домом.</p>
+      </article>
+      <article class="onb-step" data-step="1">
+        <div class="eyebrow">01 · Карта сети</div>
+        <h1 class="mega" data-split>Видит <span class="grad">каждого</span></h1>
+        <p class="lead">Телефоны, ноутбуки, телевизор, колонка, стиралка — всё на живой 3D-карте. Кто в сети, кто ушёл, куда ходит.</p>
+        <div class="legend">
+          <span style="--c:#4cc9ff">Компьютеры</span><span style="--c:#8b5cff">Телефоны</span><span style="--c:#ffc24c">Телевизоры</span>
+          <span style="--c:#ff7ad9">Колонки</span><span style="--c:#7affd4">Техника</span><span style="--c:#3cf2b0">Роутер</span>
+        </div>
+      </article>
+      <article class="onb-step" data-step="2">
+        <div class="eyebrow">02 · Антивирус</div>
+        <h1 class="mega" data-split>Угрозы <span class="grad-red">разбиваются</span> о щит</h1>
+        <p class="lead">Фишинг, вирусы, поддельные «банки» и «Госуслуги» блокируются ещё до загрузки. Вместо опасной страницы — вот такое предупреждение.</p>
+        <div class="onb-video glass"><video src="/static/blocked.mp4" muted loop playsinline preload="none"></video><span>Стоп! Сайт заблокирован</span></div>
+      </article>
+      <article class="onb-step" data-step="3">
+        <div class="eyebrow">03 · VPN</div>
+        <h1 class="mega" data-split>Весь дом — <span class="grad">в туннеле</span></h1>
+        <p class="lead">Выбираешь страну — и весь трафик дома идёт через зашифрованный туннель. Kill switch не даст ему утечь, если VPN упадёт.</p>
+        <div class="marquee"><div class="marquee-track">🇳🇱 Нидерланды · 🇩🇪 Германия · 🇫🇮 Финляндия · 🇸🇪 Швеция · 🇺🇸 США · 🇬🇧 Великобритания · 🇯🇵 Япония · 🇸🇬 Сингапур · 🇳🇱 Нидерланды · 🇩🇪 Германия · 🇫🇮 Финляндия · 🇸🇪 Швеция · 🇺🇸 США · 🇬🇧 Великобритания · 🇯🇵 Япония · 🇸🇬 Сингапур ·</div></div>
+      </article>
+      <article class="onb-step" data-step="4">
+        <div class="eyebrow">04 · Умный дом</div>
+        <h1 class="mega" data-split>Пульт <span class="grad">от всего</span></h1>
+        <p class="lead">Sony Bravia, стиральная машина Xiaomi, Яндекс Станция — в одной панели и в Telegram.</p>
+        <div class="chips-row"><span class="chip"><svg><use href="#i-tv"/></svg>Bravia</span><span class="chip"><svg><use href="#i-home"/></svg>Стиралка</span><span class="chip"><svg><use href="#i-speaker"/></svg>Станция</span><span class="chip"><svg><use href="#i-tg"/></svg>Бот-тревоги</span></div>
+      </article>
+      <article class="onb-step" data-step="5">
+        <div class="eyebrow" id="loginEyebrow">05 · Вход</div>
+        <h1 class="mega" data-split>Войди через <span class="grad-tg">Telegram</span></h1>
+
+        <div id="botSetup" class="login-box glass" hidden>
+          <p class="lead small">Сначала подключим твоего бота — он будет пускать в панель и присылать тревоги.</p>
+          <ol class="steps">
+            <li>Открой <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> → <code>/newbot</code></li>
+            <li>Придумай имя, например <b>HomeGuard Дом</b></li>
+            <li>Скопируй токен и вставь сюда</li>
+          </ol>
+          <div class="field"><input id="botToken" placeholder="123456789:AA..." autocomplete="off" spellcheck="false"><button class="btn primary" id="botSave">Подключить</button></div>
+          <p class="err" id="botErr"></p>
+        </div>
+
+        <div id="loginBox" class="login-box glass" hidden>
+          <div class="login-grid">
+            <div>
+              <p class="lead small" id="loginText">Нажми кнопку — откроется бот. Жми <b>Start</b>, и панель откроется сама.</p>
+              <a class="btn tg big" id="tgLink" href="#" target="_blank" rel="noopener"><svg><use href="#i-tg"/></svg>Войти через Telegram</a>
+              <div class="wait" id="loginWait" hidden><span class="spinner"></span><span id="loginWaitText">Ждём подтверждения в Telegram…</span></div>
+              <p class="err" id="loginErr"></p>
+            </div>
+            <div class="qr-wrap"><div id="qr" class="qr"></div><span class="muted small">или наведи камеру телефона</span></div>
+          </div>
+        </div>
+        <div id="welcome" class="welcome" hidden><div class="welcome-title">Добро пожаловать, <span id="welcomeName"></span>!</div></div>
+      </article>
     </div>
-    <div id="devGrid" class="grid"></div>
-  </section>
 
-  <section id="tab-log" hidden>
-    <div class="toolbar">
-      <input id="logSearch" placeholder="Поиск по домену…">
-      <label class="check"><input type="checkbox" id="logBlocked"> только заблокированные</label>
-      <select id="logDevice"><option value="">Все устройства</option></select>
+    <div class="onb-nav">
+      <button class="btn ghost" id="onbBack">Назад</button>
+      <div class="dots" id="onbDots"></div>
+      <button class="btn primary" id="onbNext">Начать <svg><use href="#i-arrow"/></svg></button>
     </div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Время</th><th>Устройство</th><th>Сайт</th><th>Результат</th></tr></thead>
-      <tbody id="logBody"></tbody>
-    </table></div>
-  </section>
+  </div>
+  <button class="onb-skip" id="onbSkip">Пропустить знакомство</button>
+</div>
 
-  <section id="tab-protection" hidden>
-    <h2>Уровень защиты</h2>
-    <div id="levels" class="levels"></div>
-  </section>
-
-  <section id="tab-vpn" hidden>
-    <div id="vpnBanner" class="banner"></div>
-    <div class="toolbar">
-      <label class="check"><input type="checkbox" id="vpnKill"> Kill switch: если VPN упадёт, интернет в сети отключается</label>
-      <button id="vpnAddBtn" class="btn">+ Добавить сервер</button>
-      <button id="vpnOff" class="btn ghost" hidden>Отключить VPN</button>
+<!-- ================= Приложение ================= -->
+<div id="app" class="app" hidden>
+  <aside class="side glass">
+    <div class="brand"><svg class="logo"><use href="#i-shield"/></svg><span>HomeGuard</span></div>
+    <nav id="tabs">
+      <button data-tab="overview" class="active"><svg><use href="#i-overview"/></svg><span>Обзор</span></button>
+      <button data-tab="devices"><svg><use href="#i-devices"/></svg><span>Устройства</span></button>
+      <button data-tab="log"><svg><use href="#i-log"/></svg><span>Журнал</span></button>
+      <button data-tab="protection"><svg><use href="#i-protect"/></svg><span>Защита</span></button>
+      <button data-tab="av"><svg><use href="#i-av"/></svg><span>Антивирус</span></button>
+      <button data-tab="vpn"><svg><use href="#i-vpn"/></svg><span>VPN</span></button>
+      <button data-tab="tv"><svg><use href="#i-tv"/></svg><span>Телевизоры</span></button>
+      <button data-tab="home"><svg><use href="#i-home"/></svg><span>Умный дом</span></button>
+      <button data-tab="speakers"><svg><use href="#i-speaker"/></svg><span>Колонки</span></button>
+      <button data-tab="stats"><svg><use href="#i-stats"/></svg><span>Статистика</span></button>
+      <button data-tab="settings"><svg><use href="#i-settings"/></svg><span>Настройки</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="me" id="meChip"><span class="avatar" id="meAvatar">?</span><div><b id="meName"></b><small id="meRole"></small></div></div>
     </div>
-    <div id="vpnGrid" class="grid"></div>
-    <p class="muted hint">Файлы <b>.conf</b> (WireGuard) или <b>.ovpn</b> (OpenVPN) берутся в личном кабинете VPN-сервиса. Команды запуска скриптов из файлов вырезаются при импорте.</p>
-  </section>
+  </aside>
 
-  <section id="tab-tv" hidden>
-    <div class="toolbar"><span class="muted" id="tvHint"></span><button id="tvAddBtn" class="btn">+ Добавить телевизор</button></div>
-    <div id="tvList" class="tvlist"></div>
-    <details class="muted hint"><summary>Как включить управление на Sony Bravia</summary>
-      <ol><li>Настройки → Сеть → Домашняя сеть → <b>Управление по IP</b></li>
-      <li>Аутентификация: <b>Обычная и Pre-Shared Key</b></li>
-      <li>Задай <b>Pre-Shared Key</b> (его вводишь здесь)</li>
-      <li>Для включения из ожидания: <b>Удалённый запуск</b> = Вкл</li></ol></details>
-  </section>
+  <main class="main">
+    <header class="top">
+      <div><h1 id="pageTitle">Обзор</h1><p class="muted" id="pageSub"></p></div>
+      <div class="top-right"><span class="pill live"><i></i>LIVE</span></div>
+    </header>
 
-  <section id="tab-home" hidden>
-    <div class="toolbar"><span class="muted" id="homeHint"></span><button id="homeAddBtn" class="btn">+ Добавить устройство Xiaomi</button></div>
-    <div id="homeList" class="tvlist"></div>
-    <details class="muted hint"><summary>Где взять IP и токен</summary>
-      <ol><li>IP: вкладка «Устройства», закрепи его за стиралкой в роутере.</li>
-      <li>Токен (32 символа) — из аккаунта Xiaomi. Проще всего утилитой
-      <b>Xiaomi-cloud-tokens-extractor</b> (запускается у тебя на компьютере, пароль никому не передаётся).</li>
-      <li>Модель определится сама; описание управления скачается с miot-spec.org.</li></ol>
-      <p>Работает с устройствами, у которых включено локальное управление (протокол miIO/MIoT). Часть новых устройств Xiaomi работает только через облако — к ним не подключиться.</p></details>
-  </section>
-
-  <section id="tab-speakers" hidden>
-    <div id="haSetup" class="panel" hidden>
-      <h3>Подключение Home Assistant</h3>
-      <p class="muted">Яндекс Станция управляется через Home Assistant с интеграцией YandexStation. Пошаговая инструкция: <b>docs/home-assistant.md</b> в репозитории.</p>
-      <div class="form">
-        <label>Адрес Home Assistant <input id="haUrl" placeholder="http://192.168.3.2:8123"></label>
-        <label>Долгоживущий токен <input id="haToken" type="password" autocomplete="off" placeholder="Профиль HA → Безопасность → Токены"></label>
-        <p id="haErr" class="err"></p>
-        <button class="btn" id="haSave">Подключить</button>
+    <section id="tab-overview">
+      <div class="hero">
+        <div class="hero-text">
+          <div class="eyebrow" id="heroHello">Привет!</div>
+          <h2 class="hero-title" id="heroTitle">Сеть под защитой</h2>
+          <p class="muted" id="heroSub"></p>
+          <div class="chips-row" id="heroChips"></div>
+        </div>
+        <div class="hero-stage" id="heroStage"><div id="nodeLabels"></div><div class="node-tip" id="nodeTip" hidden></div></div>
       </div>
-    </div>
-    <div id="haMain" hidden>
-      <div class="toolbar"><span class="muted" id="haHint"></span><button class="btn ghost" id="haDisc">Отключить Home Assistant</button></div>
-      <div id="spList" class="tvlist"></div>
-    </div>
-  </section>
+      <div class="kpis" id="kpis"></div>
+      <div class="grid2">
+        <div class="panel glass">
+          <div class="panel-head"><h3>Последние угрозы</h3><button class="link" data-goto="log">весь журнал →</button></div>
+          <div id="threatFeed" class="feed"></div>
+        </div>
+        <div class="panel glass">
+          <div class="panel-head"><h3>Быстрые действия</h3></div>
+          <div class="lbl">Уровень защиты</div>
+          <div class="seg" id="quickLevel"></div>
+          <div class="lbl">VPN</div>
+          <div id="quickVpn" class="quick-vpn"></div>
+          <div class="lbl">Проверить ссылку</div>
+          <form class="field" id="quickCheck"><input id="quickUrl" placeholder="Вставь подозрительную ссылку"><button class="btn primary">Проверить</button></form>
+          <div id="quickResult"></div>
+        </div>
+      </div>
+    </section>
 
-  <section id="tab-stats" hidden>
-    <div id="statTiles" class="tiles"></div>
-    <div class="two">
-      <div class="panel"><h3>Популярные сайты</h3><div id="topDomains"></div></div>
-      <div class="panel"><h3>Чаще всего блокировалось</h3><div id="topBlocked"></div></div>
-    </div>
-    <div class="panel"><h3>Базы блокировки</h3><div id="listSizes" class="muted"></div></div>
-  </section>
-</main>
+    <section id="tab-devices" hidden>
+      <div class="toolbar">
+        <span id="devSummary" class="muted"></span>
+        <button id="scanBtn" class="btn primary">Сканировать сеть</button>
+      </div>
+      <div id="devGrid" class="grid"></div>
+    </section>
 
+    <section id="tab-log" hidden>
+      <div class="toolbar">
+        <input id="logSearch" placeholder="Поиск по домену…">
+        <label class="check"><input type="checkbox" id="logBlocked"> только заблокированные</label>
+        <select id="logDevice"><option value="">Все устройства</option></select>
+      </div>
+      <div class="tablewrap glass"><table>
+        <thead><tr><th>Время</th><th>Устройство</th><th>Сайт</th><th>Результат</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table></div>
+    </section>
+
+    <section id="tab-protection" hidden>
+      <div id="levels" class="levels"></div>
+    </section>
+
+    <section id="tab-av" hidden>
+      <div class="av-top">
+        <form class="av-scan glass" id="avUrlForm">
+          <svg class="av-ico"><use href="#i-av"/></svg>
+          <input id="avUrl" placeholder="Вставь ссылку из SMS, письма или мессенджера…" autocomplete="off">
+          <button class="btn primary">Проверить</button>
+        </form>
+        <label class="drop glass" id="avDrop">
+          <input type="file" id="avFile" hidden>
+          <svg><use href="#i-upload"/></svg>
+          <b>Перетащи файл сюда</b><span class="muted small">или нажми, чтобы выбрать · до 32 МБ</span>
+        </label>
+      </div>
+      <div id="avResult"></div>
+      <div class="grid2">
+        <div class="panel glass"><div class="panel-head"><h3>История проверок</h3></div><div id="avHistory" class="feed"></div></div>
+        <div class="panel glass"><div class="panel-head"><h3>Движки</h3></div><div id="avEngines"></div></div>
+      </div>
+    </section>
+
+    <section id="tab-vpn" hidden>
+      <div id="vpnBanner" class="banner"></div>
+      <div class="toolbar">
+        <label class="check"><input type="checkbox" id="vpnKill"> Kill switch: если VPN упадёт, интернет в сети отключается</label>
+        <button id="vpnAddBtn" class="btn primary">+ Добавить сервер</button>
+        <button id="vpnOff" class="btn ghost" hidden>Отключить VPN</button>
+      </div>
+      <div id="vpnGrid" class="grid"></div>
+      <p class="muted hint">Файлы <b>.conf</b> (WireGuard / AmneziaWG) или <b>.ovpn</b> (OpenVPN) берутся в личном кабинете VPN-сервиса. Команды запуска скриптов из файлов вырезаются при импорте.</p>
+    </section>
+
+    <section id="tab-tv" hidden>
+      <div class="toolbar"><span class="muted" id="tvHint"></span><button id="tvAddBtn" class="btn primary">+ Добавить телевизор</button></div>
+      <div id="tvList" class="tvlist"></div>
+      <details class="muted hint glass"><summary>Как включить управление на Sony Bravia</summary>
+        <ol><li>Настройки → Сеть → Домашняя сеть → <b>Управление по IP</b></li>
+        <li>Аутентификация: <b>Обычная и Pre-Shared Key</b></li>
+        <li>Задай <b>Pre-Shared Key</b> (его вводишь здесь)</li>
+        <li>Для включения из ожидания: <b>Удалённый запуск</b> = Вкл</li></ol></details>
+    </section>
+
+    <section id="tab-home" hidden>
+      <div class="toolbar"><span class="muted" id="homeHint"></span><button id="homeAddBtn" class="btn primary">+ Добавить устройство Xiaomi</button></div>
+      <div id="homeList" class="tvlist"></div>
+      <details class="muted hint glass"><summary>Где взять IP и токен</summary>
+        <ol><li>IP: вкладка «Устройства», закрепи его за стиралкой в роутере.</li>
+        <li>Токен (32 символа) — из аккаунта Xiaomi. Проще всего утилитой
+        <b>Xiaomi-cloud-tokens-extractor</b> (запускается у тебя на компьютере, пароль никому не передаётся).</li>
+        <li>Модель определится сама; описание управления скачается с miot-spec.org.</li></ol>
+        <p>Работает с устройствами, у которых включено локальное управление (протокол miIO/MIoT). Часть новых устройств Xiaomi работает только через облако — к ним не подключиться.</p></details>
+    </section>
+
+    <section id="tab-speakers" hidden>
+      <div id="haSetup" class="panel glass" hidden>
+        <h3>Подключение Home Assistant</h3>
+        <p class="muted">Яндекс Станция управляется через Home Assistant с интеграцией YandexStation. Пошаговая инструкция: <b>docs/home-assistant.md</b> в репозитории.</p>
+        <div class="form">
+          <label>Адрес Home Assistant <input id="haUrl" placeholder="http://192.168.3.2:8123"></label>
+          <label>Долгоживущий токен <input id="haToken" type="password" autocomplete="off" placeholder="Профиль HA → Безопасность → Токены"></label>
+          <p id="haErr" class="err"></p>
+          <button class="btn primary" id="haSave">Подключить</button>
+        </div>
+      </div>
+      <div id="haMain" hidden>
+        <div class="toolbar"><span class="muted" id="haHint"></span><button class="btn ghost" id="haDisc">Отключить Home Assistant</button></div>
+        <div id="spList" class="tvlist"></div>
+      </div>
+    </section>
+
+    <section id="tab-stats" hidden>
+      <div id="statTiles" class="kpis"></div>
+      <div class="grid2">
+        <div class="panel glass"><h3>Популярные сайты</h3><div id="topDomains"></div></div>
+        <div class="panel glass"><h3>Чаще всего блокировалось</h3><div id="topBlocked"></div></div>
+      </div>
+      <div class="panel glass"><h3>Базы блокировки</h3><div id="listSizes" class="muted"></div></div>
+    </section>
+
+    <section id="tab-settings" hidden>
+      <div class="grid2">
+        <div class="panel glass">
+          <div class="panel-head"><h3>Профиль</h3></div>
+          <div class="profile"><span class="avatar big" id="profAvatar">?</span><div><b id="profName"></b><div class="muted" id="profRole"></div></div></div>
+          <button class="btn ghost" id="logoutBtn"><svg><use href="#i-logout"/></svg>Выйти</button>
+        </div>
+        <div class="panel glass">
+          <div class="panel-head"><h3>Telegram-бот</h3></div>
+          <p class="muted" id="botInfo"></p>
+          <p class="muted small">Команды: <code>/status</code> <code>/level</code> <code>/vpn</code> <code>/check ссылка</code></p>
+        </div>
+      </div>
+      <div class="panel glass owner-only">
+        <div class="panel-head"><h3>Пользователи</h3><span class="muted small">новых людей пускаешь кнопкой в боте</span></div>
+        <div id="usersList"></div>
+      </div>
+      <div class="panel glass owner-only">
+        <div class="panel-head"><h3>Ключи антивируса</h3></div>
+        <form class="form" id="avKeys">
+          <label>Google Safe Browsing API key <input id="gsbKey" type="password" autocomplete="off" placeholder="не меняется, если пусто"></label>
+          <label>VirusTotal API key <input id="vtKey" type="password" autocomplete="off" placeholder="не меняется, если пусто"></label>
+          <button class="btn primary">Сохранить</button><span class="muted small" id="avKeysMsg"></span>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ================= Модальные окна ================= -->
 <div id="modal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card glass">
     <h3 id="mTitle"></h3>
     <p class="muted" id="mInfo"></p>
     <label>Название <input id="mName"></label>
     <label>Тип <select id="mType"></select></label>
-    <div class="row"><button class="btn ghost" id="mCancel">Отмена</button><button class="btn" id="mSave">Сохранить</button></div>
+    <div class="row"><button class="btn ghost" id="mCancel">Отмена</button><button class="btn primary" id="mSave">Сохранить</button></div>
   </div>
 </div>
 <div id="tvModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card glass">
     <h3>Новый телевизор Sony Bravia</h3>
     <label>Название <input id="tName" placeholder="Гостиная"></label>
     <label>IP-адрес <input id="tIp" list="tvIps" placeholder="192.168.3.30"></label>
     <datalist id="tvIps"></datalist>
     <label>Pre-Shared Key <input id="tPsk" type="password" autocomplete="new-password"></label>
     <p id="tErr" class="err"></p>
-    <div class="row"><button class="btn ghost" id="tCancel">Отмена</button><button class="btn" id="tSave">Добавить</button></div>
+    <div class="row"><button class="btn ghost" id="tCancel">Отмена</button><button class="btn primary" id="tSave">Добавить</button></div>
   </div>
 </div>
 <div id="homeModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card glass">
     <h3>Новое устройство Xiaomi</h3>
     <label>Название <input id="hName" placeholder="Стиральная машина"></label>
     <label>IP-адрес <input id="hIp" list="homeIps" placeholder="192.168.3.41"></label>
@@ -135,11 +333,11 @@
     <label>Токен (32 символа) <input id="hToken" type="password" autocomplete="off"></label>
     <label>Модель (если не определится сама) <input id="hModel" placeholder="viomi.washer.v20"></label>
     <p id="hErr" class="err"></p>
-    <div class="row"><button class="btn ghost" id="hCancel">Отмена</button><button class="btn" id="hSave">Подключить</button></div>
+    <div class="row"><button class="btn ghost" id="hCancel">Отмена</button><button class="btn primary" id="hSave">Подключить</button></div>
   </div>
 </div>
 <div id="vpnModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card glass">
     <h3>Новый VPN-сервер</h3>
     <label>Название <input id="vName" placeholder="Планета — Нидерланды"></label>
     <label>Файл конфигурации <input id="vFile" type="file" accept=".conf,.ovpn,.txt"></label>
@@ -150,9 +348,13 @@
       <label>Пароль <input id="vPass" type="password" autocomplete="new-password"></label>
     </details>
     <p id="vErr" class="err"></p>
-    <div class="row"><button class="btn ghost" id="vCancel">Отмена</button><button class="btn" id="vSave">Добавить</button></div>
+    <div class="row"><button class="btn ghost" id="vCancel">Отмена</button><button class="btn primary" id="vSave">Добавить</button></div>
   </div>
 </div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/vendor/qrcode.min.js"></script>
+<script type="module" src="/static/scene3d.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
