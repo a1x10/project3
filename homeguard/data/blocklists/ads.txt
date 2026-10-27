@@ -1,0 +1,8 @@
+# Мини-список для старта. Полные списки: python scripts/update_blocklists.py
+doubleclick.net
+googlesyndication.com
+adservice.google.com
+ads.yahoo.com
+adnxs.com
+taboola.com
+outbrain.com
