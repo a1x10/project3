@@ -420,8 +420,93 @@ $('#hSave').onclick = async (e) => {
   finally { e.target.disabled = false; e.target.textContent = 'Подключить'; }
 };
 
+// ---------- Колонки (Яндекс Станция через Home Assistant) ----------
+const SP_STATE = {playing: 'играет', paused: 'пауза', idle: 'ожидание', off: 'выключена', on: 'включена',
+  unavailable: 'недоступна', standby: 'ожидание', buffering: 'загрузка'};
+
+async function loadSpeakers() {
+  const st = await api('/api/ha');
+  $('#haSetup').hidden = st.configured;
+  $('#haMain').hidden = !st.configured;
+  if (!st.configured) { if (!$('#haUrl').value) $('#haUrl').value = st.url || ''; return; }
+  let players;
+  try { players = await api('/api/ha/players'); $('#haHint').textContent = ''; }
+  catch (e) { $('#haHint').textContent = errText(e); return; }
+  $('#haHint').textContent = players.length ? '' : 'Колонок в Home Assistant пока нет';
+  const known = new Set(players.map((p) => p.entity_id));
+  for (const p of players) {
+    let el = document.getElementById('sp-' + p.entity_id);
+    if (!el) {
+      el = document.createElement('div'); el.id = 'sp-' + p.entity_id; el.className = 'sp';
+      $('#spList').appendChild(el);
+      spBuild(p, el);
+    }
+    spUpdate(p, el);
+  }
+  document.querySelectorAll('#spList .sp').forEach((el) => { if (!known.has(el.id.slice(3))) el.remove(); });
+}
+
+function spBuild(p, el) {
+  el.innerHTML = `
+    <div><h3>${esc(p.name)}</h3><div class="sub muted" style="font-size:13px"><span data-r="state"></span>${p.yandex ? ' · Яндекс' : ''}</div></div>
+    <div class="now" data-r="now"></div>
+    <div class="tverr" data-r="err"></div>
+    <div class="ctrls">
+      <button class="ib" data-a="prev">⏮</button><button class="ib" data-a="play">▶</button>
+      <button class="ib" data-a="pause">⏸</button><button class="ib" data-a="next">⏭</button>
+      <button class="ib" data-a="mute" data-r="mute">🔇</button></div>
+    <div class="vol"><span>🔈</span><input type="range" min="0" max="100" data-vol><b data-r="vol">0</b></div>
+    <div class="say"><input data-say placeholder="Скажи Алисе: включи музыку / какая погода…">
+      <button class="btn" data-a="command">Команда</button><button class="btn ghost" data-a="tts">Произнести</button></div>`;
+  const send = async (action, value) => {
+    try { await api(`/api/ha/players/${p.entity_id}/${action}`, jsonReq('POST', {value})); el.querySelector('[data-r=err]').textContent = ''; }
+    catch (e) { el.querySelector('[data-r=err]').textContent = errText(e); }
+    setTimeout(loadSpeakers, 600);
+  };
+  el.onclick = (e) => {
+    const b = e.target.closest('button[data-a]'); if (!b) return;
+    const a = b.dataset.a;
+    if (a === 'mute') return send('mute', !(el._muted));
+    if (a === 'command' || a === 'tts') {
+      const inp = el.querySelector('[data-say]'); if (!inp.value.trim()) return;
+      send(a, inp.value).then(() => inp.value = ''); return;
+    }
+    send(a, null);
+  };
+  el.querySelector('[data-vol]').onchange = (e) => send('volume', e.target.value / 100);
+  el.querySelector('[data-vol]').oninput = (e) => el.querySelector('[data-r=vol]').textContent = e.target.value;
+  el.querySelector('[data-say]').onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('[data-a=command]').click(); };
+}
+
+function spUpdate(p, el) {
+  const r = (k) => el.querySelector(`[data-r=${k}]`);
+  el.classList.toggle('on', p.state === 'playing');
+  r('state').textContent = SP_STATE[p.state] || p.state;
+  r('now').textContent = p.title ? [p.title, p.artist].filter(Boolean).join(' — ') : '';
+  el._muted = !!p.muted;
+  r('mute').style.outline = p.muted ? '2px solid var(--red)' : '';
+  const vol = el.querySelector('[data-vol]');
+  if (p.volume != null && document.activeElement !== vol) { vol.value = Math.round(p.volume * 100); r('vol').textContent = vol.value; }
+}
+
+$('#haSave').onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = 'Проверяю…';
+  try {
+    await api('/api/ha', jsonReq('PUT', {url: $('#haUrl').value, token: $('#haToken').value}));
+    $('#haToken').value = ''; $('#haErr').textContent = '';
+    loadSpeakers();
+  } catch (err) { $('#haErr').textContent = errText(err); }
+  finally { e.target.disabled = false; e.target.textContent = 'Подключить'; }
+};
+$('#haDisc').onclick = async () => {
+  if (!confirm('Отключить Home Assistant от панели? Токен будет удалён.')) return;
+  await api('/api/ha', {method: 'DELETE'});
+  $('#spList').innerHTML = '';
+  loadSpeakers();
+};
+
 function refresh() {
-  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, tv: loadTv, home: loadHome, stats: loadStats})[tab]().catch(console.error);
+  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, tv: loadTv, home: loadHome, speakers: loadSpeakers, stats: loadStats})[tab]().catch(console.error);
 }
 refresh();
-setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || !$('#tvModal').hidden || !$('#homeModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);
+setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || !$('#tvModal').hidden || !$('#homeModal').hidden || document.activeElement === $('#logSearch') || document.activeElement?.matches?.('[data-say]')) return; refresh(); }, 5000);

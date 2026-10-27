@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS miot_devices (
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 
-DEFAULT_SETTINGS = {"level": "medium", "vpn_active": "", "vpn_kill_switch": "0"}
+DEFAULT_SETTINGS = {"level": "medium", "vpn_active": "", "vpn_kill_switch": "0",
+                    "ha_url": "", "ha_token": ""}
 
 
 def connect() -> sqlite3.Connection:

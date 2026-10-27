@@ -16,6 +16,7 @@
     <button data-tab="vpn">VPN</button>
     <button data-tab="tv">Телевизоры</button>
     <button data-tab="home">Умный дом</button>
+    <button data-tab="speakers">Колонки</button>
     <button data-tab="stats">Статистика</button>
   </nav>
 </header>
@@ -76,6 +77,23 @@
       <b>Xiaomi-cloud-tokens-extractor</b> (запускается у тебя на компьютере, пароль никому не передаётся).</li>
       <li>Модель определится сама; описание управления скачается с miot-spec.org.</li></ol>
       <p>Работает с устройствами, у которых включено локальное управление (протокол miIO/MIoT). Часть новых устройств Xiaomi работает только через облако — к ним не подключиться.</p></details>
+  </section>
+
+  <section id="tab-speakers" hidden>
+    <div id="haSetup" class="panel" hidden>
+      <h3>Подключение Home Assistant</h3>
+      <p class="muted">Яндекс Станция управляется через Home Assistant с интеграцией YandexStation. Пошаговая инструкция: <b>docs/home-assistant.md</b> в репозитории.</p>
+      <div class="form">
+        <label>Адрес Home Assistant <input id="haUrl" placeholder="http://192.168.3.2:8123"></label>
+        <label>Долгоживущий токен <input id="haToken" type="password" autocomplete="off" placeholder="Профиль HA → Безопасность → Токены"></label>
+        <p id="haErr" class="err"></p>
+        <button class="btn" id="haSave">Подключить</button>
+      </div>
+    </div>
+    <div id="haMain" hidden>
+      <div class="toolbar"><span class="muted" id="haHint"></span><button class="btn ghost" id="haDisc">Отключить Home Assistant</button></div>
+      <div id="spList" class="tvlist"></div>
+    </div>
   </section>
 
   <section id="tab-stats" hidden>

@@ -71,6 +71,10 @@ python -m homeguard                # боевой режим: скан реал�
 - Не все устройства Xiaomi доступны локально: часть новых моделей работает только через облако. Тогда добавление вернёт «Устройство не отвечает».
 - Для тестов есть имитация: `python tests/fake_miio.py`.
 
+## Яндекс Станция (через Home Assistant)
+
+Вкладка **Колонки**: пауза/плей, треки, громкость, mute и поле «Скажи Алисе» (команда или озвучка текста). Подробная установка Home Assistant, интеграции YandexStation и токена: [docs/home-assistant.md](docs/home-assistant.md); контейнер HA: `docker compose -f docker-compose.ha.yml up -d`.
+
 ## Настройки (переменные окружения)
 
 `HG_DNS_PORT` (5353), `HG_UPSTREAM` (1.1.1.1), `HG_WEB_PORT` (8080), `HG_BLOCK_IP` (127.0.0.1), `HG_SCAN_INTERVAL` (30 с), `HG_LAN_IFACE`, `HG_PASSWORD`, `HG_VPN_DRYRUN`, `HG_DB`, `HG_DEMO`.
