@@ -318,3 +318,61 @@ def test_home_api(monkeypatch, tmp_path):
     h.close()
     assert c.get(f"/api/home/{did}/state").status_code == 502
     c.delete(f"/api/home/{did}")
+
+
+# ---------------- Home Assistant / Яндекс Станция ----------------
+import fake_ha
+from homeguard import ha as hamod
+
+
+def test_ha_url_must_be_local():
+    for bad in ("http://8.8.8.8:8123", "https://evil.example.com", "http://1.2.3.4"):
+        try:
+            hamod.normalize_url(bad)
+        except hamod.HAError:
+            continue
+        raise AssertionError(bad)
+    assert hamod.normalize_url("192.168.3.2:8123/") == "http://192.168.3.2:8123"
+    assert hamod.normalize_url("homeassistant.local:8123") == "http://homeassistant.local:8123"
+    assert hamod.normalize_url("homeassistant:8123") == "http://homeassistant:8123"
+
+
+def test_ha_build_service_validation():
+    assert hamod.build_service("command", "media_player.x", " включи музыку ") == (
+        "play_media", {"entity_id": "media_player.x", "media_content_type": "text_command",
+                       "media_content_id": "включи музыку"})
+    assert hamod.build_service("volume", "media_player.x", 0.5)[1]["volume_level"] == 0.5
+    for args in (("volume", "media_player.x", 7), ("volume", "media_player.x", True),
+                 ("play", "light.kitchen"), ("play", "media_player.x/../y"), ("hack", "media_player.x"),
+                 ("tts", "media_player.x", ""), ("mute", "media_player.x", "yes")):
+        try:
+            hamod.build_service(*args)
+        except hamod.HAError:
+            continue
+        raise AssertionError(args)
+
+
+def test_ha_api():
+    srv, calls = fake_ha.serve()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    assert c.get("/api/ha").json()["configured"] is False
+    assert c.get("/api/ha/players").status_code == 400
+    assert c.put("/api/ha", json={"url": base, "token": "x" * 40}).status_code == 400  # неверный токен
+    assert c.get("/api/ha").json()["configured"] is False
+    r = c.put("/api/ha", json={"url": base, "token": fake_ha.TOKEN})
+    assert r.status_code == 200 and fake_ha.TOKEN not in r.text and fake_ha.TOKEN not in c.get("/api/ha").text
+    pl = c.get("/api/ha/players").json()
+    assert [p["entity_id"] for p in pl] == ["media_player.yandex_station_mini", "media_player.living_room_tv"]
+    assert pl[0]["yandex"] and pl[0]["title"] == "Звуки дождя" and not pl[1]["yandex"]
+    eid = pl[0]["entity_id"]
+    assert c.post(f"/api/ha/players/{eid}/volume", json={"value": 0.55}).status_code == 200
+    assert c.post(f"/api/ha/players/{eid}/command", json={"value": "включи свет на кухне"}).status_code == 200
+    assert calls[-1] == ("/api/services/media_player/play_media", {
+        "entity_id": eid, "media_content_type": "text_command", "media_content_id": "включи свет на кухне"})
+    assert c.get("/api/ha/players").json()[0]["volume"] == 0.55
+    assert c.post(f"/api/ha/players/{eid}/volume", json={"value": 5}).status_code == 400
+    assert c.post("/api/ha/players/light.kitchen/play", json={}).status_code == 400
+    c.delete("/api/ha")
+    assert c.get("/api/ha").json()["configured"] is False
+    srv.shutdown()

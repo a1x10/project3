@@ -114,3 +114,17 @@ ol{margin:8px 0 0 18px;padding:0;line-height:1.6}
 .switch span:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}
 .switch input:checked+span{background:var(--green)}
 .switch input:checked+span:before{transform:translateX(18px)}
+.form{display:flex;flex-direction:column;gap:12px;max-width:460px}
+.form label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:13px}
+.sp{background:var(--card);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.sp.on{box-shadow:inset 0 0 0 2px var(--green)}
+.sp h3{margin:0;font-size:17px}
+.sp .now{font-size:15px;min-height:1.4em}
+.sp .ctrls{display:flex;gap:8px;justify-content:center;align-items:center}
+.sp .ib{background:var(--card2);color:var(--text);border:0;border-radius:10px;padding:9px 14px;cursor:pointer;font:inherit}
+.sp .ib:hover{background:#2e2e44}
+.sp .vol{display:flex;gap:8px;align-items:center}
+.sp .vol input[type=range]{flex:1;padding:0;accent-color:var(--green)}
+.sp .say{display:flex;gap:6px;flex-wrap:wrap}
+.sp .say input{flex:1;min-width:150px}
+.sp .others{color:var(--muted);font-size:13px}

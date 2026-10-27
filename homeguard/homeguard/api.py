@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import blocklists, bravia, config, db, miio, miot, scanner, vpn
+from . import blocklists, bravia, config, db, ha, miio, miot, scanner, vpn
 
 DEVICE_TYPES = {"computer", "phone", "tv", "router", "speaker", "appliance", "iot", "unknown"}
 REASONS = {
@@ -410,6 +410,55 @@ def home_action(did: str, body: HomeAction):
     if not act or act["args"]:  # действия с аргументами пока не поддерживаем
         raise HTTPException(400, "Неизвестное действие")
     _home_call(lambda: dev.action(body.siid, body.aiid))
+    return {"ok": True}
+
+
+# ---------- Home Assistant / Яндекс Станция ----------
+
+def _ha_call(fn):
+    try:
+        return fn()
+    except ha.HAError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/ha")
+def ha_status():
+    return {"configured": ha.configured(), "url": db.get_setting("ha_url")}  # токен наружу не отдаём
+
+
+class HAIn(BaseModel):
+    url: str
+    token: str
+
+
+@app.put("/api/ha")
+def ha_save(body: HAIn):
+    _ha_call(lambda: ha.save(body.url, body.token))
+    return ha_status()
+
+
+@app.delete("/api/ha")
+def ha_clear():
+    ha.clear()
+    return ha_status()
+
+
+@app.get("/api/ha/players")
+def ha_players():
+    return _ha_call(lambda: ha.HA.current().players())
+
+
+class PlayerCmd(BaseModel):
+    value: bool | float | int | str | None = None
+
+
+@app.post("/api/ha/players/{entity_id}/{action}")
+def ha_player_command(entity_id: str, action: str, body: PlayerCmd):
+    def go():
+        service, data = ha.build_service(action, entity_id, body.value)
+        ha.HA.current().service("media_player", service, data)
+    _ha_call(go)
     return {"ok": True}
 
 
