@@ -56,3 +56,19 @@ td.dom{white-space:normal;word-break:break-all}
 .modal-card label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:13px}
 .row{display:flex;gap:10px;justify-content:flex-end}
 @media(max-width:560px){main{padding:14px}.grid{grid-template-columns:repeat(2,1fr);gap:10px}}
+textarea{background:var(--card2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:12px ui-monospace,monospace;resize:vertical}
+.modal-card input[type=file]{padding:7px}
+.modal-card{max-height:92vh;overflow:auto}
+.err{color:var(--red);margin:0;min-height:1em;font-size:13px}
+.banner{border-radius:14px;padding:14px 18px;margin-bottom:16px;background:var(--card);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.banner.ok{background:#12372b}.banner.bad{background:#44202a}
+.banner .big{font-weight:700}
+.vcard{background:var(--card);border:2px solid transparent;border-radius:16px;padding:18px;text-align:center}
+.vcard.active{border-color:var(--green)}
+.vcard .flag{font-size:38px;line-height:1.2}
+.vcard .name{font-weight:700;margin:6px 0 2px;word-break:break-word}
+.vcard .sub{color:var(--muted);font-size:13px;min-height:1.3em}
+.vcard .btns{display:flex;gap:8px;justify-content:center;margin-top:12px}
+.vcard .btn{padding:7px 12px;font-size:14px}
+.btn.danger{background:#44202a;color:#ff8ea1}
+.hint{margin-top:18px;font-size:13px}

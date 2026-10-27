@@ -4,7 +4,7 @@ import logging
 
 import uvicorn
 
-from . import api, config, db, demo, dns_server, scanner
+from . import api, config, db, demo, dns_server, scanner, vpn
 
 
 @contextlib.asynccontextmanager
@@ -15,6 +15,7 @@ async def lifespan(app):
         demo.seed()
     else:
         tasks.append(asyncio.create_task(scanner.scan_loop()))
+    tasks.append(asyncio.create_task(asyncio.to_thread(vpn.manager.restore)))
     try:
         yield
     finally:
