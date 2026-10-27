@@ -549,3 +549,15 @@ def test_av_cloud_and_watch(monkeypatch, tmp_path):
     assert av.watch_once() == 0  # повторно не проверяет
     srv.shutdown()
     blocklists.load(force=True)
+
+
+def test_vpn_amneziawg(tmp_path):
+    m = _mgr(tmp_path)
+    awg = WG.replace("[Peer]", "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 0\nH1 = 1\n[Peer]")
+    p = m.add_profile("Amnezia NL", awg)
+    assert p["kind"] == "amneziawg"
+    assert "Jc = 4" in (tmp_path / f"{p['id']}.conf").read_text()  # параметры маскировки сохраняются
+    m.connect(p["id"])
+    assert any(c[:2] == ["awg-quick", "up"] for c in m.runner.history)
+    m.disconnect()
+    assert any(c[:2] == ["awg-quick", "down"] for c in m.runner.history)

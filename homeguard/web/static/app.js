@@ -186,7 +186,7 @@ async function loadVpn() {
     <div class="vcard ${p.id === vpn.active ? 'active' : ''}" data-id="${esc(p.id)}">
       <div class="flag">${p.flag}</div>
       <div class="name">${esc(p.name)}</div>
-      <div class="sub">${esc(p.country_name || 'страна не указана')} · ${p.kind === 'wireguard' ? 'WireGuard' : 'OpenVPN'}</div>
+      <div class="sub">${esc(p.country_name || 'страна не указана')} · ${({wireguard: 'WireGuard', amneziawg: 'AmneziaWG', openvpn: 'OpenVPN'})[p.kind] || p.kind}</div>
       <div class="btns">
         ${p.id === vpn.active ? '<button class="btn ghost" data-act="off">Отключить</button>'
           : '<button class="btn" data-act="on">Подключить</button>'}

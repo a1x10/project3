@@ -41,6 +41,10 @@ OVPN_FORBIDDEN = {"up", "down", "plugin", "script-security", "route-up", "route-
                   "setenv-safe"}
 
 
+WG_KINDS = {"wireguard", "amneziawg"}
+WG_TOOL = {"wireguard": "wg-quick", "amneziawg": "awg-quick"}
+
+
 class VpnError(Exception):
     pass
 
@@ -61,6 +65,9 @@ def guess_country(text: str) -> str | None:
 
 def detect_kind(content: str) -> str:
     if "[Interface]" in content and "[Peer]" in content:
+        # AmneziaWG — WireGuard с маскировкой (параметры Jc, Jmin, S1, H1…), нужен awg-quick
+        if re.search(r"^\s*(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4)\s*=", content, re.M | re.I):
+            return "amneziawg"
         return "wireguard"
     if re.search(r"^\s*(client|remote\s+\S+)", content, re.M) and re.search(r"^\s*remote\s+\S+", content, re.M):
         return "openvpn"
@@ -73,7 +80,7 @@ def sanitize(kind: str, content: str) -> tuple[str, str | None]:
     if len(content) > 100_000:
         raise VpnError("Файл слишком большой")
     out, endpoint = [], None
-    if kind == "wireguard":
+    if kind in WG_KINDS:
         for line in content.split("\n"):
             key = line.split("=", 1)[0].strip().lower()
             if key in WG_FORBIDDEN:
@@ -156,7 +163,7 @@ class VpnManager:
 
     # ---- профили ----
     def _path(self, pid: str, kind: str):
-        return config.VPN_DIR / f"{pid}.{'conf' if kind == 'wireguard' else 'ovpn'}"
+        return config.VPN_DIR / f"{pid}.{'conf' if kind in WG_KINDS else 'ovpn'}"
 
     def add_profile(self, name: str, content: str, country: str | None = None,
                     username: str | None = None, password: str | None = None) -> dict:
@@ -210,18 +217,19 @@ class VpnManager:
         if db.get_setting("vpn_active"):
             self.disconnect()
         if not self.runner.dry_run:
-            tool = "wg-quick" if p["kind"] == "wireguard" else "openvpn"
+            tool = WG_TOOL.get(p["kind"], "openvpn")
             if not shutil.which(tool) or not shutil.which("iptables"):
                 raise VpnError(f"Не установлены {tool} и/или iptables")
         iface = config.VPN_IFACE
         src = self._path(pid, p["kind"])
         try:
-            if p["kind"] == "wireguard":
+            if p["kind"] in WG_KINDS:
+                tool = WG_TOOL[p["kind"]]
                 run_conf = config.VPN_DIR / f"{iface}.conf"
                 run_conf.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
                 run_conf.chmod(0o600)
-                self.runner.run(["wg-quick", "down", str(run_conf)], check=False)
-                self.runner.run(["wg-quick", "up", str(run_conf)])
+                self.runner.run([tool, "down", str(run_conf)], check=False)
+                self.runner.run([tool, "up", str(run_conf)])
             else:
                 cmd = ["openvpn", "--config", str(src), "--daemon", "hgvpn", "--dev", iface, "--dev-type", "tun",
                        "--writepid", str(config.VPN_DIR / "openvpn.pid"), "--redirect-gateway", "def1",
@@ -262,8 +270,8 @@ class VpnManager:
         self._rules = []
         iface = config.VPN_IFACE
         run_conf = config.VPN_DIR / f"{iface}.conf"
-        if kind in (None, "wireguard"):
-            self.runner.run(["wg-quick", "down", str(run_conf)], check=False)
+        if kind is None or kind in WG_KINDS:
+            self.runner.run([WG_TOOL.get(kind, "wg-quick"), "down", str(run_conf)], check=False)
             run_conf.unlink(missing_ok=True)
         if kind in (None, "openvpn"):
             pidf = config.VPN_DIR / "openvpn.pid"
