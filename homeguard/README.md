@@ -57,7 +57,7 @@ python -m homeguard                # боевой режим: скан реал�
 - Нужны `wireguard-tools` / `openvpn`, `iptables` и запуск от root: `sudo apt install wireguard-tools openvpn iptables`.
 - Безопасность: из импортируемых конфигов вырезаются `PostUp/PreUp/…`, `up/down/script-security/plugin` и т. п. (иначе чужой конфиг выполнил бы команды от root). Ключи нигде не отдаются через API, файлы хранятся с правами 600 в `data/vpn/`.
 - Без root/wg: `HG_VPN_DRYRUN=1` — команды только запоминаются (демо-режим включает это сам).
-- Поддерживаются только WireGuard и OpenVPN. Если Планета выдаёт ссылки `vless://` / подписку — это отдельный этап (нужен xray/sing-box).
+- Поддерживаются WireGuard, **AmneziaWG** (WireGuard с маскировкой от блокировок; нужен `awg-quick` из [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools), на Ubuntu — `sudo add-apt-repository ppa:amnezia/ppa && sudo apt install amneziawg`) и OpenVPN. Если Планета выдаёт ссылки `vless://` / подписку — это отдельный этап (нужен xray/sing-box).
 
 ## Sony Bravia
 
