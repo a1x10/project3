@@ -15,6 +15,7 @@
     <button data-tab="protection">Защита</button>
     <button data-tab="vpn">VPN</button>
     <button data-tab="tv">Телевизоры</button>
+    <button data-tab="home">Умный дом</button>
     <button data-tab="stats">Статистика</button>
   </nav>
 </header>
@@ -66,6 +67,17 @@
       <li>Для включения из ожидания: <b>Удалённый запуск</b> = Вкл</li></ol></details>
   </section>
 
+  <section id="tab-home" hidden>
+    <div class="toolbar"><span class="muted" id="homeHint"></span><button id="homeAddBtn" class="btn">+ Добавить устройство Xiaomi</button></div>
+    <div id="homeList" class="tvlist"></div>
+    <details class="muted hint"><summary>Где взять IP и токен</summary>
+      <ol><li>IP: вкладка «Устройства», закрепи его за стиралкой в роутере.</li>
+      <li>Токен (32 символа) — из аккаунта Xiaomi. Проще всего утилитой
+      <b>Xiaomi-cloud-tokens-extractor</b> (запускается у тебя на компьютере, пароль никому не передаётся).</li>
+      <li>Модель определится сама; описание управления скачается с miot-spec.org.</li></ol>
+      <p>Работает с устройствами, у которых включено локальное управление (протокол miIO/MIoT). Часть новых устройств Xiaomi работает только через облако — к ним не подключиться.</p></details>
+  </section>
+
   <section id="tab-stats" hidden>
     <div id="statTiles" class="tiles"></div>
     <div class="two">
@@ -94,6 +106,18 @@
     <label>Pre-Shared Key <input id="tPsk" type="password" autocomplete="new-password"></label>
     <p id="tErr" class="err"></p>
     <div class="row"><button class="btn ghost" id="tCancel">Отмена</button><button class="btn" id="tSave">Добавить</button></div>
+  </div>
+</div>
+<div id="homeModal" class="modal" hidden>
+  <div class="modal-card">
+    <h3>Новое устройство Xiaomi</h3>
+    <label>Название <input id="hName" placeholder="Стиральная машина"></label>
+    <label>IP-адрес <input id="hIp" list="homeIps" placeholder="192.168.3.41"></label>
+    <datalist id="homeIps"></datalist>
+    <label>Токен (32 символа) <input id="hToken" type="password" autocomplete="off"></label>
+    <label>Модель (если не определится сама) <input id="hModel" placeholder="viomi.washer.v20"></label>
+    <p id="hErr" class="err"></p>
+    <div class="row"><button class="btn ghost" id="hCancel">Отмена</button><button class="btn" id="hSave">Подключить</button></div>
   </div>
 </div>
 <div id="vpnModal" class="modal" hidden>

@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS tvs (
     psk TEXT NOT NULL,
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS miot_devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    token TEXT NOT NULL,
+    model TEXT NOT NULL,
+    created REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 

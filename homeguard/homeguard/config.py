@@ -34,3 +34,7 @@ PASSWORD = os.getenv("HG_PASSWORD", "")
 
 # Порт REST API Bravia (у реальных ТВ всегда 80; менять нужно только для тестов)
 BRAVIA_PORT = int(os.getenv("HG_BRAVIA_PORT", "80"))
+
+# Xiaomi (miIO/MIoT)
+MIIO_PORT = int(os.getenv("HG_MIIO_PORT", "54321"))
+MIOT_DIR = Path(os.getenv("HG_MIOT_DIR", ROOT / "data" / "miot"))  # кэш описаний моделей
