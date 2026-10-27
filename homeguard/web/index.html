@@ -14,6 +14,7 @@
     <button data-tab="log">Журнал</button>
     <button data-tab="protection">Защита</button>
     <button data-tab="vpn">VPN</button>
+    <button data-tab="tv">Телевизоры</button>
     <button data-tab="stats">Статистика</button>
   </nav>
 </header>
@@ -55,6 +56,16 @@
     <p class="muted hint">Файлы <b>.conf</b> (WireGuard) или <b>.ovpn</b> (OpenVPN) берутся в личном кабинете VPN-сервиса. Команды запуска скриптов из файлов вырезаются при импорте.</p>
   </section>
 
+  <section id="tab-tv" hidden>
+    <div class="toolbar"><span class="muted" id="tvHint"></span><button id="tvAddBtn" class="btn">+ Добавить телевизор</button></div>
+    <div id="tvList" class="tvlist"></div>
+    <details class="muted hint"><summary>Как включить управление на Sony Bravia</summary>
+      <ol><li>Настройки → Сеть → Домашняя сеть → <b>Управление по IP</b></li>
+      <li>Аутентификация: <b>Обычная и Pre-Shared Key</b></li>
+      <li>Задай <b>Pre-Shared Key</b> (его вводишь здесь)</li>
+      <li>Для включения из ожидания: <b>Удалённый запуск</b> = Вкл</li></ol></details>
+  </section>
+
   <section id="tab-stats" hidden>
     <div id="statTiles" class="tiles"></div>
     <div class="two">
@@ -72,6 +83,17 @@
     <label>Название <input id="mName"></label>
     <label>Тип <select id="mType"></select></label>
     <div class="row"><button class="btn ghost" id="mCancel">Отмена</button><button class="btn" id="mSave">Сохранить</button></div>
+  </div>
+</div>
+<div id="tvModal" class="modal" hidden>
+  <div class="modal-card">
+    <h3>Новый телевизор Sony Bravia</h3>
+    <label>Название <input id="tName" placeholder="Гостиная"></label>
+    <label>IP-адрес <input id="tIp" list="tvIps" placeholder="192.168.3.30"></label>
+    <datalist id="tvIps"></datalist>
+    <label>Pre-Shared Key <input id="tPsk" type="password" autocomplete="new-password"></label>
+    <p id="tErr" class="err"></p>
+    <div class="row"><button class="btn ghost" id="tCancel">Отмена</button><button class="btn" id="tSave">Добавить</button></div>
   </div>
 </div>
 <div id="vpnModal" class="modal" hidden>

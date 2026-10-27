@@ -31,3 +31,6 @@ LAN_IFACE = os.getenv("HG_LAN_IFACE", "")  # по умолчанию — инт�
 VPN_DRYRUN = os.getenv("HG_VPN_DRYRUN") == "1" or DEMO
 # Необязательный пароль на панель (HTTP Basic, логин любой).
 PASSWORD = os.getenv("HG_PASSWORD", "")
+
+# Порт REST API Bravia (у реальных ТВ всегда 80; менять нужно только для тестов)
+BRAVIA_PORT = int(os.getenv("HG_BRAVIA_PORT", "80"))
