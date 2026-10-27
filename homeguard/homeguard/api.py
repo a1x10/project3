@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import blocklists, bravia, config, db, scanner, vpn
+from . import blocklists, bravia, config, db, miio, miot, scanner, vpn
 
 DEVICE_TYPES = {"computer", "phone", "tv", "router", "speaker", "appliance", "iot", "unknown"}
 REASONS = {
@@ -324,6 +324,92 @@ def tv_command(tid: str, action: str, body: TvCmd):
         _tv_call(lambda: tv.press(body.button))
     else:
         raise HTTPException(400, "Неизвестная команда")
+    return {"ok": True}
+
+
+# ---------- Xiaomi (MIoT) ----------
+
+def _home(did: str):
+    try:
+        return miot.get(did)
+    except miot.MiotError as e:
+        raise HTTPException(404, str(e))
+
+
+def _home_call(fn):
+    try:
+        return fn()
+    except miot.MiotError as e:
+        raise HTTPException(400, str(e))
+    except miio.MiioError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/api/home")
+def home_list():
+    return miot.list_devices()
+
+
+class HomeIn(BaseModel):
+    name: str
+    ip: str
+    token: str
+    model: str = ""
+
+
+@app.post("/api/home")
+def home_add(body: HomeIn):
+    return _home_call(lambda: miot.add_device(body.name, body.ip, body.token, body.model))
+
+
+@app.delete("/api/home/{did}")
+def home_delete(did: str):
+    miot.delete_device(did)
+    return {"ok": True}
+
+
+@app.get("/api/home/{did}/spec")
+def home_spec(did: str):
+    return _home(did)[1]
+
+
+@app.get("/api/home/{did}/state")
+def home_state(did: str):
+    dev, spec = _home(did)
+    return _home_call(lambda: miot.read_state(dev, spec))
+
+
+class HomeSet(BaseModel):
+    siid: int
+    piid: int
+    value: bool | int | float | str
+
+
+@app.post("/api/home/{did}/set")
+def home_set(did: str, body: HomeSet):
+    dev, spec = _home(did)
+    prop = next((p for p in spec["properties"] if p["siid"] == body.siid and p["piid"] == body.piid), None)
+    if not prop or not prop["writable"]:
+        raise HTTPException(400, "Этот параметр менять нельзя")
+
+    def go():
+        dev.set_property(body.siid, body.piid, miot.validate_value(prop, body.value))
+    _home_call(go)
+    return {"ok": True}
+
+
+class HomeAction(BaseModel):
+    siid: int
+    aiid: int
+
+
+@app.post("/api/home/{did}/action")
+def home_action(did: str, body: HomeAction):
+    dev, spec = _home(did)
+    act = next((a for a in spec["actions"] if a["siid"] == body.siid and a["aiid"] == body.aiid), None)
+    if not act or act["args"]:  # действия с аргументами пока не поддерживаем
+        raise HTTPException(400, "Неизвестное действие")
+    _home_call(lambda: dev.action(body.siid, body.aiid))
     return {"ok": True}
 
 

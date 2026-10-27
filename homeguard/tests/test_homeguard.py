@@ -237,3 +237,84 @@ def test_bravia_api(monkeypatch):
     assert c.get(f"/api/tvs/{tid}/state").status_code == 502  # ТВ недоступен
     assert c.get("/api/tvs/nope/state").status_code == 404
     c.delete(f"/api/tvs/{tid}")
+
+
+# ---------------- Xiaomi (miIO / MIoT) ----------------
+import json as _json
+import shutil
+import fake_miio
+from homeguard import miio as miiomod, miot as miotmod
+
+TOKEN = "00112233445566778899aabbccddeeff"
+
+
+def _miot_env(monkeypatch, tmp_path):
+    cache = tmp_path / "miot"
+    cache.mkdir()
+    shutil.copy(Path(__file__).parent / "fixtures" / "mibx2.washer.v1.json", cache / "mibx2.washer.v1.json")
+    monkeypatch.setattr(hgconfig, "MIOT_DIR", cache)
+    washer = fake_miio.Washer()
+    handle = fake_miio.serve(washer, TOKEN)
+    monkeypatch.setattr(hgconfig, "MIIO_PORT", handle.port)
+    return washer, handle
+
+
+def test_miio_crypto_roundtrip():
+    tok = bytes.fromhex(TOKEN)
+    assert miiomod.decrypt(tok, miiomod.encrypt(tok, b'{"a":1}')) == b'{"a":1}'
+
+
+def test_miio_client_and_wrong_token(monkeypatch, tmp_path):
+    washer, h = _miot_env(monkeypatch, tmp_path)
+    dev = miiomod.MiioDevice("127.0.0.1", TOKEN, port=h.port, timeout=0.5, retries=0)
+    assert dev.info()["model"] == "mibx2.washer.v1"
+    assert dev.get_properties([(2, 2), (2, 10)]) == {(2, 2): 1, (2, 10): 0}
+    bad = miiomod.MiioDevice("127.0.0.1", "ff" * 16, port=h.port, timeout=0.4, retries=0)
+    try:
+        bad.info()
+    except miiomod.MiioError as e:
+        assert "не отвечает" in str(e)
+    else:
+        raise AssertionError
+    h.close()
+
+
+def test_miot_spec_and_validation(monkeypatch, tmp_path):
+    _miot_env(monkeypatch, tmp_path)
+    spec = miotmod.load_spec("mibx2.washer.v1")
+    by = {(p["siid"], p["piid"]): p for p in spec["properties"]}
+    assert by[(2, 2)]["label"] == "Состояние" and by[(2, 2)]["writable"] is False
+    assert {"label": "Идёт стирка", "value": 3} in by[(2, 2)]["values"]
+    assert not any(p["service"] == "device-information" for p in spec["properties"])
+    assert miotmod.validate_value(by[(2, 7)], 4) == 4
+    for bad in (99, "4", True, 1.5):
+        try:
+            miotmod.validate_value(by[(2, 7)], bad)
+        except miotmod.MiotError:
+            continue
+        raise AssertionError(bad)
+    assert [a["name"] for a in spec["actions"] if a["siid"] == 2] == ["start-wash", "pause"]
+
+
+def test_home_api(monkeypatch, tmp_path):
+    washer, h = _miot_env(monkeypatch, tmp_path)
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    assert c.post("/api/home", json={"name": "x", "ip": "127.0.0.1", "token": "zz"}).status_code == 400
+    assert c.post("/api/home", json={"name": "x", "ip": "8.8.8.8", "token": TOKEN}).status_code == 400
+    r = c.post("/api/home", json={"name": "Стиралка", "ip": "127.0.0.1", "token": TOKEN})
+    assert r.status_code == 200 and r.json()["model"] == "mibx2.washer.v1" and TOKEN not in r.text
+    did = r.json()["id"]
+    assert TOKEN not in c.get("/api/home").text
+    st = c.get(f"/api/home/{did}/state").json()
+    assert st["2.2"] == 1 and st["2.7"] == 4
+    assert c.post(f"/api/home/{did}/set", json={"siid": 2, "piid": 7, "value": 6}).status_code == 200
+    assert washer.props[(2, 7)] == 6
+    assert c.post(f"/api/home/{did}/set", json={"siid": 2, "piid": 7, "value": 12345}).status_code == 400
+    assert c.post(f"/api/home/{did}/set", json={"siid": 2, "piid": 2, "value": 3}).status_code == 400  # read-only
+    assert c.post(f"/api/home/{did}/set", json={"siid": 9, "piid": 9, "value": 1}).status_code == 400  # нет в спеке
+    assert c.post(f"/api/home/{did}/action", json={"siid": 2, "aiid": 1}).status_code == 200
+    assert washer.actions == [(2, 1)] and c.get(f"/api/home/{did}/state").json()["2.2"] == 3
+    assert c.post(f"/api/home/{did}/action", json={"siid": 2, "aiid": 77}).status_code == 400
+    h.close()
+    assert c.get(f"/api/home/{did}/state").status_code == 502
+    c.delete(f"/api/home/{did}")

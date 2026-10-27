@@ -294,8 +294,134 @@ $('#tSave').onclick = async () => {
   } catch (err) { $('#tErr').textContent = errText(err); }
 };
 
+// ---------- Умный дом (Xiaomi MIoT) ----------
+const homeSpec = {};
+
+async function loadHome() {
+  const list = await api('/api/home');
+  $('#homeHint').textContent = list.length ? '' : 'Устройств пока нет';
+  const known = new Set(list.map((d) => d.id));
+  for (const d of list) {
+    let el = document.getElementById('hm-' + d.id);
+    if (!el) {
+      el = document.createElement('div'); el.id = 'hm-' + d.id; el.className = 'hm';
+      $('#homeList').appendChild(el);
+      try { homeSpec[d.id] = await api(`/api/home/${d.id}/spec`); } catch (e) { el.textContent = errText(e); continue; }
+      homeBuild(d, el);
+    }
+    homeUpdate(d, el);
+  }
+  document.querySelectorAll('#homeList .hm').forEach((el) => { if (!known.has(el.id.slice(3))) el.remove(); });
+}
+
+const fmtVal = (p, v) => {
+  if (v === undefined || v === null) return '—';
+  if (p.format === 'bool') return v ? 'Вкл' : 'Выкл';
+  const hit = p.values?.find((x) => x.value === v);
+  const u = {minutes: 'мин', hours: 'ч', seconds: 'с', percentage: '%'}[p.unit] || p.unit;
+  return (hit ? hit.label : v) + (u && !hit && !p.label.includes(',') && p.unit !== 'celsius' ? ' ' + u : '');
+};
+
+function homeBuild(d, el) {
+  const spec = homeSpec[d.id];
+  const key = (p) => `${p.siid}.${p.piid}`;
+  const ctl = (p) => {
+    if (!p.writable) return `<span class="val" data-v="${key(p)}">—</span>`;
+    if (p.format === 'bool') return `<label class="switch"><input type="checkbox" data-set="${key(p)}"><span></span></label>`;
+    if (p.values) return `<select data-set="${key(p)}">${p.values.map((v) => `<option value="${v.value}">${esc(v.label)}</option>`).join('')}</select>`;
+    if (p.range) return `<input type="number" data-set="${key(p)}" min="${p.range[0]}" max="${p.range[1]}" step="${p.range[2] || 1}">`;
+    return `<span class="val" data-v="${key(p)}">—</span>`;
+  };
+  const rows = (arr) => arr.map((p) => `<div class="ctl" data-row="${key(p)}"><span>${esc(p.label)}</span>${ctl(p)}</div>`).join('');
+  const readable = spec.properties.filter((p) => p.readable);
+  const settings = readable.filter((p) => p.writable && p.name !== 'on');
+  const info = readable.filter((p) => !p.writable);
+  el.innerHTML = `
+    <div><h3>${esc(d.name)}</h3><div class="sub">${esc(d.model)} · ${esc(d.ip)}</div></div>
+    <div><div class="big" data-r="headline">…</div><div class="sub" data-r="subline"></div></div>
+    <div class="tverr" data-r="err"></div>
+    <div class="acts">${spec.actions.filter((a) => !a.args.length && a.label !== a.name).map((a) =>
+      `<button class="btn ${a.confirm ? '' : 'ghost'}" data-act="${a.siid}.${a.aiid}" data-confirm="${a.confirm ? 1 : ''}">${esc(a.label)}</button>`).join('')}</div>
+    ${settings.length ? `<div><div class="sec">Настройки</div>${rows(settings)}</div>` : ''}
+    ${info.length ? `<div><div class="sec">Состояние</div>${rows(info)}</div>` : ''}
+    <button class="del" data-del="1">Удалить устройство</button>`;
+  const err = (m) => el.querySelector('[data-r=err]').textContent = m;
+  const find = (k) => spec.properties.find((p) => key(p) === k);
+  const setProp = async (k, value) => {
+    const p = find(k);
+    try { await api(`/api/home/${d.id}/set`, jsonReq('POST', {siid: p.siid, piid: p.piid, value})); err(''); }
+    catch (e) { err(errText(e)); }
+    homeUpdate(d, el);
+  };
+  el.onchange = (e) => {
+    const t = e.target, k = t.dataset.set; if (!k) return;
+    const p = find(k);
+    setProp(k, p.format === 'bool' ? t.checked : Number(t.value));
+  };
+  el.onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.del) { if (confirm('Удалить устройство из панели?')) { await api('/api/home/' + d.id, {method: 'DELETE'}); el.remove(); } return; }
+    if (b.dataset.act) {
+      if (b.dataset.confirm && !confirm(`${b.textContent.trim()} — выполнить на устройстве?`)) return;
+      const [siid, aiid] = b.dataset.act.split('.').map(Number);
+      try { await api(`/api/home/${d.id}/action`, jsonReq('POST', {siid, aiid})); err(''); } catch (e2) { err(errText(e2)); }
+      homeUpdate(d, el);
+    }
+  };
+}
+
+async function homeUpdate(d, el) {
+  const spec = homeSpec[d.id];
+  const r = (k) => el.querySelector(`[data-r=${k}]`);
+  try {
+    const st = await api(`/api/home/${d.id}/state`);
+    r('err').textContent = '';
+    const by = Object.fromEntries(spec.properties.map((p) => [p.name, p]));
+    const val = (n) => by[n] ? st[`${by[n].siid}.${by[n].piid}`] : undefined;
+    const on = val('on');
+    el.classList.toggle('on', on === true && val('status') !== 0);
+    r('headline').textContent = by.status ? fmtVal(by.status, val('status')) : (on ? 'Включено' : 'Выключено');
+    const bits = [];
+    if (by['left-time'] && val('left-time')) bits.push(`осталось ${val('left-time')} мин`);
+    if (by.mode && val('mode') !== undefined) bits.push(fmtVal(by.mode, val('mode')));
+    if (by['door-state'] && val('door-state') === 1) bits.push('дверца открыта');
+    r('subline').textContent = bits.join(' · ');
+    const f = by.fault && val('fault');
+    if (f) { r('headline').classList.add('fault'); r('subline').textContent = fmtVal(by.fault, f); } else r('headline').classList.remove('fault');
+    el.querySelectorAll('[data-row]').forEach((row) => {
+      const k = row.dataset.row, v = st[k], p = spec.properties.find((x) => `${x.siid}.${x.piid}` === k);
+      const inp = row.querySelector('[data-set]');
+      if (inp) {
+        if (document.activeElement === inp) return;
+        if (p.format === 'bool') inp.checked = !!v; else if (v !== undefined) inp.value = v;
+      } else row.querySelector('[data-v]').textContent = fmtVal(p, v);
+    });
+  } catch (e) {
+    el.classList.remove('on'); r('headline').textContent = 'нет связи'; r('subline').textContent = '';
+    r('err').textContent = errText(e);
+  }
+}
+
+$('#homeAddBtn').onclick = () => {
+  $('#hErr').textContent = '';
+  $('#homeIps').innerHTML = devices.filter((d) => d.ip && d.vendor === 'Xiaomi' || d.type === 'appliance')
+    .map((d) => `<option value="${esc(d.ip)}">${esc(d.display_name)}</option>`).join('');
+  $('#homeModal').hidden = false;
+};
+$('#hCancel').onclick = () => $('#homeModal').hidden = true;
+$('#hSave').onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = 'Подключаю…';
+  try {
+    await api('/api/home', jsonReq('POST', {name: $('#hName').value, ip: $('#hIp').value, token: $('#hToken').value, model: $('#hModel').value}));
+    $('#homeModal').hidden = true;
+    ['#hName', '#hIp', '#hToken', '#hModel'].forEach((s) => $(s).value = '');
+    loadHome();
+  } catch (err) { $('#hErr').textContent = errText(err); }
+  finally { e.target.disabled = false; e.target.textContent = 'Подключить'; }
+};
+
 function refresh() {
-  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, tv: loadTv, stats: loadStats})[tab]().catch(console.error);
+  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, tv: loadTv, home: loadHome, stats: loadStats})[tab]().catch(console.error);
 }
 refresh();
-setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || !$('#tvModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);
+setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || !$('#tvModal').hidden || !$('#homeModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);
