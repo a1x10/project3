@@ -22,3 +22,12 @@ BLOCK_IP = os.getenv("HG_BLOCK_IP", "127.0.0.1")
 SCAN_INTERVAL = int(os.getenv("HG_SCAN_INTERVAL", "30"))
 ONLINE_WINDOW = int(os.getenv("HG_ONLINE_WINDOW", "150"))  # сек. с последней активности
 DEMO = os.getenv("HG_DEMO") == "1"
+
+# VPN
+VPN_DIR = Path(os.getenv("HG_VPN_DIR", ROOT / "data" / "vpn"))
+VPN_IFACE = "hgvpn"
+LAN_IFACE = os.getenv("HG_LAN_IFACE", "")  # по умолчанию — интерфейс маршрута по умолчанию
+# Сухой прогон: команды не выполняются, а только запоминаются (для разработки без root/wg).
+VPN_DRYRUN = os.getenv("HG_VPN_DRYRUN") == "1" or DEMO
+# Необязательный пароль на панель (HTTP Basic, логин любой).
+PASSWORD = os.getenv("HG_PASSWORD", "")

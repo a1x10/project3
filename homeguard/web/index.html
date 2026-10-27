@@ -13,6 +13,7 @@
     <button data-tab="devices" class="active">Устройства</button>
     <button data-tab="log">Журнал</button>
     <button data-tab="protection">Защита</button>
+    <button data-tab="vpn">VPN</button>
     <button data-tab="stats">Статистика</button>
   </nav>
 </header>
@@ -43,6 +44,17 @@
     <div id="levels" class="levels"></div>
   </section>
 
+  <section id="tab-vpn" hidden>
+    <div id="vpnBanner" class="banner"></div>
+    <div class="toolbar">
+      <label class="check"><input type="checkbox" id="vpnKill"> Kill switch: если VPN упадёт, интернет в сети отключается</label>
+      <button id="vpnAddBtn" class="btn">+ Добавить сервер</button>
+      <button id="vpnOff" class="btn ghost" hidden>Отключить VPN</button>
+    </div>
+    <div id="vpnGrid" class="grid"></div>
+    <p class="muted hint">Файлы <b>.conf</b> (WireGuard) или <b>.ovpn</b> (OpenVPN) берутся в личном кабинете VPN-сервиса. Команды запуска скриптов из файлов вырезаются при импорте.</p>
+  </section>
+
   <section id="tab-stats" hidden>
     <div id="statTiles" class="tiles"></div>
     <div class="two">
@@ -60,6 +72,21 @@
     <label>Название <input id="mName"></label>
     <label>Тип <select id="mType"></select></label>
     <div class="row"><button class="btn ghost" id="mCancel">Отмена</button><button class="btn" id="mSave">Сохранить</button></div>
+  </div>
+</div>
+<div id="vpnModal" class="modal" hidden>
+  <div class="modal-card">
+    <h3>Новый VPN-сервер</h3>
+    <label>Название <input id="vName" placeholder="Планета — Нидерланды"></label>
+    <label>Файл конфигурации <input id="vFile" type="file" accept=".conf,.ovpn,.txt"></label>
+    <label>или вставь текст <textarea id="vText" rows="4" placeholder="[Interface] … / client … remote …"></textarea></label>
+    <label>Страна <select id="vCountry"><option value="">определить автоматически</option></select></label>
+    <details><summary class="muted">OpenVPN: логин и пароль</summary>
+      <label>Логин <input id="vUser" autocomplete="off"></label>
+      <label>Пароль <input id="vPass" type="password" autocomplete="new-password"></label>
+    </details>
+    <p id="vErr" class="err"></p>
+    <div class="row"><button class="btn ghost" id="vCancel">Отмена</button><button class="btn" id="vSave">Добавить</button></div>
   </div>
 </div>
 <script src="/static/app.js"></script>

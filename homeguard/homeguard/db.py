@@ -30,10 +30,19 @@ CREATE TABLE IF NOT EXISTS queries (
 );
 CREATE INDEX IF NOT EXISTS idx_queries_ts ON queries(ts);
 CREATE INDEX IF NOT EXISTS idx_queries_client ON queries(client_ip);
+CREATE TABLE IF NOT EXISTS vpn_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    country TEXT,
+    kind TEXT NOT NULL,
+    endpoint TEXT,
+    has_auth INTEGER NOT NULL DEFAULT 0,
+    created REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 
-DEFAULT_SETTINGS = {"level": "medium"}
+DEFAULT_SETTINGS = {"level": "medium", "vpn_active": "", "vpn_kill_switch": "0"}
 
 
 def connect() -> sqlite3.Connection:

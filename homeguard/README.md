@@ -37,9 +37,21 @@ python -m homeguard                # боевой режим: скан реал�
 Полные списки: `python scripts/update_blocklists.py` (кладёт в `data/blocklists/*.remote.txt`). Свои домены — в `data/blocklists/<категория>.txt`.
 Для проверки есть тестовые домены `blocked-malware.test`, `blocked-phishing.test`.
 
+## VPN (Планета и любой другой сервис)
+
+Вкладка **VPN**: добавляешь серверы файлами `.conf` (WireGuard) или `.ovpn` (OpenVPN, логин/пароль — в форме), выбираешь страну, жмёшь «Подключить». Переключение сервера = нажать «Подключить» на другой карточке. Страна определяется по названию (или выбери вручную).
+
+- Подключение для **всей сети**: машина становится шлюзом (ip_forward + NAT через туннель `hgvpn`). Устройства должны ходить через неё: она — шлюз по умолчанию (или в роутере прописан маршрут/DHCP-шлюз).
+- **Kill switch**: пока туннель не поднят, транзит из LAN режется.
+- Нужны `wireguard-tools` / `openvpn`, `iptables` и запуск от root: `sudo apt install wireguard-tools openvpn iptables`.
+- Безопасность: из импортируемых конфигов вырезаются `PostUp/PreUp/…`, `up/down/script-security/plugin` и т. п. (иначе чужой конфиг выполнил бы команды от root). Ключи нигде не отдаются через API, файлы хранятся с правами 600 в `data/vpn/`.
+- Панель без пароля доступна всей сети. Поставь `HG_PASSWORD=...` — тогда нужен HTTP-пароль (логин любой).
+- Без root/wg: `HG_VPN_DRYRUN=1` — команды только запоминаются (демо-режим включает это сам).
+- Поддерживаются только WireGuard и OpenVPN. Если Планета выдаёт ссылки `vless://` / подписку — это отдельный этап (нужен xray/sing-box).
+
 ## Настройки (переменные окружения)
 
-`HG_DNS_PORT` (5353), `HG_UPSTREAM` (1.1.1.1), `HG_WEB_PORT` (8080), `HG_BLOCK_IP` (127.0.0.1), `HG_SCAN_INTERVAL` (30 с), `HG_DB`, `HG_DEMO`.
+`HG_DNS_PORT` (5353), `HG_UPSTREAM` (1.1.1.1), `HG_WEB_PORT` (8080), `HG_BLOCK_IP` (127.0.0.1), `HG_SCAN_INTERVAL` (30 с), `HG_LAN_IFACE`, `HG_PASSWORD`, `HG_VPN_DRYRUN`, `HG_DB`, `HG_DEMO`.
 
 ## Видео на странице блокировки
 

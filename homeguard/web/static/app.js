@@ -119,8 +119,80 @@ async function loadStats() {
   $('#listSizes').textContent = Object.entries(s.list_sizes).map(([k, n]) => `${k}: ${n}`).join(' · ') || 'Списки не загружены';
 }
 
+const COUNTRY_CODES = {NL: 'Нидерланды', DE: 'Германия', FI: 'Финляндия', SE: 'Швеция', US: 'США', GB: 'Великобритания',
+  FR: 'Франция', PL: 'Польша', KZ: 'Казахстан', TR: 'Турция', AE: 'ОАЭ', JP: 'Япония', SG: 'Сингапур',
+  CH: 'Швейцария', LV: 'Латвия', EE: 'Эстония', RU: 'Россия'};
+$('#vCountry').innerHTML += Object.entries(COUNTRY_CODES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+let vpn = null;
+
+async function loadVpn() {
+  vpn = await api('/api/vpn');
+  const act = vpn.profiles.find((p) => p.id === vpn.active);
+  const b = $('#vpnBanner');
+  if (vpn.state === 'connected') {
+    b.className = 'banner ok';
+    b.innerHTML = `<span class="big">🛡 VPN включён</span><span>${esc(act ? act.flag + ' ' + act.name : '')}</span><span class="muted" id="vpnIp"></span>`;
+    api('/api/vpn/ip').then((r) => { const el = $('#vpnIp'); if (el && r.ip) el.textContent = 'внешний IP: ' + r.ip; }).catch(() => {});
+  } else if (vpn.state === 'down') {
+    b.className = 'banner bad';
+    b.innerHTML = `<span class="big">⚠ Туннель упал</span><span>${vpn.kill_switch ? 'Kill switch держит интернет закрытым' : 'Трафик идёт напрямую!'}</span>`;
+  } else {
+    b.className = 'banner';
+    b.innerHTML = '<span class="big">VPN выключен</span><span class="muted">Трафик идёт напрямую</span>';
+  }
+  if (vpn.dry_run) b.innerHTML += '<span class="tag">демо: команды не выполняются</span>';
+  if (vpn.error) b.innerHTML += `<span class="err">${esc(vpn.error)}</span>`;
+  $('#vpnKill').checked = vpn.kill_switch;
+  $('#vpnOff').hidden = !vpn.active;
+  $('#vpnGrid').innerHTML = vpn.profiles.map((p) => `
+    <div class="vcard ${p.id === vpn.active ? 'active' : ''}" data-id="${esc(p.id)}">
+      <div class="flag">${p.flag}</div>
+      <div class="name">${esc(p.name)}</div>
+      <div class="sub">${esc(p.country_name || 'страна не указана')} · ${p.kind === 'wireguard' ? 'WireGuard' : 'OpenVPN'}</div>
+      <div class="btns">
+        ${p.id === vpn.active ? '<button class="btn ghost" data-act="off">Отключить</button>'
+          : '<button class="btn" data-act="on">Подключить</button>'}
+        <button class="btn danger" data-act="del" title="Удалить">✕</button>
+      </div>
+    </div>`).join('') || '<p class="muted">Серверов пока нет — нажми «Добавить сервер».</p>';
+}
+$('#vpnGrid').onclick = async (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const id = btn.closest('.vcard').dataset.id;
+  const act = btn.dataset.act;
+  btn.disabled = true;
+  try {
+    if (act === 'on') { btn.textContent = 'Подключаю…'; await api('/api/vpn/connect', jsonReq('POST', {id})); }
+    else if (act === 'off') await api('/api/vpn/disconnect', {method: 'POST'});
+    else if (act === 'del' && confirm('Удалить этот сервер?')) await api('/api/vpn/profiles/' + id, {method: 'DELETE'});
+  } catch (err) { alert(errText(err)); }
+  loadVpn();
+};
+const jsonReq = (method, body) => ({method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+const errText = (e) => { try { return JSON.parse(e.message).detail; } catch { return e.message; } };
+$('#vpnOff').onclick = async () => { await api('/api/vpn/disconnect', {method: 'POST'}); loadVpn(); };
+$('#vpnKill').onchange = async (e) => { await api('/api/vpn/settings', jsonReq('PUT', {kill_switch: e.target.checked})); loadVpn(); };
+$('#vpnAddBtn').onclick = () => { $('#vErr').textContent = ''; $('#vpnModal').hidden = false; };
+$('#vCancel').onclick = () => $('#vpnModal').hidden = true;
+$('#vFile').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $('#vText').value = await f.text();
+  if (!$('#vName').value) $('#vName').value = f.name.replace(/\.(conf|ovpn|txt)$/i, '');
+};
+$('#vSave').onclick = async () => {
+  try {
+    await api('/api/vpn/profiles', jsonReq('POST', {name: $('#vName').value, content: $('#vText').value,
+      country: $('#vCountry').value || null, username: $('#vUser').value || null, password: $('#vPass').value || null}));
+    $('#vpnModal').hidden = true;
+    ['#vName', '#vText', '#vUser', '#vPass', '#vFile'].forEach((s) => $(s).value = '');
+    loadVpn();
+  } catch (err) { $('#vErr').textContent = errText(err); }
+};
+
 function refresh() {
-  ({devices: loadDevices, log: loadLog, protection: loadProtection, stats: loadStats})[tab]().catch(console.error);
+  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, stats: loadStats})[tab]().catch(console.error);
 }
 refresh();
-setInterval(() => { if (!$('#modal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);
+setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);

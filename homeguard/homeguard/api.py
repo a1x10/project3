@@ -1,13 +1,16 @@
+import base64
+import hmac
 import ipaddress
+import json
 import time
-from pathlib import Path
+import urllib.request
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import blocklists, config, db, scanner
+from . import blocklists, config, db, scanner, vpn
 
 DEVICE_TYPES = {"computer", "phone", "tv", "router", "speaker", "appliance", "iot", "unknown"}
 REASONS = {
@@ -42,6 +45,17 @@ def _blocked_page(domain: str, reason: str | None) -> HTMLResponse:
     return HTMLResponse(html, status_code=403)
 
 
+def _authorized(request: Request) -> bool:
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("basic "):
+        return False
+    try:
+        _user, _, password = base64.b64decode(header[6:]).decode().partition(":")
+    except ValueError:
+        return False
+    return hmac.compare_digest(password.encode(), config.PASSWORD.encode())
+
+
 @app.middleware("http")
 async def block_page_middleware(request: Request, call_next):
     host = request.headers.get("host", "")
@@ -51,6 +65,8 @@ async def block_page_middleware(request: Request, call_next):
         if request.url.path.startswith("/static/"):
             return await call_next(request)
         return _blocked_page(domain, reason)
+    if config.PASSWORD and not _authorized(request):
+        return Response("Нужен пароль", status_code=401, headers={"WWW-Authenticate": 'Basic realm="HomeGuard"'})
     return await call_next(request)
 
 
@@ -144,6 +160,79 @@ def put_settings(body: SettingsPatch):
         raise HTTPException(400, "Неизвестный уровень защиты")
     db.set_setting("level", body.level)
     return {"ok": True}
+
+
+# ---------- VPN ----------
+
+@app.get("/api/vpn")
+def vpn_status():
+    return vpn.manager.status()
+
+
+class ProfileIn(BaseModel):
+    name: str
+    content: str
+    country: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+@app.post("/api/vpn/profiles")
+def vpn_add(body: ProfileIn):
+    try:
+        return vpn.manager.add_profile(body.name, body.content, body.country, body.username, body.password)
+    except vpn.VpnError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/vpn/profiles/{pid}")
+def vpn_delete(pid: str):
+    try:
+        vpn.manager.delete_profile(pid)
+    except vpn.VpnError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True}
+
+
+class ConnectIn(BaseModel):
+    id: str
+
+
+@app.post("/api/vpn/connect")
+def vpn_connect(body: ConnectIn):  # sync-эндпоинт: FastAPI выполнит в потоке, не блокируя loop
+    try:
+        vpn.manager.connect(body.id)
+    except vpn.VpnError as e:
+        raise HTTPException(400, str(e))
+    return vpn.manager.status()
+
+
+@app.post("/api/vpn/disconnect")
+def vpn_disconnect():
+    vpn.manager.disconnect()
+    return vpn.manager.status()
+
+
+class VpnSettings(BaseModel):
+    kill_switch: bool
+
+
+@app.put("/api/vpn/settings")
+def vpn_settings(body: VpnSettings):
+    vpn.manager.set_kill_switch(body.kill_switch)
+    return vpn.manager.status()
+
+
+@app.get("/api/vpn/ip")
+def vpn_public_ip():
+    """Внешний IP, который видит интернет (с этой машины)."""
+    if config.VPN_DRYRUN:
+        return {"ip": None}
+    try:
+        with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=5) as r:
+            return {"ip": json.load(r)["ip"]}
+    except (OSError, ValueError, KeyError):
+        return {"ip": None}
 
 
 @app.get("/blocked", response_class=HTMLResponse)
