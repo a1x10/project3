@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["HG_DB"] = str(Path(tempfile.mkdtemp()) / "t.db")
 os.environ["HG_DEMO"] = "1"
+os.environ["HG_AUTH"] = "0"  # вход через Telegram проверяется отдельными тестами
 
 from dnslib import QTYPE, DNSRecord
 from fastapi.testclient import TestClient
@@ -154,7 +155,7 @@ def test_vpn_connect_switch_disconnect(tmp_path):
     assert not (tmp_path / f"{a['id']}.conf").exists()
 
 
-def test_vpn_api_and_password(tmp_path, monkeypatch):
+def test_vpn_api(tmp_path, monkeypatch):
     from homeguard import config
     monkeypatch.setattr(vpnmod, "manager", _mgr(tmp_path))
     c = TestClient(api.app, base_url="http://127.0.0.1:8080")
@@ -165,11 +166,7 @@ def test_vpn_api_and_password(tmp_path, monkeypatch):
     assert c.post("/api/vpn/connect", json={"id": pid}).json()["state"] == "connected"
     assert c.post("/api/vpn/connect", json={"id": "nope"}).status_code == 400
     assert c.put("/api/vpn/settings", json={"kill_switch": True}).json()["kill_switch"] is True
-    monkeypatch.setattr(config, "PASSWORD", "secret")
-    assert c.get("/api/vpn").status_code == 401
-    assert c.get("/api/vpn", auth=("me", "secret")).status_code == 200
-    assert c.get("/api/vpn", auth=("me", "wrong")).status_code == 401
-    # страница блокировки пароля не требует
+    # страница блокировки входа не требует
     assert TestClient(api.app, base_url="http://blocked-malware.test").get("/").status_code == 403
 
 
@@ -376,3 +373,179 @@ def test_ha_api():
     c.delete("/api/ha")
     assert c.get("/api/ha").json()["configured"] is False
     srv.shutdown()
+
+
+# ---------------- Вход через Telegram ----------------
+from homeguard import auth as authmod, telegram as tgmod
+
+
+def _tg_update(uid, text, uname="vasya", first="Вася"):
+    return {"update_id": 1, "message": {"text": text, "chat": {"id": uid, "type": "private"},
+                                        "from": {"id": uid, "first_name": first, "username": uname}}}
+
+
+def test_telegram_login_flow(monkeypatch):
+    monkeypatch.setattr(hgconfig, "AUTH", True)
+    monkeypatch.setattr(hgconfig, "TG_TOKEN", "123:abc")
+    db.set_setting("tg_username", "hg_test_bot")
+    sent = []
+    monkeypatch.setattr(tgmod.bot, "send", lambda chat, text, markup=None: sent.append((chat, text, markup)))
+    monkeypatch.setattr(tgmod, "api", lambda *a, **k: {})
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+
+    assert c.get("/api/devices").status_code == 401
+    st = c.get("/api/auth/state").json()
+    assert st["bot_configured"] and not st["has_owner"] and st["user"] is None
+
+    # 1) первый вход — владелец
+    r = c.post("/api/auth/start", json={"kind": "web"}).json()
+    assert r["link"] == f"https://t.me/hg_test_bot?start={r['nonce']}"
+    assert c.get("/api/auth/poll", params={"nonce": r["nonce"]}).json()["status"] == "waiting"
+    tgmod.bot.handle(_tg_update(111, f"/start {r['nonce']}"))
+    p = c.get("/api/auth/poll", params={"nonce": r["nonce"]})
+    assert p.json() == {"status": "approved"} and "hg_session" in p.cookies
+    assert c.get("/api/devices").status_code == 200
+    assert c.get("/api/auth/state").json()["user"]["role"] == "owner"
+    # токен выдаётся один раз
+    assert c.get("/api/auth/poll", params={"nonce": r["nonce"]}).json()["status"] == "taken"
+
+    # 2) второй человек ждёт подтверждения владельца (вход из приложения → токен в ответе)
+    c2 = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    r2 = c2.post("/api/auth/start", json={"kind": "app"}).json()
+    tgmod.bot.handle(_tg_update(222, f"/start {r2['nonce']}", "petya", "Петя"))
+    assert c2.get("/api/auth/poll", params={"nonce": r2["nonce"]}).json()["status"] == "pending_owner"
+    owner_msg = [m for m in sent if m[0] == 111 and m[2]][-1]
+    btn = owner_msg[2]["inline_keyboard"][0][0]["callback_data"]
+    # чужой не может подтвердить
+    tgmod.bot.handle({"update_id": 2, "callback_query": {"id": "x", "from": {"id": 222}, "data": btn}})
+    assert c2.get("/api/auth/poll", params={"nonce": r2["nonce"]}).json()["status"] == "pending_owner"
+    tgmod.bot.handle({"update_id": 3, "callback_query": {"id": "y", "from": {"id": 111}, "data": btn}})
+    p2 = c2.get("/api/auth/poll", params={"nonce": r2["nonce"]}).json()
+    assert p2["status"] == "approved" and p2["token"]
+    hdr = {"Authorization": f"Bearer {p2['token']}"}
+    assert c2.get("/api/vpn", headers=hdr).status_code == 200
+    assert c2.get("/api/users", headers=hdr).status_code == 403  # участник, не владелец
+    assert len(c.get("/api/users").json()) == 2
+
+    # бот: команды только своим
+    sent.clear()
+    tgmod.bot.handle(_tg_update(333, "/status", "stranger"))
+    assert "открой панель" in sent[-1][1]
+    tgmod.bot.handle(_tg_update(111, "/level strict"))
+    assert db.get_setting("level") == "strict"
+    tgmod.bot.handle(_tg_update(111, "/status"))
+    assert "Устройств в сети" in sent[-1][1]
+
+    # владелец выгоняет участника — его сессия больше не работает
+    assert c.delete("/api/users/222").status_code == 200
+    assert c2.get("/api/vpn", headers=hdr).status_code == 401
+    assert c.delete("/api/users/111").status_code == 400  # себя-владельца нельзя
+    # после появления владельца бота может менять только он
+    assert c2.put("/api/auth/bot", json={"token": "x"}).status_code == 403
+    c.post("/api/auth/logout")
+    assert c.get("/api/devices").status_code == 401
+    db.set_setting("level", "medium")
+
+
+def test_login_link_expires(monkeypatch):
+    n = authmod.start_login("web")
+    db.execute("UPDATE login_requests SET created = 0 WHERE nonce = ?", (n,))
+    assert authmod.bot_start(n, 999, "X", None) == "expired"
+    assert authmod.poll(n) == ("expired", None)
+
+
+# ---------------- Антивирус ----------------
+import http.server
+import threading as _th
+from homeguard import antivirus as av
+
+
+def test_av_heuristics_offline():
+    r = av.check_url("http://sberbank-bonus.ru/login")
+    assert r["verdict"] == "danger" and any("sberbank" in f["text"] for f in r["findings"])
+    assert av.check_url("https://online.sberbank.ru/")["verdict"] == "safe"
+    assert av.check_url("gosuslugi.ru")["verdict"] == "safe"
+    assert av.check_url("http://gosusIugi.ru")["verdict"] == "danger"  # I вместо l → одна правка
+    assert av.check_url("http://blocked-phishing.test/")["verdict"] == "danger"
+    assert av.check_url("http://xn--80ak6aa92e.com")["verdict"] == "suspicious"
+    assert av.check_url("http://google.com@evil.example/")["verdict"] == "danger"
+    assert av.check_url("https://github.com/")["verdict"] == "safe"
+
+
+def test_av_file_checks():
+    assert av.check_file(b"%PDF-1.4 hello", "report.pdf")["verdict"] == "safe"
+    r = av.check_file(b"MZ\x90\x00", "Договор.pdf.exe")
+    assert r["verdict"] == "danger" and len(r["sha256"]) == 64
+    assert av.check_file(b"MZ\x90", "photo.jpg")["verdict"] == "danger"
+    assert av.check_file(b"PK..", "app.apk")["verdict"] == "suspicious"
+
+
+def _fake_cloud():
+    calls = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, obj, code=200):
+            data = _json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self):  # Safe Browsing
+            body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(("gsb", [e["url"] for e in body["threatInfo"]["threatEntries"]]))
+            bad = [e for e in body["threatInfo"]["threatEntries"] if "evil" in e["url"]]
+            self._send({"matches": [{"threat": e, "threatType": "SOCIAL_ENGINEERING"} for e in bad]})
+
+        def do_GET(self):  # VirusTotal
+            calls.append(("vt", self.path))
+            if self.headers.get("x-apikey") != "vtkey":
+                return self._send({}, 401)
+            if "/files/" in self.path:
+                return self._send({}, 404)
+            self._send({"data": {"attributes": {"last_analysis_stats": {"malicious": 5, "harmless": 60}}}})
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, calls
+
+
+def test_av_cloud_and_watch(monkeypatch, tmp_path):
+    srv, calls = _fake_cloud()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    monkeypatch.setattr(hgconfig, "GSB_URL", base + "/gsb")
+    monkeypatch.setattr(hgconfig, "VT_URL", base + "/vt")
+    monkeypatch.setattr(hgconfig, "GSB_KEY", "gkey")
+    monkeypatch.setattr(hgconfig, "VT_KEY", "vtkey")
+    lists = tmp_path / "lists"
+    shutil.copytree(hgconfig.BLOCKLIST_DIR, lists)
+    monkeypatch.setattr(hgconfig, "BLOCKLIST_DIR", lists)
+    alerts = []
+    monkeypatch.setattr(tgmod.bot, "alert", lambda text, key, cooldown=600: alerts.append(text))
+
+    r = av.check_url("http://evil-site.example/x")
+    srcs = {f["source"]: f["level"] for f in r["findings"]}
+    assert r["verdict"] == "danger" and srcs["Google Safe Browsing"] == "danger" and srcs["VirusTotal"] == "danger"
+    f = av.check_file(b"hello", "notes.txt")
+    assert any(x["source"] == "VirusTotal" and x["level"] == "unknown" for x in f["findings"])
+
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    assert c.get("/api/av/keys").json()["gsb"] is True
+    up = c.post("/api/av/file", content=b"MZ..", headers={"X-Filename": "%D1%84%D0%BE%D1%82%D0%BE.jpg"})
+    assert up.json()["target"] == "фото.jpg" and up.json()["verdict"] == "danger"
+    assert c.post("/api/av/url", json={"url": "github.com"}).json()["verdict"] in ("safe", "danger")
+    assert len(c.get("/api/av/history").json()) >= 3
+
+    # сторож: новый домен из DNS-журнала → Safe Browsing → блок-лист + тревога
+    db.set_setting("av_watch_id", str(db.query("SELECT MAX(id) m FROM queries")[0]["m"]))
+    db.log_query("192.168.3.21", "evil-new.example", "A", "allowed", None)
+    db.log_query("192.168.3.21", "good.example", "A", "allowed", None)
+    assert av.watch_once() == 1
+    assert blocklists.check("evil-new.example", "medium") == (True, "phishing")
+    assert alerts and "evil-new.example" in alerts[0]
+    assert av.watch_once() == 0  # повторно не проверяет
+    srv.shutdown()
+    blocklists.load(force=True)

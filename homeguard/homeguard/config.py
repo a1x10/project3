@@ -29,8 +29,6 @@ VPN_IFACE = "hgvpn"
 LAN_IFACE = os.getenv("HG_LAN_IFACE", "")  # по умолчанию — интерфейс маршрута по умолчанию
 # Сухой прогон: команды не выполняются, а только запоминаются (для разработки без root/wg).
 VPN_DRYRUN = os.getenv("HG_VPN_DRYRUN") == "1" or DEMO
-# Необязательный пароль на панель (HTTP Basic, логин любой).
-PASSWORD = os.getenv("HG_PASSWORD", "")
 
 # Порт REST API Bravia (у реальных ТВ всегда 80; менять нужно только для тестов)
 BRAVIA_PORT = int(os.getenv("HG_BRAVIA_PORT", "80"))
@@ -38,3 +36,16 @@ BRAVIA_PORT = int(os.getenv("HG_BRAVIA_PORT", "80"))
 # Xiaomi (miIO/MIoT)
 MIIO_PORT = int(os.getenv("HG_MIIO_PORT", "54321"))
 MIOT_DIR = Path(os.getenv("HG_MIOT_DIR", ROOT / "data" / "miot"))  # кэш описаний моделей
+
+# Вход через Telegram-бота. HG_AUTH=0 отключает проверку (только для тестов/разработки).
+AUTH = os.getenv("HG_AUTH", "1") != "0"
+TG_TOKEN = os.getenv("HG_TG_TOKEN", "")  # можно не задавать — токен вводится при первом запуске в панели
+TG_API = os.getenv("HG_TG_API", "https://api.telegram.org")
+SESSION_DAYS = 90
+
+# Антивирус: ключи можно задать здесь или в панели
+GSB_KEY = os.getenv("HG_GSB_KEY", "")
+VT_KEY = os.getenv("HG_VT_KEY", "")
+GSB_URL = os.getenv("HG_GSB_URL", "https://safebrowsing.googleapis.com/v4/threatMatches:find")
+VT_URL = os.getenv("HG_VT_URL", "https://www.virustotal.com/api/v3")
+AV_MAX_FILE = 32 * 1024 * 1024

@@ -1,0 +1,9 @@
+[Unit]
+Description=HomeGuard — обновление списков блокировки
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homeguard
+ExecStart=/opt/homeguard/.venv/bin/python scripts/update_blocklists.py
+ExecStartPost=/bin/systemctl restart homeguard

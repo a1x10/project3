@@ -54,11 +54,43 @@ CREATE TABLE IF NOT EXISTS miot_devices (
     model TEXT NOT NULL,
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+    tg_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    username TEXT,
+    role TEXT NOT NULL,             -- owner | member | pending
+    created REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    tg_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,             -- web | app
+    created REAL NOT NULL,
+    last_used REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS login_requests (
+    nonce TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    created REAL NOT NULL,
+    tg_id INTEGER,
+    status TEXT NOT NULL,           -- waiting | pending_owner | approved | denied | taken
+    token TEXT                      -- выдаётся один раз и сразу стирается
+);
+CREATE TABLE IF NOT EXISTS av_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    kind TEXT NOT NULL,             -- url | file | domain
+    target TEXT NOT NULL,
+    verdict TEXT NOT NULL,          -- safe | suspicious | danger | unknown
+    details TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_av_target ON av_checks(kind, target);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 """
 
 DEFAULT_SETTINGS = {"level": "medium", "vpn_active": "", "vpn_kill_switch": "0",
-                    "ha_url": "", "ha_token": ""}
+                    "ha_url": "", "ha_token": "",
+                    "tg_token": "", "tg_username": "", "gsb_key": "", "vt_key": "", "av_watch_id": "0"}
 
 
 def connect() -> sqlite3.Connection:

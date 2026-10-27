@@ -1,5 +1,3 @@
-import base64
-import hmac
 import ipaddress
 import json
 import time
@@ -10,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import blocklists, bravia, config, db, ha, miio, miot, scanner, vpn
+from . import antivirus, auth, blocklists, bravia, config, db, ha, miio, miot, scanner, telegram, vpn
 
 DEVICE_TYPES = {"computer", "phone", "tv", "router", "speaker", "appliance", "iot", "unknown"}
 REASONS = {
@@ -23,7 +21,8 @@ REASONS = {
     "suspicious_tld": "Подозрительная доменная зона",
 }
 
-app = FastAPI(title="HomeGuard")
+app = FastAPI(title="HomeGuard", docs_url=None, redoc_url=None, openapi_url=None)
+COOKIE = "hg_session"
 
 
 def _is_panel_host(host: str) -> bool:
@@ -45,15 +44,18 @@ def _blocked_page(domain: str, reason: str | None) -> HTMLResponse:
     return HTMLResponse(html, status_code=403)
 
 
-def _authorized(request: Request) -> bool:
+DEV_USER = {"tg_id": 0, "name": "dev", "username": None, "role": "owner", "kind": "web"}
+
+
+def _session_token(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
-    if not header.lower().startswith("basic "):
-        return False
-    try:
-        _user, _, password = base64.b64decode(header[6:]).decode().partition(":")
-    except ValueError:
-        return False
-    return hmac.compare_digest(password.encode(), config.PASSWORD.encode())
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return request.cookies.get(COOKIE)
+
+
+def _public(path: str) -> bool:
+    return not path.startswith("/api/") or path.startswith("/api/auth/")
 
 
 @app.middleware("http")
@@ -65,9 +67,163 @@ async def block_page_middleware(request: Request, call_next):
         if request.url.path.startswith("/static/"):
             return await call_next(request)
         return _blocked_page(domain, reason)
-    if config.PASSWORD and not _authorized(request):
-        return Response("Нужен пароль", status_code=401, headers={"WWW-Authenticate": 'Basic realm="HomeGuard"'})
+    user = auth.user_by_token(_session_token(request)) if config.AUTH else DEV_USER
+    request.state.user = user
+    if user is None and not _public(request.url.path):
+        return JSONResponse({"detail": "Нужно войти через Telegram"}, status_code=401)
     return await call_next(request)
+
+
+def _owner(request: Request) -> dict:
+    u = request.state.user
+    if not u or u["role"] != "owner":
+        raise HTTPException(403, "Только для владельца сети")
+    return u
+
+
+# ---------- Вход через Telegram ----------
+
+@app.get("/api/auth/state")
+def auth_state(request: Request):
+    has_owner = auth.owner() is not None
+    return {"bot_configured": bool(telegram.token()), "bot_username": telegram.username() if telegram.token() else "",
+            "has_owner": has_owner, "user": request.state.user, "auth": config.AUTH}
+
+
+class BotIn(BaseModel):
+    token: str
+
+
+@app.put("/api/auth/bot")
+def auth_set_bot(body: BotIn, request: Request):
+    # первый запуск: пока нет владельца, бота может настроить любой в сети (как настройка нового роутера)
+    if auth.owner() is not None:
+        _owner(request)
+    try:
+        name = telegram.configure(body.token)
+    except telegram.TgError as e:
+        raise HTTPException(400, str(e))
+    return {"bot_username": name}
+
+
+class LoginStart(BaseModel):
+    kind: str = "web"
+
+
+@app.post("/api/auth/start")
+def auth_start(body: LoginStart):
+    if not telegram.token():
+        raise HTTPException(400, "Сначала подключи Telegram-бота")
+    try:
+        nonce = auth.start_login(body.kind)
+    except auth.AuthError as e:
+        raise HTTPException(400, str(e))
+    return {"nonce": nonce, "link": telegram.deep_link(nonce), "bot": telegram.username()}
+
+
+@app.get("/api/auth/poll")
+def auth_poll(nonce: str, response: Response):
+    status, token = auth.poll(nonce)
+    out = {"status": status}
+    if token:
+        rows = db.query("SELECT kind FROM login_requests WHERE nonce = ?", (nonce,))
+        if rows and rows[0]["kind"] == "app":
+            out["token"] = token
+        else:
+            response.set_cookie(COOKIE, token, max_age=config.SESSION_DAYS * 86400, httponly=True, samesite="lax")
+    return out
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response):
+    tok = _session_token(request)
+    if tok:
+        auth.logout(tok)
+    response.delete_cookie(COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/users")
+def users_list(request: Request):
+    _owner(request)
+    return auth.list_users()
+
+
+class RoleIn(BaseModel):
+    role: str
+
+
+@app.put("/api/users/{tg_id}")
+def users_role(tg_id: int, body: RoleIn, request: Request):
+    _owner(request)
+    try:
+        auth.set_role(tg_id, body.role)
+    except auth.AuthError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/users/{tg_id}")
+def users_delete(tg_id: int, request: Request):
+    _owner(request)
+    try:
+        auth.remove_user(tg_id)
+    except auth.AuthError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+# ---------- Антивирус ----------
+
+class UrlIn(BaseModel):
+    url: str
+
+
+@app.post("/api/av/url")
+def av_url(body: UrlIn):
+    if len(body.url) > 4000:
+        raise HTTPException(400, "Слишком длинная ссылка")
+    return antivirus.check_url(body.url)
+
+
+@app.post("/api/av/file")
+async def av_file(request: Request):
+    """Тело запроса — сам файл; имя — в заголовке X-Filename (URL-encoded)."""
+    from urllib.parse import unquote
+    name = unquote(request.headers.get("x-filename", "file"))[:200] or "file"
+    size = int(request.headers.get("content-length") or 0)
+    if size > config.AV_MAX_FILE:
+        raise HTTPException(413, "Файл больше 32 МБ")
+    data = await request.body()
+    if len(data) > config.AV_MAX_FILE:
+        raise HTTPException(413, "Файл больше 32 МБ")
+    import asyncio
+    return await asyncio.to_thread(antivirus.check_file, data, name)
+
+
+@app.get("/api/av/history")
+def av_history(limit: int = 50):
+    return antivirus.history(min(max(limit, 1), 200))
+
+
+@app.get("/api/av/keys")
+def av_keys():
+    return antivirus.keys_status()
+
+
+class KeysIn(BaseModel):
+    gsb: str | None = None
+    vt: str | None = None
+
+
+@app.put("/api/av/keys")
+def av_set_keys(body: KeysIn, request: Request):
+    _owner(request)
+    if body.gsb is not None:
+        db.set_setting("gsb_key", body.gsb.strip())
+    if body.vt is not None:
+        db.set_setting("vt_key", body.vt.strip())
+    return antivirus.keys_status()
 
 
 def _device_view(d: dict) -> dict:
