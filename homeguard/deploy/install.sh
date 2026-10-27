@@ -9,7 +9,7 @@ DST=/opt/homeguard
 
 echo "→ Пакеты"
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv iptables wireguard-tools openvpn clamav >/dev/null
+apt-get install -y -qq python3 python3-venv rsync iptables wireguard-tools openvpn clamav >/dev/null
 
 echo "→ Копирую в $DST"
 mkdir -p "$DST"
@@ -44,6 +44,10 @@ if systemctl is-active -q systemd-resolved; then
   mkdir -p /etc/systemd/resolved.conf.d
   printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/homeguard.conf
   systemctl restart systemd-resolved
+  # без заглушки 127.0.0.53 сама машина должна смотреть на реальные DNS-серверы
+  if grep -q '127.0.0.53' /etc/resolv.conf 2>/dev/null; then
+    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  fi
 fi
 
 echo "→ Обновляю базы (может занять минуту)"
