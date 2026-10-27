@@ -1,10 +1,11 @@
 import asyncio
 import contextlib
 import logging
+import threading
 
 import uvicorn
 
-from . import api, config, db, demo, dns_server, scanner, vpn
+from . import antivirus, api, config, db, demo, dns_server, scanner, telegram, vpn
 
 
 @contextlib.asynccontextmanager
@@ -16,9 +17,14 @@ async def lifespan(app):
     else:
         tasks.append(asyncio.create_task(scanner.scan_loop()))
     tasks.append(asyncio.create_task(asyncio.to_thread(vpn.manager.restore)))
+    telegram.bot.ensure_running()
+    stop = threading.Event()
+    threading.Thread(target=antivirus.watch_loop, args=(stop,), name="av-watch", daemon=True).start()
     try:
         yield
     finally:
+        stop.set()
+        telegram.bot.stop()
         for t in tasks:
             t.cancel()
 

@@ -28,6 +28,10 @@ class FilteringResolver(BaseResolver):
                 reply.add_answer(RR(request.q.qname, QTYPE.A, rdata=A(self.block_ip), ttl=30))
             # для AAAA и прочего — пустой ответ, чтобы клиент пошёл на A-запись
             db.log_query(client, domain, qtype, "blocked", reason)
+            if reason in ("malware", "phishing"):
+                from .telegram import bot
+                bot.alert(f"⛔ Заблокирован {'вредоносный' if reason == 'malware' else 'фишинговый'} сайт "
+                          f"<code>{domain}</code> (устройство {client})", key=f"dns:{domain}")
             return reply
 
         try:
