@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import blocklists, config, db, scanner, vpn
+from . import blocklists, bravia, config, db, scanner, vpn
 
 DEVICE_TYPES = {"computer", "phone", "tv", "router", "speaker", "appliance", "iot", "unknown"}
 REASONS = {
@@ -233,6 +233,98 @@ def vpn_public_ip():
             return {"ip": json.load(r)["ip"]}
     except (OSError, ValueError, KeyError):
         return {"ip": None}
+
+
+# ---------- Sony Bravia ----------
+
+def _tv(tid: str) -> bravia.Bravia:
+    try:
+        return bravia.client(tid, config.BRAVIA_PORT)
+    except bravia.BraviaError as e:
+        raise HTTPException(404, str(e))
+
+
+def _tv_call(fn):
+    try:
+        return fn()
+    except bravia.BraviaError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/api/tvs")
+def tvs_list():
+    return bravia.list_tvs()
+
+
+class TvIn(BaseModel):
+    name: str
+    ip: str
+    psk: str
+
+
+@app.post("/api/tvs")
+def tvs_add(body: TvIn):
+    try:
+        return bravia.add_tv(body.name, body.ip, body.psk)
+    except bravia.BraviaError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/tvs/{tid}")
+def tvs_delete(tid: str):
+    bravia.delete_tv(tid)
+    return {"ok": True}
+
+
+@app.get("/api/tvs/{tid}/state")
+def tv_state(tid: str):
+    tv = _tv(tid)
+
+    def get():
+        st = {"power": tv.power()}
+        if st["power"]:
+            st["audio"] = tv.volume()
+            st["playing"] = tv.playing()
+        return st
+    return _tv_call(get)
+
+
+@app.get("/api/tvs/{tid}/inputs")
+def tv_inputs(tid: str):
+    return _tv_call(_tv(tid).inputs)
+
+
+@app.get("/api/tvs/{tid}/apps")
+def tv_apps(tid: str):
+    return _tv_call(_tv(tid).apps)
+
+
+class TvCmd(BaseModel):
+    on: bool | None = None
+    level: int | None = None
+    mute: bool | None = None
+    uri: str | None = None
+    button: str | None = None
+
+
+@app.post("/api/tvs/{tid}/{action}")
+def tv_command(tid: str, action: str, body: TvCmd):
+    tv = _tv(tid)
+    if action == "power" and body.on is not None:
+        _tv_call(lambda: tv.set_power(body.on))
+    elif action == "volume" and body.level is not None:
+        _tv_call(lambda: tv.set_volume(body.level))
+    elif action == "mute" and body.mute is not None:
+        _tv_call(lambda: tv.set_mute(body.mute))
+    elif action == "input" and body.uri:
+        _tv_call(lambda: tv.set_input(body.uri))
+    elif action == "app" and body.uri:
+        _tv_call(lambda: tv.launch_app(body.uri))
+    elif action == "press" and body.button in bravia.REMOTE_BUTTONS + ["VolumeUp", "VolumeDown", "Mute", "Input", "Netflix"]:
+        _tv_call(lambda: tv.press(body.button))
+    else:
+        raise HTTPException(400, "Неизвестная команда")
+    return {"ok": True}
 
 
 @app.get("/blocked", response_class=HTMLResponse)

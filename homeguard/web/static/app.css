@@ -72,3 +72,26 @@ textarea{background:var(--card2);color:var(--text);border:1px solid var(--line);
 .vcard .btn{padding:7px 12px;font-size:14px}
 .btn.danger{background:#44202a;color:#ff8ea1}
 .hint{margin-top:18px;font-size:13px}
+.tvlist{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.tv{background:var(--card);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px}
+.tv-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.tv-head h3{margin:0;font-size:17px}
+.tv-head .sub{font-size:13px;color:var(--muted)}
+.tv .powerbtn{width:44px;height:44px;border-radius:50%;border:0;background:var(--card2);color:var(--muted);font-size:20px;cursor:pointer}
+.tv.on .powerbtn{background:var(--green);color:#0e0e16}
+.tv .off-note{color:var(--muted);font-size:14px}
+.tv .vol{display:flex;gap:8px;align-items:center}
+.tv .vol input[type=range]{flex:1;padding:0;accent-color:var(--green)}
+.tv .vol b{min-width:2.2em;text-align:right}
+.tv .ib{background:var(--card2);color:var(--text);border:0;border-radius:10px;padding:8px 12px;cursor:pointer;font:inherit}
+.tv .ib:hover{background:#2e2e44}
+.tv .ib.sel{outline:2px solid var(--green)}
+.tv .chips{display:flex;flex-wrap:wrap;gap:6px}
+.tv .pad{display:grid;grid-template-columns:repeat(3,56px);gap:6px;justify-content:center}
+.tv .pad .ib{padding:10px 0;text-align:center}
+.tv .pad .e{visibility:hidden}
+.tv .row2{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.tv .lbl{font-size:12px;color:var(--muted);margin-bottom:6px}
+.tv .tverr{color:var(--red);font-size:13px}
+.tv .del{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px;align-self:flex-start;padding:0}
+ol{margin:8px 0 0 18px;padding:0;line-height:1.6}

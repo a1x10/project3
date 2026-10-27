@@ -191,8 +191,111 @@ $('#vSave').onclick = async () => {
   } catch (err) { $('#vErr').textContent = errText(err); }
 };
 
+// ---------- Телевизоры ----------
+const PAD = [['', 'e'], ['▲', 'Up'], ['', 'e'], ['◀', 'Left'], ['OK', 'Confirm'], ['▶', 'Right'], ['', 'e'], ['▼', 'Down'], ['', 'e']];
+let tvs = [], tvCache = {};
+
+async function loadTv() {
+  tvs = await api('/api/tvs');
+  $('#tvHint').textContent = tvs.length ? '' : 'Телевизоров пока нет';
+  const known = new Set(tvs.map((t) => t.id));
+  for (const t of tvs) {
+    let el = document.getElementById('tv-' + t.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tv-' + t.id; el.className = 'tv';
+      $('#tvList').appendChild(el);
+      tvStatic(t, el);
+    }
+    tvState(t, el);
+  }
+  document.querySelectorAll('#tvList .tv').forEach((el) => { if (!known.has(el.id.slice(3))) el.remove(); });
+}
+
+function tvStatic(t, el) {
+  el.innerHTML = `
+    <div class="tv-head"><div><h3>${esc(t.name)}</h3><div class="sub">${esc(t.ip)} · <span data-r="status">…</span></div></div>
+      <button class="powerbtn" data-c="power" title="Питание">⏻</button></div>
+    <div class="tverr" data-r="err"></div>
+    <div data-r="body" hidden>
+      <div class="lbl">Громкость</div>
+      <div class="vol"><button class="ib" data-c="voldown">−</button>
+        <input type="range" min="0" max="100" data-c="vol"><b data-r="vol">0</b>
+        <button class="ib" data-c="volup">+</button><button class="ib" data-c="mute" data-r="mute">🔇</button></div>
+      <div class="lbl" style="margin-top:14px">Вход</div><div class="chips" data-r="inputs"></div>
+      <div class="lbl" style="margin-top:14px">Приложения</div><div class="chips" data-r="apps"></div>
+      <div class="lbl" style="margin-top:14px">Пульт</div>
+      <div class="pad">${PAD.map(([l, b]) => b === 'e' ? '<span class="e"></span>' : `<button class="ib" data-b="${b}">${l}</button>`).join('')}</div>
+      <div class="row2" style="margin-top:8px"><button class="ib" data-b="Return">↩ Назад</button><button class="ib" data-b="Home">⌂ Домой</button><button class="ib" data-b="Options">⋯ Опции</button></div>
+    </div>
+    <button class="del" data-c="del">Удалить телевизор</button>`;
+  const r = (k) => el.querySelector(`[data-r=${k}]`);
+  const send = async (action, body) => {
+    try { await api(`/api/tvs/${t.id}/${action}`, jsonReq('POST', body)); r('err').textContent = ''; }
+    catch (e) { r('err').textContent = errText(e); }
+    tvState(t, el);
+  };
+  el.onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const st = tvCache[t.id] || {};
+    if (b.dataset.b) return send('press', {button: b.dataset.b});
+    if (b.dataset.u) return send(b.dataset.k, {uri: b.dataset.u});
+    switch (b.dataset.c) {
+      case 'power': return send('power', {on: !st.power});
+      case 'voldown': return send('volume', {level: Math.max(0, (st.audio?.volume ?? 0) - 2)});
+      case 'volup': return send('volume', {level: Math.min(100, (st.audio?.volume ?? 0) + 2)});
+      case 'mute': return send('mute', {mute: !st.audio?.mute});
+      case 'del': if (confirm('Удалить телевизор из панели?')) { await api('/api/tvs/' + t.id, {method: 'DELETE'}); el.remove(); }
+    }
+  };
+  el.querySelector('[data-c=vol]').onchange = (e) => send('volume', {level: +e.target.value});
+  el.querySelector('[data-c=vol]').oninput = (e) => r('vol').textContent = e.target.value;
+}
+
+async function tvState(t, el) {
+  const r = (k) => el.querySelector(`[data-r=${k}]`);
+  try {
+    const st = await api(`/api/tvs/${t.id}/state`);
+    tvCache[t.id] = st;
+    el.classList.toggle('on', st.power);
+    r('err').textContent = '';
+    r('status').textContent = st.power ? (st.playing?.title || 'включён') : 'в режиме ожидания';
+    r('body').hidden = !st.power;
+    if (st.power) {
+      const slider = el.querySelector('[data-c=vol]');
+      if (document.activeElement !== slider) { slider.value = st.audio.volume; r('vol').textContent = st.audio.volume; }
+      r('mute').style.outline = st.audio.mute ? '2px solid var(--red)' : '';
+      if (!el.dataset.loaded) {
+        el.dataset.loaded = '1';
+        const chip = (k, a) => `<button class="ib" data-k="${k}" data-u="${esc(a.uri)}">${esc(a.title)}</button>`;
+        api(`/api/tvs/${t.id}/inputs`).then((l) => r('inputs').innerHTML = l.map((a) => chip('input', a)).join('')).catch(() => {});
+        api(`/api/tvs/${t.id}/apps`).then((l) => r('apps').innerHTML = l.slice(0, 12).map((a) => chip('app', a)).join('')).catch(() => {});
+      }
+    }
+  } catch (e) {
+    el.classList.remove('on'); r('body').hidden = true; r('status').textContent = 'нет связи';
+    r('err').textContent = errText(e);
+  }
+}
+
+$('#tvAddBtn').onclick = () => {
+  $('#tErr').textContent = '';
+  $('#tvIps').innerHTML = devices.filter((d) => d.ip && (d.type === 'tv' || d.type === 'unknown'))
+    .map((d) => `<option value="${esc(d.ip)}">${esc(d.display_name)}</option>`).join('');
+  $('#tvModal').hidden = false;
+};
+$('#tCancel').onclick = () => $('#tvModal').hidden = true;
+$('#tSave').onclick = async () => {
+  try {
+    await api('/api/tvs', jsonReq('POST', {name: $('#tName').value, ip: $('#tIp').value, psk: $('#tPsk').value}));
+    $('#tvModal').hidden = true;
+    ['#tName', '#tIp', '#tPsk'].forEach((s) => $(s).value = '');
+    loadTv();
+  } catch (err) { $('#tErr').textContent = errText(err); }
+};
+
 function refresh() {
-  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, stats: loadStats})[tab]().catch(console.error);
+  ({devices: loadDevices, log: loadLog, protection: loadProtection, vpn: loadVpn, tv: loadTv, stats: loadStats})[tab]().catch(console.error);
 }
 refresh();
-setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);
+setInterval(() => { if (!$('#modal').hidden || !$('#vpnModal').hidden || !$('#tvModal').hidden || document.activeElement === $('#logSearch')) return; refresh(); }, 5000);

@@ -171,3 +171,69 @@ def test_vpn_api_and_password(tmp_path, monkeypatch):
     assert c.get("/api/vpn", auth=("me", "wrong")).status_code == 401
     # страница блокировки пароля не требует
     assert TestClient(api.app, base_url="http://blocked-malware.test").get("/").status_code == 403
+
+
+# ---------------- Bravia ----------------
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fake_bravia
+from homeguard import bravia, config as hgconfig
+
+
+def _tv_server(monkeypatch):
+    st = fake_bravia.make_state()
+    srv = fake_bravia.serve(st)
+    monkeypatch.setattr(hgconfig, "BRAVIA_PORT", srv.server_address[1])
+    return st, srv
+
+
+def test_bravia_ip_must_be_local():
+    for bad in ("8.8.8.8", "example.com", "0.0.0.0", "::1"):
+        try:
+            bravia.check_ip(bad)
+        except bravia.BraviaError:
+            continue
+        raise AssertionError(bad)
+    assert bravia.check_ip("192.168.3.30") == "192.168.3.30"
+
+
+def test_bravia_client(monkeypatch):
+    st, srv = _tv_server(monkeypatch)
+    tv = bravia.Bravia("127.0.0.1", "1234", port=srv.server_address[1])
+    assert tv.power() and tv.info()["model"] == "KD-55X80J"
+    tv.set_volume(30); tv.set_mute(True)
+    assert tv.volume() == {"volume": 30, "mute": True, "min": 0, "max": 100}
+    assert [i["title"] for i in tv.inputs()] == ["HDMI 1", "HDMI 2"]
+    tv.set_input("extInput:hdmi?port=2"); assert st.input.endswith("2")
+    tv.launch_app("com.sony.dtv.com.netflix.ninja"); assert "netflix" in st.app
+    tv.press("Home"); assert st.pressed == ["AAA-Home"]
+    tv.set_power(False); assert tv.power() is False
+    try:
+        bravia.Bravia("127.0.0.1", "wrong", port=srv.server_address[1]).power()
+    except bravia.BraviaError as e:
+        assert "Pre-Shared Key" in str(e)
+    else:
+        raise AssertionError
+    srv.shutdown()
+
+
+def test_bravia_api(monkeypatch):
+    st, srv = _tv_server(monkeypatch)
+    c = TestClient(api.app, base_url="http://127.0.0.1:8080")
+    r = c.post("/api/tvs", json={"name": "Гостиная", "ip": "127.0.0.1", "psk": "1234"})
+    assert r.status_code == 200 and "psk" not in r.text
+    tid = r.json()["id"]
+    assert "psk" not in c.get("/api/tvs").text
+    assert c.post("/api/tvs", json={"name": "x", "ip": "8.8.8.8", "psk": "1"}).status_code == 400
+    s = c.get(f"/api/tvs/{tid}/state").json()
+    assert s["power"] and s["audio"]["volume"] == 12
+    assert c.post(f"/api/tvs/{tid}/volume", json={"level": 40}).status_code == 200 and st.volume == 40
+    assert c.post(f"/api/tvs/{tid}/power", json={"on": False}).status_code == 200
+    assert c.get(f"/api/tvs/{tid}/state").json() == {"power": False}
+    assert c.post(f"/api/tvs/{tid}/power", json={"on": True}).status_code == 200
+    assert c.post(f"/api/tvs/{tid}/press", json={"button": "Up"}).status_code == 200
+    assert c.post(f"/api/tvs/{tid}/press", json={"button": "rm -rf"}).status_code == 400
+    assert c.get(f"/api/tvs/{tid}/apps").json()[0]["title"] == "YouTube"
+    srv.shutdown()
+    assert c.get(f"/api/tvs/{tid}/state").status_code == 502  # ТВ недоступен
+    assert c.get("/api/tvs/nope/state").status_code == 404
+    c.delete(f"/api/tvs/{tid}")
