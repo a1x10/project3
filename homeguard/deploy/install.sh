@@ -19,6 +19,7 @@ cp -rn "$SRC/data/blocklists" "$DST/data/" 2>/dev/null || true
 
 echo "→ Python-окружение"
 python3 -m venv "$DST/.venv"
+"$DST/.venv/bin/pip" install -q -U pip  # в Debian 11 pip слишком старый
 "$DST/.venv/bin/pip" install -q -r "$DST/requirements.txt"
 
 if [[ ! -f /etc/homeguard.env ]]; then

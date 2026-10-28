@@ -15,6 +15,8 @@ sudo ./deploy/install.sh
 
 Скрипт ставит пакеты (WireGuard, OpenVPN, ClamAV), кладёт сервис в `/opt/homeguard`, создаёт `/etc/homeguard.env` и включает службы systemd: `homeguard` (поднимается после перезагрузки, перезапускается при падении) и таймер ежедневного обновления баз. Логи: `journalctl -u homeguard -f`.
 
+Работает на Python 3.9+ (Debian 11 / официальные образы Orange Pi) и новее.
+
 ## Запуск для разработки
 
 ```bash

@@ -3,6 +3,7 @@
 Панель управляет любым MIoT-устройством по его спецификации: свойства, допустимые значения, действия.
 Описание скачивается один раз и кэшируется в data/miot/.
 """
+from __future__ import annotations
 import json
 import re
 import time

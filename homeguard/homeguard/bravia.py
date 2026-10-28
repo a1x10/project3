@@ -3,6 +3,7 @@
 Нужно на телевизоре: Authentication = «Normal and Pre-Shared Key», задан Pre-Shared Key,
 для включения из режима ожидания — «Remote start» (и Wi-Fi/Network standby).
 """
+from __future__ import annotations
 import ipaddress
 import json
 import urllib.error

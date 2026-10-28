@@ -1,4 +1,5 @@
 """Минимальный клиент локального протокола Xiaomi miIO (UDP 54321, AES-128-CBC, токен устройства)."""
+from __future__ import annotations
 import hashlib
 import itertools
 import json

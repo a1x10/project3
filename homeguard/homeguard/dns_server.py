@@ -1,4 +1,5 @@
 """DNS-сервер: фильтрует по уровню защиты, пересылает остальное на upstream, пишет журнал."""
+from __future__ import annotations
 import logging
 import socket
 

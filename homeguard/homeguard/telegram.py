@@ -2,6 +2,7 @@
 
 Работает через long polling (getUpdates) — белый IP и домен не нужны.
 """
+from __future__ import annotations
 import json
 import logging
 import queue
