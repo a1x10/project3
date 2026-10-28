@@ -1,0 +1,6 @@
+data/homeguard.db*
+data/blocklists/*.remote.txt
+__pycache__/
+data/vpn/
+data/miot/
+data/homeassistant/

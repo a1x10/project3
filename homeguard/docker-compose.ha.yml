@@ -1,0 +1,10 @@
+# Home Assistant для управления Яндекс Станцией. См. docs/home-assistant.md
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host        # нужен для обнаружения устройств в локальной сети
+    volumes:
+      - ./data/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
