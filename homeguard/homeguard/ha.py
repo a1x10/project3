@@ -1,4 +1,5 @@
 """Клиент REST API Home Assistant: колонки (в т. ч. Яндекс Станция через интеграцию YandexStation)."""
+from __future__ import annotations
 import ipaddress
 import json
 import re

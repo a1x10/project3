@@ -1,4 +1,5 @@
 """Поиск устройств в локальной сети: пинг-свип /24 + чтение ARP-таблицы (ip neigh)."""
+from __future__ import annotations
 import asyncio
 import ipaddress
 import logging

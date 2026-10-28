@@ -1,4 +1,5 @@
 """Определение производителя и типа устройства по MAC / имени."""
+from __future__ import annotations
 import re
 
 # Небольшая встроенная таблица. Полную можно положить в data/oui.txt (формат: "AABBCC<TAB>Vendor").

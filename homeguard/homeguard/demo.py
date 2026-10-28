@@ -1,4 +1,5 @@
 """Демо-данные, чтобы посмотреть панель без реальной сети (HG_DEMO=1)."""
+from __future__ import annotations
 import random
 import time
 

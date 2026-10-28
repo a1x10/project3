@@ -3,6 +3,7 @@
 Файлы data/blocklists/<категория>.txt: по одному домену в строке (или формат hosts).
 Блокируется и сам домен, и все его поддомены.
 """
+from __future__ import annotations
 import logging
 import re
 

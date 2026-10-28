@@ -3,6 +3,7 @@
 Профили из интернета могут содержать команды, которые выполняются от root
 (PostUp в WireGuard, up/script-security в OpenVPN), поэтому при импорте такие строки вырезаются.
 """
+from __future__ import annotations
 import logging
 import re
 import shutil

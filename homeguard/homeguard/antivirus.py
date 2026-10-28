@@ -9,6 +9,7 @@
 Плюс фоновый «сторож»: новые домены из журнала DNS проверяются через Safe Browsing
 и опасные сразу попадают в блок-лист.
 """
+from __future__ import annotations
 import base64
 import hashlib
 import json
