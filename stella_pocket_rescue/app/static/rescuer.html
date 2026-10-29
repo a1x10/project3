@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#161618">
+<title>Stella · консоль спасателя</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{ color-scheme:dark;
+    --bg:#0b0b0d; --panel:#1c1c1e; --panel2:#242427; --panel3:#2c2c2e; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+    --ink:#f5f5f7; --dim:#a1a1a6; --mute:#6e6e73; --blue:#0a84ff; --cy:#64d2ff; --pink:#ff6f91;
+    --gr:#30d158; --red:#ff453a; --yel:#ff9f0a; --grn:#30d158; --unk:#8e8e93; --vio:#bf5af2; --off:#48484a;
+    --r:16px; --ease:cubic-bezier(.2,.8,.2,1); }
+  *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
+  html{ background:var(--bg); }
+  body{ margin:0; min-height:100vh; background:var(--bg); color:var(--ink);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; }
+  a{ color:var(--blue); text-decoration:none; }
+  .mono{ font-variant-numeric:tabular-nums; }
+  code{ font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  svg{ flex:none; }
+
+  button, a.btn{ display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 13px;
+    border:0; border-radius:9px; background:rgba(255,255,255,.09); color:var(--ink); font-family:inherit; font-size:13px; font-weight:500;
+    white-space:nowrap; cursor:pointer; transition:background-color .2s var(--ease), transform .15s var(--ease), opacity .2s; }
+  button:hover, a.btn:hover{ background:rgba(255,255,255,.14); }
+  button:active, a.btn:active{ transform:scale(.97); }
+  button:disabled{ cursor:default; opacity:.55; transform:none; }
+  button:focus-visible, a:focus-visible, [tabindex]:focus-visible, input:focus-visible{ outline:2px solid var(--blue); outline-offset:2px; }
+  .field{ display:flex; gap:8px; }
+  input, textarea{ flex:1; min-width:0; height:38px; padding:0 13px; border-radius:10px; border:1px solid transparent;
+    background:var(--panel3); color:var(--ink); font-family:inherit; font-size:14px; outline:none; transition:border-color .2s, box-shadow .2s; }
+  input::placeholder{ color:var(--mute); }
+  input:focus{ border-color:var(--blue); box-shadow:0 0 0 3px rgba(10,132,255,.25); }
+  input:focus-visible{ outline:none; }
+  .field button{ height:38px; padding:0 16px; background:var(--blue); color:#fff; font-weight:600; }
+  .field button:hover{ background:#2b95ff; }
+  .err{ color:var(--red); font-size:12.5px; min-height:18px; margin-top:6px; }
+  .err:empty{ min-height:0; margin:0; }
+
+  /* вход */
+  #login{ max-width:380px; margin:14vh auto 40px; padding:34px 28px 24px; border-radius:22px; background:var(--panel);
+    border:1px solid var(--line); box-shadow:0 30px 80px rgba(0,0,0,.55); text-align:center; }
+  @media(max-width:420px){ #login{ margin:10vh 16px 32px; padding:28px 20px 20px; } }
+  #login h1{ margin:0; font-size:24px; line-height:1.15; font-weight:700; letter-spacing:-.02em; }
+  #login .err:not(:empty){ margin-top:10px; }
+  #login p{ margin:6px 0 24px; color:var(--dim); font-size:14px; }
+  #loginForm{ flex-direction:column; gap:10px; }
+  #pin{ height:52px; text-align:center; font-size:22px; letter-spacing:.35em; border-radius:12px; }
+  #pin::placeholder{ letter-spacing:0; font-size:15px; }
+  #enter{ height:46px; border-radius:12px; font-size:15px; }
+  .vlink{ display:inline-flex; align-items:center; gap:5px; margin-top:16px; font-size:13px; color:var(--dim); }
+  .vlink:hover{ color:var(--ink); }
+
+  /* шапка */
+  header{ position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding:12px 24px;
+    background:rgba(22,22,24,.92); border-bottom:1px solid var(--line); transition:box-shadow .3s; }
+  @supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
+    header{ background:rgba(22,22,24,.72); -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px); } }
+  .brand{ font-size:15px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; }
+  .brand span{ margin-left:8px; color:var(--dim); font-weight:400; }
+  .stats{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+  .stat{ display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:8px; background:rgba(255,255,255,.05);
+    color:var(--dim); font-size:12px; white-space:nowrap; }
+  .stat b{ color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+  .aichip{ cursor:pointer; transition:background-color .2s; }
+  .aichip:hover{ background:rgba(255,255,255,.11); }
+  .modebox{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .modebox b{ display:inline-flex; align-items:center; gap:7px; height:28px; padding:0 12px; border-radius:99px;
+    background:rgba(48,209,88,.14); color:var(--gr); font-size:12px; font-weight:600; white-space:nowrap; }
+  .modebox b::before{ content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .modebox.em b{ background:rgba(255,69,58,.16); color:var(--red); }
+  .modebox.em b::before{ animation:pulse-r 1.4s ease-out infinite; }
+  #btnQuake{ background:rgba(255,69,58,.16); color:var(--red); }
+  #btnQuake:hover{ background:rgba(255,69,58,.26); }
+  body.em header{ box-shadow:inset 0 -2px 0 var(--red), 0 12px 40px rgba(255,69,58,.18); }
+  @media(max-width:640px){
+    header{ position:static; padding:12px 14px; gap:8px; }
+    .modebox{ margin-left:0; flex-wrap:wrap; }
+  }
+
+  main{ padding:20px 24px 28px; max-width:1240px; margin:0 auto; }
+  @media(max-width:640px){ main{ padding:14px; } }
+
+  /* счетчики приоритетов */
+  .tiles{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+  @media(max-width:640px){ .tiles{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } }
+  .tile{ padding:14px 16px 12px; border-radius:var(--r); background:var(--panel); border:1px solid var(--line); }
+  .tile .tl{ display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600; color:var(--dim); }
+  .tile .tl::before{ content:""; width:8px; height:8px; border-radius:50%; background:var(--c); }
+  .tile b{ display:block; margin-top:2px; font-size:32px; line-height:1.1; font-weight:700; letter-spacing:-.02em; color:var(--c);
+    font-variant-numeric:tabular-nums; }
+  .t-red{ --c:var(--red); } .t-yellow{ --c:var(--yel); } .t-unknown{ --c:var(--unk); } .t-green{ --c:var(--grn); }
+
+  /* панели */
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px; }
+  .panel h3{ margin:0 0 12px; display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+    font-size:13px; font-weight:600; color:var(--dim); }
+  .panel h3 .mono{ font-weight:500; color:var(--mute); }
+  .hint{ color:var(--mute); font-size:12px; line-height:1.45; margin-top:10px; word-break:break-word; }
+
+  /* узел до подключения */
+  #stageServer{ display:grid; place-items:center; min-height:44vh; }
+  .server{ position:relative; overflow:hidden; width:min(440px,92vw); text-align:center; padding:36px 28px 28px; border-radius:22px;
+    background:linear-gradient(180deg,#202023,#18181a); border:1px solid var(--line); cursor:pointer;
+    transition:transform .3s var(--ease), border-color .3s; }
+  .server:hover{ transform:translateY(-2px); border-color:var(--line2); }
+  .server .halo{ position:absolute; left:50%; top:-90px; width:340px; height:240px; transform:translateX(-50%); pointer-events:none;
+    background:radial-gradient(closest-side,rgba(10,132,255,.24),transparent); animation:halo 4s ease-in-out infinite; }
+  @keyframes halo{ 50%{ opacity:.55; } }
+  .server .rack{ position:relative; width:68px; height:68px; margin:0 auto 16px; border-radius:18px; background:rgba(10,132,255,.15);
+    color:var(--blue); display:grid; place-items:center; }
+  .server h2{ position:relative; margin:0; font-size:22px; font-weight:700; letter-spacing:-.02em; }
+  .server .meta{ position:relative; margin-top:4px; color:var(--dim); font-size:13px; }
+  .server .go{ position:relative; display:inline-flex; align-items:center; gap:6px; margin-top:22px; height:38px; padding:0 20px;
+    border-radius:99px; background:var(--blue); color:#fff; font-weight:600; font-size:14px; }
+
+  /* заставка подключения */
+  #scan{ position:fixed; inset:0; z-index:20; display:none; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+    padding:24px; background:rgba(0,0,0,.86); }
+  @supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
+    #scan{ background:rgba(0,0,0,.6); -webkit-backdrop-filter:blur(26px); backdrop-filter:blur(26px); } }
+  .radarwrap{ position:relative; width:84px; height:84px; }
+  .radarwrap .ring{ position:absolute; inset:0; border-radius:50%; border:3px solid rgba(255,255,255,.1); }
+  .sweep{ position:absolute; inset:0; border-radius:50%; border:3px solid transparent; border-top-color:var(--blue);
+    border-right-color:var(--blue); animation:spin .9s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  #scanTitle{ font-size:18px; font-weight:600; letter-spacing:-.01em; }
+  #scanLog{ width:min(420px,90vw); height:200px; margin:0; overflow:hidden; color:var(--dim); font-family:inherit;
+    font-size:13.5px; line-height:1.85; white-space:pre-wrap; }
+
+  /* список устройств и радар */
+  .cols{ display:grid; grid-template-columns:minmax(0,380px) minmax(0,1fr); gap:16px; }
+  @media(max-width:900px){ .cols{ grid-template-columns:1fr; } }
+  svg#radar{ width:100%; height:auto; display:block; border-radius:14px;
+    background:radial-gradient(circle at 50% 50%,rgba(10,132,255,.13),rgba(10,132,255,0) 64%),#111113; }
+  svg#radar text{ font-family:inherit; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
+  .dev{ position:relative; overflow:hidden; padding:13px 14px 12px 17px; border-radius:14px; background:var(--panel2);
+    border:1px solid var(--line); cursor:pointer; transition:transform .2s var(--ease), background-color .2s, border-color .2s; }
+  .dev::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--c); }
+  .dev:hover{ transform:translateY(-2px); background:var(--panel3); border-color:var(--line2); }
+  .dev.red{ --c:var(--red); } .dev.yellow{ --c:var(--yel); } .dev.green{ --c:var(--grn); } .dev.unknown{ --c:var(--unk); }
+  .dev .id{ font-size:12px; font-weight:600; color:var(--c); }
+  .dev .nm{ margin:3px 22px 6px 0; font-size:15px; font-weight:600; letter-spacing:-.01em; word-break:break-word; }
+  .dev .sub{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; color:var(--dim); font-size:12px; }
+  .dev .sub + .sub{ margin-top:2px; }
+  .dev .live{ position:absolute; top:14px; right:14px; width:8px; height:8px; border-radius:50%; background:var(--off); }
+  .dev .live.on{ background:var(--gr); box-shadow:0 0 0 3px rgba(48,209,88,.2); }
+  .bars{ display:inline-flex; gap:2px; align-items:flex-end; height:12px; }
+  .bars i{ width:3px; border-radius:1px; background:rgba(255,255,255,.18); }
+  .bars i.on{ background:var(--ink); }
+  .empty{ grid-column:1/-1; padding:30px 8px; color:var(--dim); font-size:13.5px; text-align:center; }
+
+  /* досье и переписка */
+  .back{ height:32px; margin:0 0 12px -4px; padding:0 8px 0 2px; background:none; color:var(--blue); font-size:14px; }
+  .back:hover{ background:rgba(10,132,255,.1); }
+  .dossier{ display:grid; grid-template-columns:1fr; gap:0 20px; }
+  @media(min-width:561px) and (max-width:900px){ .dossier{ grid-template-columns:1fr 1fr; } }
+  .kv{ display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .kv .k{ color:var(--dim); flex:none; }
+  .kv .v{ text-align:right; word-break:break-word; font-variant-numeric:tabular-nums; }
+  .v.big{ color:var(--ink); font-weight:600; font-size:14px; }
+  .flag{ display:inline-flex; align-items:center; height:24px; padding:0 11px; border-radius:99px; font-size:12px; font-weight:700; }
+  .c-red{ color:var(--red); background:rgba(255,69,58,.16); } .c-yellow{ color:var(--yel); background:rgba(255,159,10,.16); }
+  .c-unknown{ color:#c7c7cc; background:rgba(142,142,147,.2); } .c-green{ color:var(--grn); background:rgba(48,209,88,.15); }
+  .tag{ display:inline-flex; align-items:center; height:24px; padding:0 10px; margin:4px 4px 0 0; border-radius:99px;
+    background:rgba(255,255,255,.08); font-size:12px; }
+  .statusbtns{ display:inline-flex; flex-wrap:wrap; gap:2px; padding:3px; margin:0 0 12px; border-radius:10px; background:var(--panel3); }
+  .statusbtns button{ height:28px; padding:0 13px; border-radius:8px; background:transparent; color:var(--dim); }
+  .statusbtns button:hover{ background:rgba(255,255,255,.06); color:var(--ink); }
+  .statusbtns button.on{ background:#636366; color:#fff; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+  .transcript{ margin-top:12px; max-height:min(64vh,640px); overflow:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px; }
+  .tline{ align-self:flex-start; max-width:86%; padding:8px 12px 9px; border-radius:14px; background:var(--panel3);
+    font-size:14px; line-height:1.4; white-space:pre-wrap; word-break:break-word; }
+  .tline .r{ font-size:11.5px; font-weight:600; color:var(--pink); margin-right:6px; }
+  .tline .tx{ margin-top:2px; }
+  .t-user{ align-self:flex-end; background:rgba(10,132,255,.24); } .t-user .r{ color:#8cc4ff; }
+  .t-advice{ background:rgba(48,209,88,.13); } .t-advice .r{ color:var(--gr); }
+  .t-rescuer{ background:rgba(255,159,10,.15); } .t-rescuer .r{ color:var(--yel); }
+  .bc h3{ margin-bottom:10px; }
+  @media(max-width:420px){ .bc .field{ flex-direction:column; } }
+
+  .eb{ display:inline-flex; align-items:center; height:18px; padding:0 7px; border-radius:99px; font-size:10.5px; font-weight:600;
+    vertical-align:1px; white-space:nowrap; margin-right:6px; }
+  .eb-cloud{ color:var(--vio); background:rgba(191,90,242,.16); }
+  .eb-local{ color:var(--cy); background:rgba(100,210,255,.14); }
+  .eb-reserve{ color:#c7c7cc; background:rgba(142,142,147,.2); }
+
+  .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--unk); flex:none; }
+  .st-ok .dot, .dot.st-ok{ background:var(--gr); }
+  .st-warn .dot, .dot.st-warn{ background:var(--yel); }
+  .st-bad .dot, .dot.st-bad{ background:var(--red); }
+  .st-off .dot, .dot.st-off{ background:var(--off); }
+  .st-unk .dot, .dot.st-unk{ background:transparent; box-shadow:inset 0 0 0 1.5px var(--unk); }
+
+  /* уведомления */
+  .linkbar{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin-bottom:14px; padding:12px 16px; border-radius:14px;
+    background:rgba(255,69,58,.12); border:1px solid rgba(255,69,58,.32); color:var(--red); font-size:13.5px; font-weight:600; }
+  .linkbar span{ color:var(--dim); font-weight:400; }
+  .pwr{ display:flex; gap:12px; align-items:flex-start; padding:14px 16px; margin-bottom:14px; border-radius:14px;
+    background:rgba(255,159,10,.1); border:1px solid rgba(255,159,10,.3); }
+  .pwr.off{ background:rgba(255,69,58,.1); border-color:rgba(255,69,58,.32); }
+  .pwr-ico{ color:var(--yel); margin-top:1px; } .pwr.off .pwr-ico{ color:var(--red); }
+  .pwr-body{ flex:1; min-width:0; font-size:13.5px; }
+  .pwr-body b{ display:block; margin-bottom:2px; color:var(--yel); font-size:14px; } .pwr.off .pwr-body b{ color:var(--red); }
+  .pwr-sub{ display:block; color:var(--dim); font-size:12.5px; margin-top:4px; }
+  .pwr-sub code{ white-space:nowrap; color:var(--ink); background:rgba(255,255,255,.08); border-radius:5px; padding:1px 6px; }
+  .pwr-x{ width:28px; height:28px; padding:0; border-radius:50%; color:var(--dim); }
+
+  /* ИИ-диспетчер */
+  .aibox{ margin-bottom:16px; }
+  .ai-head{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; }
+  .ai-title{ font-size:15px; font-weight:600; white-space:nowrap; }
+  .route{ display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12.5px; color:var(--dim); }
+  .route .hop{ display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border-radius:99px; background:rgba(255,255,255,.05); }
+  .route .hop.on{ background:rgba(10,132,255,.18); color:var(--ink); font-weight:600; }
+  .route .sep{ color:var(--mute); }
+  .pill{ display:inline-flex; align-items:center; height:22px; padding:0 9px; border-radius:99px; background:rgba(255,255,255,.07);
+    color:var(--dim); font-size:11.5px; white-space:nowrap; flex:none; }
+  .route > .pill{ height:26px; }
+  .pill.p-ok{ color:var(--gr); background:rgba(48,209,88,.13); }
+  .pill.p-warn{ color:var(--yel); background:rgba(255,159,10,.14); }
+  .pill.p-bad{ color:var(--red); background:rgba(255,69,58,.14); }
+  .ai-last{ order:3; flex-basis:100%; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:12.5px; color:var(--dim); }
+  .ai-last:empty{ display:none; }
+  .ai-last b{ color:var(--ink); font-weight:500; }
+  .ai-last .eb{ margin-right:0; }
+  .ai-tools{ order:2; margin-left:auto; display:flex; gap:6px; }
+  #aiFold{ width:32px; padding:0; }
+  .spin::before{ content:""; display:inline-block; width:10px; height:10px; border:1.6px solid currentColor; border-right-color:transparent;
+    border-radius:50%; animation:spin .8s linear infinite; }
+  .ai-grid{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; transition:opacity .3s, filter .3s; }
+  @media(max-width:900px){ .ai-grid{ grid-template-columns:1fr; gap:8px; } }
+  .eng{ position:relative; overflow:hidden; min-width:0; padding:13px 14px; border-radius:14px; background:var(--panel2);
+    border:1px solid var(--line); transition:border-color .25s, background-color .25s; }
+  .eng.active{ border-color:rgba(10,132,255,.55);
+    background:linear-gradient(180deg,rgba(10,132,255,.13),rgba(10,132,255,.02) 72%),var(--panel2); }
+  .eng.active.st-ok .dot{ animation:pulse 1.8s ease-out infinite; }
+  @keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(48,209,88,.6); } 70%{ box-shadow:0 0 0 7px rgba(48,209,88,0); } 100%{ box-shadow:0 0 0 0 rgba(48,209,88,0); } }
+  @keyframes pulse-r{ 0%{ box-shadow:0 0 0 0 rgba(255,69,58,.7); } 70%{ box-shadow:0 0 0 7px rgba(255,69,58,0); } 100%{ box-shadow:0 0 0 0 rgba(255,69,58,0); } }
+  .eng-top{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .eng-name{ font-weight:600; font-size:14px; white-space:nowrap; }
+  .eng-state{ font-size:12.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .st-ok .eng-state{ color:var(--gr); } .st-warn .eng-state{ color:var(--yel); } .st-bad .eng-state{ color:var(--red); }
+  .eng-act{ margin-left:auto; flex:none; display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:99px;
+    background:var(--blue); color:#fff; font-size:11px; font-weight:600; }
+  .eng-model{ display:flex; flex-wrap:wrap; align-items:center; gap:5px 6px; margin-top:8px; font-size:13px; min-width:0; }
+  .eng-model .mn{ flex:0 1 auto; min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .eng-model .mn b{ font-weight:600; }
+  .eng-reason{ margin-top:6px; min-height:18px; font-size:12.5px; color:var(--dim); overflow:hidden; display:-webkit-box;
+    -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+  .st-bad .eng-reason{ color:#ffa29c; } .st-warn .eng-reason{ color:#ffd08a; }
+  .eng-meta{ display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:8px; font-size:11.5px; color:var(--mute); font-variant-numeric:tabular-nums; }
+  .eng-meta b{ color:var(--dim); font-weight:500; }
+  .eng-meta .cd{ color:var(--yel); }
+  .eng.skel .eng-reason{ color:var(--mute); }
+  .ai-foot{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin-top:12px; font-size:12px; color:var(--mute); }
+  .ai-foot .bad{ color:var(--red); } .ai-foot .warn{ color:var(--yel); } .ai-foot .good{ color:var(--gr); }
+  .aibox.stale .ai-grid{ opacity:.5; filter:saturate(.5); }
+  .aibox.fold .ai-grid, .aibox.fold .ai-foot{ display:none; }
+  @media(max-width:640px){
+    .ai-head{ gap:8px 10px; }
+    .ai-tools{ order:4; margin-left:0; width:100%; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+    .ai-tools button, .ai-tools a.btn{ padding:0 8px; font-size:12px; white-space:normal; min-width:0; text-align:center; }
+    #aiFold{ width:auto; }
+  }
+  @media(prefers-reduced-motion:reduce){
+    *, ::before, ::after{ animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<section id="login">
+  <h1>Консоль спасателя</h1>
+  <p>Stella Pocket Rescue · вход для спасателей</p>
+  <form class="field" id="loginForm"><input id="pin" type="password" inputmode="numeric" placeholder="PIN-код" autocomplete="off" maxlength="64" aria-label="PIN-код"><button id="enter">Войти</button></form>
+  <div class="err" id="loginErr" role="alert"></div>
+  <a class="vlink" href="/verify" target="_blank" rel="noopener">Проверка узла ↗</a>
+</section>
+
+<div id="app" hidden>
+  <header>
+    <div class="brand">Stella Rescue<span>консоль спасателя</span></div>
+    <div class="stats">
+      <span class="stat">узел <b id="hHost">—</b></span>
+      <span class="stat">SSID <b id="hSsid">—</b></span>
+      <span class="stat">онлайн <b id="hOnline">0</b></span>
+      <span class="stat">аптайм <b id="hUp">—</b></span>
+      <span class="stat">нагрузка <b id="hLoad">—</b></span>
+      <span class="stat aichip" id="hAi" role="button" tabindex="0" title="Состояние ИИ-диспетчера">ИИ <i class="dot st-unk"></i><b>…</b></span>
+    </div>
+    <span class="modebox" id="modeBox">
+      <b id="modeLbl">Ожидание</b>
+      <button id="btnQuake" type="button">Имитировать землетрясение</button>
+      <button id="btnStandby" type="button" hidden>Вернуть ожидание</button>
+    </span>
+  </header>
+
+  <main>
+    <div class="linkbar" id="linkBar" role="alert" hidden>Связь с узлом потеряна <span>Повторяю каждые 4 с, данные на экране могут быть устаревшими. Последний ответ узла: <i id="linkAgo" data-cago="0">—</i></span></div>
+
+    <div class="pwr" id="pwrBanner" role="alert" hidden>
+      <span class="pwr-ico" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M13.4 2.5 4.8 13.6h6.1l-1.3 7.9 8.6-11.1h-6.1z"/></svg></span>
+      <div class="pwr-body"><b id="pwrTitle"></b><span id="pwrText"></span><span class="pwr-sub" id="pwrSub"></span></div>
+      <button type="button" class="pwr-x" id="pwrClose" title="Скрыть до конца сессии" aria-label="Скрыть предупреждение"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <div class="tiles">
+      <div class="tile t-red"><span class="tl">Критично</span><b id="c-red">0</b></div>
+      <div class="tile t-yellow"><span class="tl">Срочно</span><b id="c-yellow">0</b></div>
+      <div class="tile t-unknown"><span class="tl">Нет данных</span><b id="c-unknown">0</b></div>
+      <div class="tile t-green"><span class="tl">Легкий</span><b id="c-green">0</b></div>
+    </div>
+
+    <section class="panel aibox" id="aiBox" aria-label="ИИ-диспетчер">
+      <div class="ai-head">
+        <span class="ai-title">ИИ-диспетчер</span>
+        <span class="route" id="aiRoute" title="Если движок недоступен, отвечает следующий по цепочке"></span>
+        <span class="ai-last" id="aiLast"></span>
+        <span class="ai-tools">
+          <button type="button" id="aiProbe">Проверить сейчас</button>
+          <a class="btn" id="aiVerify" href="/verify" target="_blank" rel="noopener">Проверка узла ↗</a>
+          <button type="button" id="aiFold" aria-expanded="true" aria-controls="aiGrid" title="Свернуть панель">▾</button>
+        </span>
+      </div>
+      <div class="ai-grid" id="aiGrid"></div>
+      <div class="ai-foot"><span id="aiMsg" role="status"></span><span id="aiUpd" class="mono"></span></div>
+    </section>
+
+    <div id="stageServer">
+      <div class="server" id="serverNode" role="button" tabindex="0">
+        <div class="halo"></div>
+        <div class="rack"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12.5" width="18" height="7.5" rx="2"/><path d="M7 16.3h4"/><circle cx="17" cy="16.3" r=".9" fill="currentColor"/><path d="M8.6 8.6a4.8 4.8 0 0 1 6.8 0M6.2 6.1a8.2 8.2 0 0 1 11.6 0"/></svg></div>
+        <h2>Узел Stella-01</h2>
+        <div class="meta" id="serverMeta">Orange Pi · Wi-Fi точка доступа</div>
+        <div class="go">Подключиться</div>
+      </div>
+    </div>
+
+    <div id="stageGrid" class="cols" hidden>
+      <div class="panel">
+        <h3>Радар <span id="radarNote" class="mono"></span></h3>
+        <svg id="radar" viewBox="0 0 320 320" role="img" aria-label="Радар подключений"></svg>
+        <div class="hint">Точки без GPS расставлены по силе сигнала Wi-Fi: кольцо показывает расстояние до узла.</div>
+      </div>
+      <div class="panel">
+        <h3>Подключенные устройства <span id="devCount" class="mono"></span></h3>
+        <div class="grid" id="devGrid"></div>
+      </div>
+    </div>
+
+    <div id="stageDetail" hidden>
+      <button class="back" id="backBtn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Все устройства</button>
+      <div class="cols">
+        <div class="panel" id="dossier"></div>
+        <div class="panel">
+          <h3>Переписка и управление</h3>
+          <div class="statusbtns" id="statusBtns"></div>
+          <form class="field" id="replyForm"><input id="replyText" maxlength="500" placeholder="Написать пострадавшему напрямую" aria-label="Ответ пострадавшему"><button>Отправить</button></form>
+          <div class="err" id="replyErr" role="alert"></div>
+          <div class="transcript" id="transcript"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel bc" style="margin-top:16px">
+      <h3>Объявление всем</h3>
+      <form class="field" id="bcForm">
+        <input id="bcText" maxlength="500" placeholder="Пункт сбора, вода, медики" aria-label="Объявление всем подключенным">
+        <button>Отправить всем</button>
+      </form>
+      <div class="err" id="bcErr" role="alert"></div>
+    </div>
+  </main>
+</div>
+
+<div id="scan">
+  <div class="radarwrap"><div class="ring"></div><div class="sweep"></div></div>
+  <div id="scanTitle">Подключение к узлу</div>
+  <pre id="scanLog"></pre>
+</div>
+
+<script>
+(function(){
+  var pin='', selected=null, data=null, revealed=false, timer=null, authed=false, logging=false, refreshing=false;
+  var detailSeq=0, opening=null, netFails=0, lastLink=0, skew=0, modeBusy=false;
+  var LABEL={ red:'Критично', yellow:'Срочно', green:'Легкий', unknown:'Нет данных' };
+  var STATUS={ new:'новый', assigned:'группа выехала', resolved:'закрыт' };
+  var ROLE={ user:'Пострадавший', assistant:'Стелла', advice:'Первая помощь', rescuer:'Спасатель' };
+  var ENGINES=['cloud','local','reserve'];
+  var ENG={ cloud:'Claude', local:'локальная', reserve:'резерв' };
+  var ENG_HINT={ cloud:'Ответил облачный ИИ Claude', local:'Ответила локальная модель на плате', reserve:'Ответ по правилам триажа (резерв без ИИ)' };
+  var ENG_TITLE={ cloud:'Облако', local:'Локальная модель', reserve:'Резерв' };
+  var STATE_CLS={ ok:'st-ok', loading:'st-warn', cooldown:'st-warn', offline:'st-bad', down:'st-bad', error:'st-bad', disabled:'st-off', unknown:'st-unk' };
+  var STATE_RU={ ok:'работает', loading:'загружается', cooldown:'пауза после сбоя', offline:'нет интернета', down:'не запущена', error:'ошибка', disabled:'отключено', unknown:'ожидает проверки' };
+  var STATE_LOCAL={ disabled:'отключена' };
+  var ROUTES={ auto:['cloud','local','reserve'], cloud:['cloud','reserve'], local:['local','reserve'], offline:['reserve'] };
+  var MODE_RU={ auto:'авто', cloud:'только облако', local:'только плата', offline:'офлайн' };
+  var POWER_RU={ normal:'обычное', safe:'щадящее', off:'ИИ выключен' };
+  var POWER_CLS={ normal:'p-ok', safe:'p-warn', off:'p-bad' };
+  var POWER_RANK={ normal:1, safe:2, off:3 };
+  var ai={ hinted:null, data:null, power:null, hw:null, at:0, next:0, seq:0, shown:0, busy:false, probing:false, timer:null, fails:0, wait:10000, err:null, errCls:'bad', note:null, noteTimer:null };
+  var PWR_KEY='stella_pwr_hide', FOLD_KEY='stella_ai_fold';
+  try{ pin=sessionStorage.getItem('stella_pin')||''; }catch(e){}
+
+  function $(id){ return document.getElementById(id); }
+  function el(t,a,x){ var e=document.createElement(t); for(var k in(a||{})) e.setAttribute(k,a[k]); if(x!==undefined) e.textContent=x; return e; }
+  function isObj(v){ return !!v && typeof v==='object' && !Array.isArray(v); }
+  function num(v){ return typeof v==='number' && isFinite(v) ? v : null; }
+  function txt(v,max){ max=max||300; return typeof v==='string' ? (v.length>max ? v.slice(0,max-1)+'…' : v) : ''; }
+  function pick(map,k,def){ return typeof k==='string' && Object.prototype.hasOwnProperty.call(map,k) ? map[k] : def; }
+  function plural(n,a,b,c){ var m=Math.abs(n)%100, d=m%10; return m>10&&m<20 ? c : d===1 ? a : d>=2&&d<=4 ? b : c; }
+  function store(kind,k,v){ try{ var s=kind==='local'?localStorage:sessionStorage; if(v===undefined) return s.getItem(k); if(v===null) s.removeItem(k); else s.setItem(k,v); }catch(e){} return null; }
+  function netErr(e){ return !e || !e.status; }
+
+  function noteClock(r){ try{ var h=r.headers.get('Date'), t=h?Date.parse(h):NaN; if(!isNaN(t)){ var s=t/1000+0.5-Date.now()/1000; skew=Math.abs(s)<2?0:s; } }catch(e){} }
+  function serverNow(){ return Date.now()/1000+skew; }
+  function span(sec){ sec=Math.max(0,Math.floor(sec)); if(sec<60) return sec+' с'; var m=Math.floor(sec/60); if(m<60) return m+' мин';
+    var h=Math.floor(m/60); if(h<48) return h+' ч'+(m%60?' '+(m%60)+' мин':''); return Math.floor(h/24)+' сут'; }
+  function ago(ts){ ts=num(ts); if(ts==null) return '—'; var d=serverNow()-ts; return d<10 ? 'только что' : span(d)+' назад'; }
+  function cago(ms){ ms=num(ms); if(!ms) return '—'; var d=(Date.now()-ms)/1000; return d<3 ? 'только что' : span(d)+' назад'; }
+  function until(ts){ ts=num(ts); if(ts==null) return ''; var d=ts-serverNow(); return d<=1 ? 'повтор вот-вот' : 'повтор через '+span(d); }
+  function clock(ts){ ts=num(ts); if(ts==null) return ''; try{ return new Date((ts-skew)*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }catch(e){ return ''; } }
+  function fmtMs(ms){ ms=num(ms); if(ms==null||ms<0) return null; if(ms<1) return '<1 мс'; return ms<1000 ? Math.round(ms)+' мс' : (ms/1000).toFixed(ms<10000?1:0).replace('.',',')+' с'; }
+
+  function api(m,u,b,ms){
+    var ctl=null, t=null;
+    try{ ctl=new AbortController(); t=setTimeout(function(){ ctl.abort(); }, ms||15000); }catch(e){ ctl=null; }
+    function done(){ if(t){ clearTimeout(t); t=null; } }
+    return fetch(u,{method:m,cache:'no-store',headers:{'Content-Type':'application/json','X-Rescuer-Pin':pin},body:b?JSON.stringify(b):undefined,signal:ctl?ctl.signal:undefined})
+      .then(function(r){ noteClock(r); return r.text().then(function(s){ done(); var j=null; try{ j=s?JSON.parse(s):null; }catch(e){}
+        if(!r.ok){ var e=new Error(isObj(j)&&typeof j.error==='string'&&j.error ? j.error : 'код '+r.status); e.status=r.status; throw e; }
+        if(!isObj(j)){ var bad=new Error('узел прислал некорректный ответ'); bad.status=r.status; throw bad; }
+        return j; }); })
+      .catch(function(x){ done(); if(x && x.status) throw x;
+        var e=new Error(x && x.name==='AbortError' ? 'Узел не ответил вовремя' : 'Нет связи с узлом'); e.status=0; throw e; });
+  }
+  function fmtDur(s){ if(s==null) return '—'; s=Math.round(s); var h=Math.floor(s/3600),m=Math.floor(s%3600/60); return (h?h+'ч ':'')+m+'м'; }
+
+  function login(){
+    if(logging) return;
+    var v=($('pin').value||'').trim(); if(v) pin=v;
+    if(!pin){ $('loginErr').textContent='Введите PIN'; return; }
+    logging=true; $('enter').disabled=true; $('loginErr').textContent='';
+    api('GET','/api/rescuer/incidents',null,12000).then(function(d){
+      store('session','stella_pin',pin);
+      $('pin').value=''; $('login').hidden=true; $('app').hidden=false; authed=true;
+      linkOk(); apply(d); startPolling();
+    }).catch(function(e){
+      if(e.status===401) forgetPin();
+      $('loginErr').textContent = e.status===429 ? 'Заблокировано на 5 минут (много попыток)' : e.status===401 ? 'Неверный PIN'
+        : netErr(e) ? e.message+'. Проверьте подключение к Wi‑Fi SOS-STELLA-RESCUE и повторите.' : 'Ошибка узла: '+e.message;
+    }).then(function(){ logging=false; $('enter').disabled=false; });
+  }
+  function forgetPin(){ pin=''; store('session','stella_pin',null); }
+  function startPolling(){ clearInterval(timer); timer=setInterval(refresh,4000); ai.next=0; aiPoll(); }
+  function authLost(msg){
+    if(!authed) return;
+    authed=false; clearInterval(timer); timer=null; clearTimeout(ai.timer); ai.timer=null;
+    ai.data=null; ai.power=null; ai.hw=null; ai.err=null; forgetPin();
+    $('scan').style.display='none'; $('app').hidden=true; $('login').hidden=false;
+    $('pwrBanner').hidden=true; $('linkBar').hidden=true; netFails=0; renderAi();
+    $('loginErr').textContent=msg||'Сессия завершена — войдите снова'; try{ $('pin').focus(); }catch(e){}
+  }
+  function authGuard(e){ if(e && e.status===401){ authLost('PIN изменён или больше не подходит — войдите снова'); return true; } return false; }
+  $('loginForm').onsubmit=function(e){ e.preventDefault(); login(); };
+  if(pin) login();
+
+  function refresh(){
+    if(!authed) return;
+    if(!refreshing){ refreshing=true;
+      api('GET','/api/rescuer/incidents',null,10000).then(function(d){ linkOk(); apply(d); })
+        .catch(function(e){ if(authGuard(e)) return; if(netErr(e)) linkFail(); })
+        .then(function(){ refreshing=false; }); }
+    if(revealed && selected && (!document.activeElement || document.activeElement.id!=='replyText')) showDetail(selected,true);
+  }
+  function linkOk(){ netFails=0; lastLink=Date.now(); $('linkAgo').setAttribute('data-cago',lastLink); $('linkBar').hidden=true; }
+  function linkFail(){ netFails++; if(netFails>=2){ $('linkAgo').textContent=cago(lastLink); $('linkBar').hidden=false; } }
+
+  function applyMode(m){
+    if(!isObj(m)) return;
+    var em = m.mode === 'emergency', box = $('modeBox');
+    box.classList.toggle('em', em); document.body.classList.toggle('em', em);
+    $('modeLbl').textContent = em ? ('Режим ЧС' + (m.source==='drill'?' · учения':m.source==='sensor'?' · датчик':'')) : 'Ожидание';
+    $('btnQuake').hidden = em; $('btnStandby').hidden = !em;
+    if(!authed || !ai.data || !pick(ENG,m.ai)) return;
+    if(m.ai===ai.data.active){ ai.hinted=null; return; }
+    if(m.ai!==ai.hinted && !ai.err && !ai.busy && !ai.probing && !document.hidden && Date.now()-ai.at>3000){ ai.hinted=m.ai; aiPoll(); }
+  }
+  function pollMode(){ if(modeBusy) return; modeBusy=true; fetch('/api/status',{cache:'no-store'}).then(function(r){ noteClock(r); return r.json(); }).then(applyMode).catch(function(){}).then(function(){ modeBusy=false; }); }
+  setInterval(pollMode, 3000); pollMode();
+  function modeFail(e){ if(authGuard(e)) return; $('modeLbl').textContent='Не удалось: '+txt(e.message,60); setTimeout(pollMode,3000); }
+  $('btnQuake').onclick = function(){
+    var b = this; if(b.dataset.arm !== '1'){ b.dataset.arm = '1'; b.textContent = 'Нажмите еще раз для подтверждения';
+      setTimeout(function(){ b.dataset.arm=''; b.textContent='Имитировать землетрясение'; }, 4000); return; }
+    b.dataset.arm = ''; b.textContent = 'Имитировать землетрясение';
+    api('POST','/api/rescuer/mode',{mode:'emergency',source:'drill'}).then(applyMode).catch(modeFail);
+  };
+  $('btnStandby').onclick = function(){ api('POST','/api/rescuer/mode',{mode:'standby'}).then(applyMode).catch(modeFail); };
+
+  function prio(it){ return pick(LABEL,it.priority) ? it.priority : 'unknown'; }
+  function apply(d){
+    if(!isObj(d)) return;
+    d.incidents=(Array.isArray(d.incidents)?d.incidents:[]).filter(isObj);
+    if(!isObj(d.counts)) d.counts={};
+    data=d;
+    var on = d.incidents.filter(function(i){return i.online;}).length;
+    $('hHost').textContent = (isObj(d.hub)&&typeof d.hub.mode==='string'&&d.hub.mode)||'field';
+    $('hSsid').textContent = 'SOS-STELLA-RESCUE';
+    $('hOnline').textContent = on;
+    $('hUp').textContent = fmtDur(isObj(d.server)?num(d.server.uptime_s):null);
+    $('hLoad').textContent = (isObj(d.server)&&d.server.load!=null)?String(d.server.load):'—';
+    ['red','yellow','unknown','green'].forEach(function(p){ $('c-'+p).textContent=num(d.counts[p])||0; });
+    $('serverMeta').textContent='Orange Pi · '+d.incidents.length+' устройств · '+on+' онлайн';
+    if(revealed){ renderGrid(); drawRadar(); }
+  }
+
+  var SCAN=['✓  Точка доступа SOS-STELLA-RESCUE','✓  Опрос подключенных телефонов','✓  Аренды DHCP: MAC и IP',
+    '✓  Близость по силе сигнала Wi-Fi','✓  Карточки вызовов','✓  Очередь по приоритету','✓  Соединение установлено'];
+  var scanning=false;
+  $('serverNode').onclick=function(){ if(revealed) return goGrid(); runScan(); };
+  $('serverNode').addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); this.click(); } });
+  function runScan(){
+    if(scanning) return; scanning=true;
+    var sc=$('scan'), log=$('scanLog'); sc.style.display='flex'; log.textContent='';
+    var i=0; (function step(){
+      if(i<SCAN.length){ var c=data?data.incidents.length:0;
+        log.textContent += SCAN[i].replace('устройств', c+' устройств') + '\n'; log.scrollTop=log.scrollHeight; i++; setTimeout(step, 3000/SCAN.length); }
+      else { setTimeout(function(){ sc.style.display='none'; scanning=false; revealed=true; goGrid(); apply(data); }, 260); }
+    })();
+  }
+  function goGrid(){ $('stageServer').hidden=true; $('stageDetail').hidden=true; $('stageGrid').hidden=false; }
+
+  function bars(sig){
+    var lv = sig==null?0 : sig>=-55?4 : sig>=-67?3 : sig>=-78?2 : sig>=-88?1 : 0;
+    var w=document.createElement('span'); w.className='bars';
+    for(var i=1;i<=4;i++){ var b=el('i'); b.style.height=(4+i*2)+'px'; if(i<=lv) b.className='on'; w.appendChild(b); }
+    return w;
+  }
+
+  function renderGrid(){
+    if(!data) return;
+    var g=$('devGrid'); g.textContent='';
+    $('devCount').textContent=data.incidents.length;
+    if(!data.incidents.length) g.appendChild(el('div',{'class':'empty'},'Пока никто не подключился. Устройства появятся здесь, как только пострадавшие напишут в чат.'));
+    data.incidents.forEach(function(it){
+      var p=prio(it), c=el('div',{'class':'dev '+p});
+      var live=el('span',{'class':'live'+(it.online?' on':'')}); c.appendChild(live);
+      c.appendChild(el('div',{'class':'id'},'#'+it.id+' · '+LABEL[p]));
+      c.appendChild(el('div',{'class':'nm'}, it.device||'устройство'));
+      var sub=el('div',{'class':'sub'});
+      sub.appendChild(document.createTextNode((it.proximity?it.proximity+' · ':'')+(it.signal!=null?it.signal+' dBm ':'')));
+      sub.appendChild(bars(it.signal));
+      c.appendChild(sub);
+      c.appendChild(el('div',{'class':'sub'}, (num(it.battery)!=null?'Заряд '+Math.round(it.battery*100)+'% · ':'')+pick(STATUS,it.status,'—')));
+      c.onclick=function(){ selected=it.id; showDetail(it.id); };
+      g.appendChild(c);
+    });
+  }
+
+  function drawRadar(){
+    if(!data) return;
+    var NS='http://www.w3.org/2000/svg', svg=$('radar'); svg.textContent='';
+    var cx=160,cy=160,Rmax=140;
+    function A(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAttribute(k,a[k]); svg.appendChild(e); return e; }
+    var live=data.incidents.filter(function(i){ return i.status!=='resolved'; });
+    var gps=live.filter(function(i){ return num(i.lat)!=null && num(i.lon)!=null; });
+    var hub=isObj(data.hub)&&num(data.hub.lat)!=null&&num(data.hub.lon)!=null?data.hub:(gps.length?{lat:avg(gps,'lat'),lon:avg(gps,'lon')}:null);
+    var maxD=Math.max(30, Math.max.apply(null, live.map(function(i){return num(i.distance_m)||0;}).concat([0]))*1.1);
+    if(gps.length&&hub){ maxD=Math.max(maxD, Math.max.apply(null, gps.map(function(p){ return dist(hub,p); }))*1.1||maxD); }
+    [0.33,0.66,1].forEach(function(f){ A('circle',{cx:cx,cy:cy,r:Rmax*f,fill:'none',stroke:'rgba(255,255,255,.09)'});
+      var t=A('text',{x:cx+4,y:cy-Rmax*f+12,fill:'#6e6e73','font-size':9}); t.textContent=Math.round(maxD*f)+' м'; });
+    A('line',{x1:cx,y1:cy-Rmax,x2:cx,y2:cy+Rmax,stroke:'rgba(255,255,255,.05)'}); A('line',{x1:cx-Rmax,y1:cy,x2:cx+Rmax,y2:cy,stroke:'rgba(255,255,255,.05)'});
+    A('circle',{cx:cx,cy:cy,r:11,fill:'rgba(10,132,255,.22)'}); A('circle',{cx:cx,cy:cy,r:5,fill:'#0a84ff'}); var ht=A('text',{x:cx+14,y:cy+4,fill:'#0a84ff','font-size':10,'font-weight':600}); ht.textContent='Узел';
+    $('radarNote').textContent = gps.length? gps.length+' по GPS' : (hub?'':'нет данных о месте');
+    live.forEach(function(p){
+      var x,y,hasGps=num(p.lat)!=null&&num(p.lon)!=null;
+      if(hasGps&&hub){ var dx=(p.lon-hub.lon)*111320*Math.cos(hub.lat*Math.PI/180), dy=(p.lat-hub.lat)*110540;
+        x=cx+dx/maxD*Rmax; y=cy-dy/maxD*Rmax; }
+      else { var d=num(p.distance_m)||maxD; var ang=hash(p.id)%360*Math.PI/180; var r=Math.min(Rmax, d/maxD*Rmax);
+        x=cx+Math.cos(ang)*r; y=cy+Math.sin(ang)*r; }
+      if(!isFinite(x)||!isFinite(y)) return;
+      var col={red:'#ff453a',yellow:'#ff9f0a',green:'#30d158',unknown:'#8e8e93'}[prio(p)];
+      if(!hasGps){ A('circle',{cx:cx,cy:cy,r:Math.hypot(x-cx,y-cy),fill:'none',stroke:col,'stroke-opacity':.15,'stroke-dasharray':'3 4'}); }
+      var dot=A('circle',{cx:x,cy:y,r:p.id===selected?7:5,fill:col,stroke:p.online?'#fff':'#1c1c1e','stroke-width':p.online?1.5:1});
+      dot.style.cursor='pointer'; dot.onclick=function(){ selected=p.id; showDetail(p.id); };
+      var t=A('text',{x:x+9,y:y+4,fill:'#c7c7cc','font-size':10,'font-weight':600}); t.textContent='#'+p.id;
+    });
+  }
+  function avg(a,k){ return a.reduce(function(s,x){return s+x[k];},0)/a.length; }
+  function dist(a,b){ var dx=(b.lon-a.lon)*111320*Math.cos(a.lat*Math.PI/180), dy=(b.lat-a.lat)*110540; return Math.hypot(dx,dy); }
+  function hash(n){ n=((+n||0)*2654435761)>>>0; return n%997; }
+
+  function kv(box,k,v,big){ var d=el('div',{'class':'kv'}); d.appendChild(el('span',{'class':'k'},k));
+    d.appendChild(el('span',{'class':'v'+(big?' big':'')}, v==null||v===''?'—':String(v))); box.appendChild(d); }
+  function badge(engine){ return el('span',{'class':'eb eb-'+engine,title:ENG_HINT[engine]},ENG[engine]); }
+
+  function showDetail(id,keep){
+    var tok=++detailSeq; if(!keep) opening=id;
+    api('GET','/api/rescuer/incidents/'+encodeURIComponent(id)+'/messages',null,10000).then(function(d){
+      if(tok!==detailSeq || selected!==id || !authed) return;
+      var it=isObj(d.incident)?d.incident:{}, di=isObj(it.device_info)?it.device_info:{}, p=prio(it), show=!keep || opening===id;
+      if(show){ opening=null; $('stageGrid').hidden=true; $('stageServer').hidden=true; $('stageDetail').hidden=false; $('replyErr').textContent=''; }
+      var box=$('dossier'); box.textContent='';
+      box.appendChild(el('h3',{},'Досье устройства #'+it.id));
+      var flag=el('div',{'class':'flag c-'+p}); flag.style.marginBottom='8px'; flag.textContent=LABEL[p]+(it.panic?' · паника':'');
+      box.appendChild(flag);
+      var g=el('div',{'class':'dossier'});
+      kv(g,'Устройство', it.device, true);
+      kv(g,'Близость', it.proximity? it.proximity+(it.distance_m!=null?' (~'+it.distance_m+' м)':'') : '—', true);
+      kv(g,'Сигнал Wi-Fi', it.signal!=null?it.signal+' dBm':'—');
+      kv(g,'В сети', it.online?'да':'нет');
+      kv(g,'Заряд', num(it.battery)!=null?Math.round(it.battery*100)+'%'+(it.charging?' (заряжается)':''):'—');
+      kv(g,'Координаты', num(it.lat)!=null&&num(it.lon)!=null?it.lat.toFixed(5)+', '+it.lon.toFixed(5)+(num(it.accuracy)?' (±'+Math.round(it.accuracy)+'м)':''):'нет GPS');
+      kv(g,'Адрес/ориентир', it.location_text);
+      kv(g,'Людей', it.people);
+      kv(g,'Ждет', num(it.waiting_min)!=null?it.waiting_min+' мин':'—');
+      kv(g,'IP / MAC', (it.client_ip||'—')+(it.mac?' · '+it.mac:''));
+      kv(g,'Платформа', di.platform);
+      kv(g,'Экран', (di.screen||'')+(di.dpr?' @'+di.dpr:''));
+      kv(g,'Ядра / память', (di.cores||'?')+' / '+(di.memory_gb?di.memory_gb+' ГБ':'?'));
+      kv(g,'Сеть телефона', (di.net_type||'—')+(di.downlink?' · '+di.downlink+' Мбит':''));
+      kv(g,'Язык / зона', (di.lang||'')+(di.tz?' · '+di.tz:''));
+      box.appendChild(g);
+      if(Array.isArray(it.tags)&&it.tags.length){ var tg=el('div',{}); tg.style.marginTop='8px'; it.tags.forEach(function(t){ tg.appendChild(el('span',{'class':'tag'},String(t))); }); box.appendChild(tg); }
+      if(di.ua){ var ua=el('div',{'class':'hint'}); ua.textContent='UA: '+di.ua; box.appendChild(ua); }
+
+      var sb=$('statusBtns'); sb.textContent='';
+      ['new','assigned','resolved'].forEach(function(s){ var b=el('button',{type:'button'},STATUS[s]); if(it.status===s) b.className='on';
+        b.onclick=function(){ b.disabled=true; api('PATCH','/api/rescuer/incidents/'+encodeURIComponent(id),{status:s})
+          .then(function(){ showDetail(id,true); refresh(); })
+          .catch(function(e){ if(!authGuard(e)) $('replyErr').textContent='Статус не изменён: '+e.message; })
+          .then(function(){ b.disabled=false; }); }; sb.appendChild(b); });
+
+      var tr=$('transcript'), atEnd=show || tr.scrollHeight-tr.scrollTop-tr.clientHeight<40, top=tr.scrollTop;
+      tr.textContent='';
+      (Array.isArray(d.messages)?d.messages:[]).forEach(function(m){ if(!isObj(m)) return; var l=el('div',{'class':'tline t-'+(typeof m.role==='string'?m.role:'')});
+        var role=typeof m.role==='string'?m.role:'';
+        l.appendChild(el('span',{'class':'r r-'+role}, pick(ROLE,role,role)));
+        if(role==='assistant' && pick(ENG,m.engine)) l.appendChild(badge(m.engine));
+        l.appendChild(el('div',{'class':'tx'},m.text==null?'':String(m.text))); tr.appendChild(l); });
+      tr.scrollTop=atEnd?tr.scrollHeight:top;
+
+      $('replyForm').onsubmit=function(e){ e.preventDefault(); var t=$('replyText'), btn=this.querySelector('button'); if(!t.value.trim()||btn.disabled) return;
+        btn.disabled=true; $('replyErr').textContent='';
+        api('POST','/api/rescuer/incidents/'+encodeURIComponent(id)+'/reply',{text:t.value})
+          .then(function(){ t.value=''; showDetail(id,true); })
+          .catch(function(e){ if(!authGuard(e)) $('replyErr').textContent='Не отправлено: '+e.message+'. Текст сохранён — повторите.'; })
+          .then(function(){ btn.disabled=false; }); };
+    }).catch(function(e){
+      if(authGuard(e) || tok!==detailSeq) return;
+      if(e.status===404 && selected===id){ selected=null; opening=null; goGrid(); refresh(); return; }
+      if(!keep || opening===id){ opening=null; $('replyErr').textContent='Не удалось открыть вызов: '+e.message; }
+    });
+  }
+  $('backBtn').onclick=function(){ selected=null; opening=null; detailSeq++; goGrid(); };
+
+  $('bcForm').onsubmit=function(e){ e.preventDefault(); var t=$('bcText'), btn=this.querySelector('button'); if(!t.value.trim()||btn.disabled) return;
+    btn.disabled=true; $('bcErr').textContent='';
+    api('POST','/api/rescuer/broadcast',{text:t.value})
+      .then(function(){ t.value=''; t.placeholder='Отправлено всем'; })
+      .catch(function(e){ if(!authGuard(e)) $('bcErr').textContent='Объявление не отправлено: '+e.message+'. Текст сохранён — повторите.'; })
+      .then(function(){ btn.disabled=false; }); };
+
+  function engState(k,e){ return k==='reserve' ? 'ok' : pick(STATE_CLS,isObj(e)?e.state:null) ? e.state : 'unknown'; }
+  function stateText(k,st){ if(k==='reserve') return 'всегда готов'; return (k==='local'&&pick(STATE_LOCAL,st))||STATE_RU[st]; }
+  function powerProfile(){ var p=isObj(ai.power)&&typeof ai.power.profile==='string'?ai.power.profile:null;
+    if(!p && ai.data && isObj(ai.data.local)) p=ai.data.local.power; return pick(POWER_RU,p)?p:null; }
+  function freshHw(){ var h=ai.hw; if(!isObj(h)) return null; var ts=num(h.ts); return ts!=null && Math.abs(serverNow()-ts)<90 ? h : null; }
+
+  function aiSchedule(ms){ clearTimeout(ai.timer); ai.timer=null; ai.next=Date.now()+ms; if(authed && !document.hidden) ai.timer=setTimeout(aiPoll, ms); }
+  function aiPoll(){
+    if(!authed || document.hidden || ai.busy || ai.probing) return;
+    clearTimeout(ai.timer); ai.timer=null; ai.busy=true; var s=++ai.seq;
+    api('GET','/api/rescuer/ai',null,9000)
+      .then(function(d){ aiTake(s,d.ai,d); })
+      .catch(aiFail)
+      .then(function(){ ai.busy=false; if(!ai.probing) aiSchedule(ai.wait); });
+  }
+  function aiTake(s,snap,full){
+    if(s<ai.shown) return;
+    ai.shown=s;
+    if(full){ ai.power=isObj(full.power)?full.power:null; ai.hw=isObj(full.hw)?full.hw:null; }
+    ai.fails=0; ai.wait=10000;
+    if(isObj(snap)){ ai.data=snap; ai.at=Date.now(); ai.err=null; }
+    else { ai.err='Узел прислал неполные данные о ИИ — показано последнее известное состояние'; ai.errCls='warn'; }
+    renderAi();
+  }
+  function aiFail(e){
+    if(authGuard(e)) return;
+    ai.fails++; ai.errCls='bad';
+    if(e.status===429){ ai.err='С этого адреса было много неверных PIN — узел временно блокирует запросы, повтор через минуту'; ai.errCls='warn'; ai.wait=60000; }
+    else if(e.status===404){ ai.err='Узел не отдаёт состояние ИИ (нужна прошивка 2.0)'; ai.wait=60000; }
+    else if(netErr(e)){ ai.err=e.message+(ai.data?' — показано последнее известное состояние':''); ai.wait=Math.min(30000,10000+5000*(ai.fails-1)); }
+    else { ai.err='Ошибка узла: '+txt(e.message,120); ai.wait=15000; }
+    renderAi();
+  }
+  function aiProbe(){
+    if(ai.probing || !authed) return;
+    ai.probing=true; probeBtn('run'); clearTimeout(ai.timer); ai.timer=null;
+    var s=++ai.seq, fresh=false;
+    api('POST','/api/rescuer/ai/probe',null,30000).then(function(d){
+      aiTake(s,d.ai,null); fresh=isObj(d.ai);
+      if(typeof d.error==='string' && d.error){ ai.err=txt(d.error,160); ai.errCls='warn'; renderAiMsg(); probeBtn(); }
+      else { note('Проверка завершена · облако и локальная модель опрошены'); probeBtn('done'); }
+    }).catch(function(e){ aiFail(e); probeBtn(); })
+      .then(function(){ ai.probing=false; if(authed) aiSchedule(fresh?400:ai.wait); else probeBtn(); });
+  }
+  function probeBtn(st){
+    var b=$('aiProbe'); b.classList.toggle('spin',st==='run'); b.disabled=st==='run';
+    b.textContent = st==='run' ? 'Проверяю' : st==='done' ? 'Проверено' : 'Проверить сейчас';
+    if(st==='done') setTimeout(function(){ if(!ai.probing) probeBtn(); }, 2500);
+  }
+  function note(msg){ ai.note=msg; renderAiMsg(); clearTimeout(ai.noteTimer); ai.noteTimer=setTimeout(function(){ ai.note=null; renderAiMsg(); }, 5000); }
+  $('aiProbe').onclick=aiProbe;
+
+  function renderAi(){
+    $('aiBox').classList.toggle('stale', !!ai.err && !!ai.data);
+    renderChip(); renderRoute(); renderLast(); renderGridAi(); renderAiMsg(); renderPower();
+  }
+  function renderChip(){
+    var a=ai.data, k=a&&pick(ENG,a.active)?a.active:null, chip=$('hAi'), dot=chip.querySelector('.dot'), b=chip.querySelector('b');
+    if(!k){ dot.className='dot st-unk'; b.textContent=ai.err?'нет данных':'…'; chip.title=ai.err||'Состояние ИИ-диспетчера загружается'; return; }
+    dot.className='dot '+STATE_CLS[engState(k,a[k])]; b.textContent=ENG[k];
+    chip.title='Сейчас отвечает: '+ENG_TITLE[k]+(ai.err?' (данные устарели)':'')+'. Нажмите, чтобы открыть панель ИИ.';
+  }
+  function renderRoute(){
+    var a=ai.data, r=$('aiRoute'); r.textContent='';
+    if(!a){ r.appendChild(el('span',{'class':'pill'},ai.err?'нет данных':'опрос…')); return; }
+    var mode=pick(ROUTES,a.mode)?a.mode:'auto';
+    r.appendChild(el('span',{'class':'pill'},'Режим: '+MODE_RU[mode]));
+    ROUTES[mode].forEach(function(k,i){
+      if(i) r.appendChild(el('span',{'class':'sep','aria-hidden':'true'},'›'));
+      var h=el('span',{'class':'hop'+(a.active===k?' on':''),title:ENG_TITLE[k]+': '+stateText(k,engState(k,a[k]))});
+      h.appendChild(el('i',{'class':'dot '+STATE_CLS[engState(k,a[k])]})); h.appendChild(document.createTextNode(ENG[k])); r.appendChild(h);
+    });
+  }
+  function renderLast(){
+    var a=ai.data, l=$('aiLast'), lr=a&&isObj(a.last_reply)?a.last_reply:null; l.textContent='';
+    if(!a) return;
+    if(!lr || !pick(ENG,lr.engine)){ l.appendChild(document.createTextNode('ответов пострадавшим ещё не было')); return; }
+    l.appendChild(document.createTextNode('последний ответ'));
+    l.appendChild(badge(lr.engine));
+    var t=clock(lr.ts); if(t) l.appendChild(el('b',{},t));
+    if(num(lr.ts)!=null) l.appendChild(el('span',{'data-ago':lr.ts,'data-pre':'· '},'· '+ago(lr.ts)));
+    var ms=fmtMs(lr.ms); if(ms) l.appendChild(el('span',{},'· за '+ms));
+  }
+  function item(box,label,val,cls){ var s=el('span',cls?{'class':cls}:{}); s.appendChild(document.createTextNode(label+' ')); s.appendChild(el('b',{},val)); box.appendChild(s); return s; }
+  function engModel(k,e,st){
+    var m=el('div',{'class':'eng-model'}), mn=el('span',{'class':'mn'}), full;
+    if(k==='cloud'){
+      var model=txt(e.model,80);
+      mn.appendChild(el('b',{},'Claude')); mn.appendChild(document.createTextNode(' · '+(model||(e.configured===false?'ключ API не задан':'модель не выбрана'))));
+      full='Claude · '+(model||'—'); m.appendChild(mn);
+      if(e.online===true) m.appendChild(el('span',{'class':'pill p-ok',title:'api.anthropic.com доступен'},'интернет есть'));
+      else if(e.online===false) m.appendChild(el('span',{'class':'pill p-bad',title:'api.anthropic.com недоступен'},'нет интернета'));
+    } else if(k==='local'){
+      var lm=txt(e.model,120);
+      mn.textContent=lm||(st==='loading'?'модель ещё не в памяти':st==='off'?'модель не используется':'модель не загружена');
+      full=lm||mn.textContent; m.appendChild(mn);
+      var pp=powerProfile(); if(pp) m.appendChild(el('span',{'class':'pill '+POWER_CLS[pp],title:'Профиль питания платы'},'питание: '+POWER_RU[pp]));
+      var h=freshHw(), temps=h&&isObj(h.temps)?h.temps:null, soc=temps?num(temps.soc):null;
+      if(soc!=null) m.appendChild(el('span',{'class':'pill'+(soc>=80?' p-bad':soc>=70?' p-warn':''),title:'Температура процессора'},'SoC '+Math.round(soc)+'°'));
+    } else {
+      mn.textContent='правила триажа · без сети и нейросети'; full=mn.textContent; m.appendChild(mn);
+    }
+    mn.setAttribute('title',full);
+    return m;
+  }
+  function reasonText(k,e,st){
+    var r=txt(e.reason,240); if(r) return r;
+    if(k==='reserve') return 'Отвечает по правилам, если ИИ недоступен. Пострадавший получит ответ всегда';
+    if(st==='ok') return k==='cloud' ? (e.online===true?'Интернет есть — Claude на связи':'Claude на связи') : 'Модель загружена и отвечает';
+    if(st==='unknown') return k==='cloud' ? 'Проверяю связь с облаком…' : 'Проверяю локальную модель…';
+    if(st==='cooldown') return 'Пауза после сбоя, затем повторная попытка';
+    if(st==='loading') return 'Модель загружается в память';
+    return STATE_RU[st]||'';
+  }
+  function engMeta(k,e,st){
+    var m=el('div',{'class':'eng-meta'});
+    if(k==='reserve'){ item(m,'ответ','мгновенно'); item(m,'зависимости','нет'); return m; }
+    var lat=fmtMs(e.latency_ms); if(lat) item(m,'ответ',lat);
+    var pr=fmtMs(e.probe_ms); if(pr) item(m,k==='cloud'?'сеть':'проверка',pr);
+    if(k==='cloud' && typeof e.effort==='string' && e.effort) item(m,'effort',txt(e.effort,12)).setAttribute('title','Глубина рассуждений модели');
+    var cu=num(e.cooldown_until); if(cu!=null) m.appendChild(el('span',{'class':'cd','data-until':cu},until(cu)));
+    var ok=num(e.last_ok);
+    if(ok!=null){ var s=item(m,'последний успех',ago(ok)); s.lastChild.setAttribute('data-ago',ok); }
+    else if(STATE_CLS[st]!=='st-off') m.appendChild(el('span',{},'успешных ответов ещё не было'));
+    var calls=num(e.calls)||0, fl=num(e.failures)||0;
+    if(calls||fl) item(m,'вызовов',calls+(fl?' · сбоев '+fl:''));
+    if(!m.childNodes.length) m.appendChild(el('span',{},'не используется'));
+    return m;
+  }
+  function engCard(k,a){
+    var e=isObj(a[k])?a[k]:{}, st=engState(k,e), on=a.active===k;
+    var c=el('div',{'class':'eng '+STATE_CLS[st]+(on?' active':''),'data-engine':k});
+    var top=el('div',{'class':'eng-top'});
+    top.appendChild(el('i',{'class':'dot','aria-hidden':'true'}));
+    top.appendChild(el('span',{'class':'eng-name'},ENG_TITLE[k]));
+    top.appendChild(el('span',{'class':'eng-state'},stateText(k,st)));
+    if(on) top.appendChild(el('span',{'class':'eng-act',title:'Этот движок ответит на следующее сообщение'},'Активен'));
+    c.appendChild(top);
+    c.appendChild(engModel(k,e,STATE_CLS[st]==='st-off'?'off':st));
+    var why=reasonText(k,e,st), w=el('div',{'class':'eng-reason'},why), le=txt(e.last_error,400);
+    w.setAttribute('title', le && st!=='ok' ? why+'\nПоследняя ошибка: '+le : why);
+    c.appendChild(w);
+    c.appendChild(engMeta(k,e,st));
+    return c;
+  }
+  function renderGridAi(){
+    var g=$('aiGrid'), a=ai.data; g.textContent='';
+    ENGINES.forEach(function(k){
+      if(a){ g.appendChild(engCard(k,a)); return; }
+      var c=el('div',{'class':'eng skel st-unk'}), top=el('div',{'class':'eng-top'});
+      top.appendChild(el('i',{'class':'dot'})); top.appendChild(el('span',{'class':'eng-name'},ENG_TITLE[k]));
+      c.appendChild(top); c.appendChild(el('div',{'class':'eng-reason'},ai.err?'нет данных':'опрашиваю узел…')); g.appendChild(c);
+    });
+  }
+  function renderAiMsg(){
+    var m=$('aiMsg'), a=ai.data; m.className='';
+    if(ai.err){ m.className=ai.errCls; m.textContent=ai.err; }
+    else if(a && typeof a.error==='string' && a.error){ m.className='warn'; m.textContent=txt(a.error,160); }
+    else if(ai.note){ m.className='good'; m.textContent='✓ '+ai.note; }
+    else m.textContent='Если движок недоступен, следующий по цепочке ответит сам, без участия спасателя.';
+    var u=$('aiUpd');
+    if(ai.at){ u.setAttribute('data-cago',ai.at); u.textContent='обновлено '+cago(ai.at); } else { u.removeAttribute('data-cago'); u.textContent=''; }
+  }
+  function renderPower(){
+    var b=$('pwrBanner'), p=isObj(ai.power)?ai.power:{}, prof=powerProfile(), n=Math.max(0,Math.floor(num(p.unclean_boots)||0));
+    var show=authed && (prof==='off' || n>0), rank=pick(POWER_RANK,prof,0), seen=(store('session',PWR_KEY)||'').split('|');
+    if(!show || (seen.length===2 && rank<=(+seen[0]||0) && n<=(+seen[1]||0))){ b.hidden=true; return; }
+    b.setAttribute('data-sig',rank+'|'+n); b.classList.toggle('off',prof==='off');
+    var manual=p.setting==='off' && n===0;
+    $('pwrTitle').textContent = n>0 ? 'Плата перезагружалась из‑за питания ('+n+' '+plural(n,'раз','раза','раз')+')'
+      : manual ? 'Локальный ИИ выключен вручную' : 'Локальный ИИ выключен сторожем питания';
+    $('pwrText').textContent = prof==='off'
+      ? (manual ? 'Профиль питания «выключен». Отвечают облако (если есть интернет) и резерв.' : 'Локальный ИИ выключен, чтобы плата не перезагружалась. Отвечают облако (если есть интернет) и резерв.')
+      : prof==='safe' ? 'Локальный ИИ работает в щадящем режиме: одно ядро, сниженная частота, лёгкая модель.'
+      : prof==='normal' ? 'Локальный ИИ работает в обычном режиме — при новых перезагрузках включите щадящий.'
+      : 'Локальный ИИ под наблюдением сторожа питания.';
+    var sub=$('pwrSub'); sub.textContent='';
+    var reason=txt(p.reason,200); if(reason && reason!==$('pwrTitle').textContent){ sub.appendChild(document.createTextNode(reason+'. ')); }
+    var last=num(p.last_unclean); if(last!=null && n>0){ sub.appendChild(document.createTextNode('Последний раз ')); sub.appendChild(el('span',{'data-ago':last},ago(last))); sub.appendChild(document.createTextNode('. ')); }
+    if(manual){ sub.appendChild(document.createTextNode('Включить обратно: ')); sub.appendChild(el('code',{},'stella power auto')); }
+    else { sub.appendChild(document.createTextNode('Нужен блок питания 5V 3–4A и короткий толстый кабель. После замены: ')); sub.appendChild(el('code',{},'stella power reset')); }
+    b.hidden=false;
+  }
+  $('pwrClose').onclick=function(){ var b=$('pwrBanner'); store('session',PWR_KEY,b.getAttribute('data-sig')||''); b.hidden=true; };
+
+  function setFold(f){ $('aiBox').classList.toggle('fold',f); var b=$('aiFold'); b.textContent=f?'▸':'▾';
+    b.setAttribute('aria-expanded',f?'false':'true'); b.title=f?'Развернуть панель ИИ':'Свернуть панель ИИ'; store('local',FOLD_KEY,f?'1':null); }
+  $('aiFold').onclick=function(){ setFold(!$('aiBox').classList.contains('fold')); };
+  setFold(store('local',FOLD_KEY)==='1');
+  function openAi(){ setFold(false); try{ $('aiBox').scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){ $('aiBox').scrollIntoView(); } }
+  $('hAi').onclick=openAi;
+  $('hAi').addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openAi(); } });
+
+  function tick(){
+    var app=$('app'), i, n;
+    n=app.querySelectorAll('[data-ago]'); for(i=0;i<n.length;i++) n[i].textContent=(n[i].getAttribute('data-pre')||'')+ago(+n[i].getAttribute('data-ago'));
+    n=app.querySelectorAll('[data-until]'); for(i=0;i<n.length;i++) n[i].textContent=until(+n[i].getAttribute('data-until'));
+    var u=$('aiUpd'); if(u.hasAttribute('data-cago')) u.textContent='обновлено '+cago(+u.getAttribute('data-cago'));
+    if(!$('linkBar').hidden) $('linkAgo').textContent=cago(lastLink);
+  }
+  setInterval(function(){ if(authed && !document.hidden) tick(); }, 1000);
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden){ clearTimeout(ai.timer); ai.timer=null; return; }
+    if(!authed) return;
+    tick(); refresh();
+    var left=ai.next-Date.now(); if(left<=0) aiPoll(); else aiSchedule(left);
+  });
+  renderAi();
+})();
+</script>
+</body>
+</html>

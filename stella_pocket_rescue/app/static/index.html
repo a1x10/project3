@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f9f9fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:,">
+<title>Stella · аварийная сеть</title>
+<style>
+:root{--bg:#fff;--bg2:#f2f2f7;--sf:#fff;--chip:#f2f2f7;--fld:#fff;--hd:rgba(249,249,251,.9);--hds:#f9f9fb;
+--ink:#000;--ink2:#6c6c70;--ink3:#aeaeb2;--ln:rgba(60,60,67,.16);--ln2:rgba(60,60,67,.09);
+--in:#e9e9eb;--blue:#007aff;--bluet:#3d9bff;--red:#ff3b30;--green:#34c759;--orange:#ff9500;
+--stella:#e0245e;--aid:#1f7a36;--aidi:#34c759;--aidbg:rgba(52,199,89,.11);--aidln:rgba(52,199,89,.28);
+--ann:#a05a00;--annbg:rgba(255,204,0,.14);--annln:rgba(255,179,0,.34);--res:#c93400;--resbg:#ffe9d2;
+--sh:0 1px 1px rgba(0,0,0,.03),0 8px 30px rgba(0,0,0,.07);--glow:rgba(255,59,48,.34);
+--hh:calc(56px + env(safe-area-inset-top));
+--tail:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 17'%3E%3Cpath d='M10 0C10 7 6.5 12.5.6 15.4c-.6.3-.4 1.6.4 1.6H10z'/%3E%3C/svg%3E")}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--bg2:#000;--sf:#1c1c1e;--chip:#1c1c1e;--fld:#1c1c1e;--hd:rgba(22,22,24,.88);--hds:#161618;
+--ink:#fff;--ink2:#98989f;--ink3:#636366;--ln:rgba(84,84,88,.65);--ln2:rgba(84,84,88,.36);
+--in:#262629;--blue:#0a84ff;--bluet:#409cff;--red:#ff453a;--green:#30d158;--orange:#ff9f0a;
+--stella:#ff6f91;--aid:#30d158;--aidi:#30d158;--aidbg:rgba(48,209,88,.12);--aidln:rgba(48,209,88,.24);
+--ann:#ffd60a;--annbg:rgba(255,214,10,.1);--annln:rgba(255,214,10,.24);--res:#ffb340;--resbg:#3a2a14;
+--sh:0 0 0 .5px rgba(255,255,255,.1);--glow:rgba(255,69,58,.3)}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
+body{color:var(--ink);font:17px/1.3 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;padding:0}
+button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+[hidden]{display:none!important}
+svg{display:block;flex:none}
+.app{position:relative;display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:600px;margin:0 auto;overflow:hidden;background:var(--bg)}
+
+/* шапка: стеклянная панель поверх содержимого */
+header{position:absolute;z-index:5;top:0;left:0;right:0;height:var(--hh);display:flex;align-items:center;gap:11px;
+padding:env(safe-area-inset-top) calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));
+background:var(--hds);box-shadow:0 .5px 0 var(--ln);transition:background-color .35s,color .35s}
+@supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
+header,form,.qr{background:var(--hd);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px)}}
+.hx{flex:1;min-width:0}
+.hx b{display:block;font-size:17px;font-weight:600;letter-spacing:-.015em;line-height:21px}
+.hx span{display:block;font-size:13px;line-height:17px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bk{width:34px;height:44px;margin:0 -8px 0 -10px;display:grid;place-items:center;flex:none;color:var(--blue)}
+.em header{background:var(--red);color:#fff;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.em .hx span{color:rgba(255,255,255,.85)}
+.em .bk{color:#fff}
+
+/* плашка «нет связи» */
+.off{position:absolute;z-index:6;top:calc(var(--hh) + 10px);left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);
+display:flex;align-items:center;gap:10px;padding:10px 15px 10px 12px;border-radius:16px;background:rgba(28,28,30,.94);color:#fff;
+font-size:14px;line-height:19px;box-shadow:0 10px 30px rgba(0,0,0,.25);animation:drop .35s cubic-bezier(.2,.8,.2,1) both}
+.off:before{content:"!";flex:none;width:22px;height:22px;border-radius:50%;background:var(--orange);color:#000;font-weight:700;font-size:14px;line-height:22px;text-align:center}
+@keyframes drop{from{opacity:0;transform:translate(-50%,-12px)}}
+
+/* главный экран */
+.home{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;text-align:center;
+padding:calc(var(--hh) + 8px) calc(20px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+background:var(--bg2)}
+.home h1{margin:auto 0 10px;font-size:clamp(28px,8.4vw,34px);line-height:1.08;font-weight:700;letter-spacing:-.025em;text-wrap:balance}
+.lead{margin:0 0 24px;max-width:23em;font-size:17px;line-height:23px;color:var(--ink2);text-wrap:pretty}
+.help{position:relative;flex:none;display:block;width:100%;max-width:440px;height:58px;border-radius:17px;
+background:linear-gradient(180deg,#ff5a4f,var(--red));color:#fff;font-size:18px;font-weight:600;letter-spacing:-.01em;
+box-shadow:0 12px 30px var(--glow),inset 0 1px 0 rgba(255,255,255,.28);transition:transform .16s cubic-bezier(.2,.8,.2,1),filter .16s}
+.help:active{transform:scale(.975);filter:brightness(.94)}
+.em .help{animation:beat 2.2s ease-in-out infinite}
+@keyframes beat{50%{box-shadow:0 12px 44px rgba(255,59,48,.6),inset 0 1px 0 rgba(255,255,255,.28)}}
+.how{list-style:none;flex:none;width:100%;max-width:440px;margin:18px 0 0;padding:4px 16px;border-radius:18px;background:var(--sf);box-shadow:var(--sh);text-align:left}
+.how li{display:flex;align-items:center;gap:13px;padding:12px 0;font-size:15px;line-height:20px}
+.how li+li{box-shadow:0 -.5px 0 var(--ln2)}
+.how b{flex:none;width:28px;height:28px;border-radius:50%;background:rgba(0,122,255,.12);color:var(--blue);display:grid;place-items:center;font-size:14px;font-weight:700}
+.foot{flex:none;display:flex;align-items:center;gap:6px;margin:14px 0 auto;font-size:13px;color:var(--ink3)}
+
+/* чат */
+.chat{flex:1;min-height:0;display:flex;flex-direction:column}
+.sc{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;
+padding:calc(var(--hh) + 12px) calc(14px + env(safe-area-inset-right)) 12px calc(14px + env(safe-area-inset-left))}
+.note{display:flex;align-items:center;gap:6px;margin:auto auto 16px;font-size:12.5px;line-height:17px;color:var(--ink3)}
+.log{display:flex;flex-direction:column}
+.b,.c,.er{animation:in .34s cubic-bezier(.2,.8,.2,1) both}
+.na{animation:none}
+@keyframes in{from{opacity:0;transform:translateY(12px) scale(.94)}}
+.b{--bb:var(--in);position:relative;display:flow-root;max-width:min(76%,390px);margin-top:2px;padding:7px 13px 8px;background:var(--bb);font-size:17px;line-height:22px;overflow-wrap:anywhere}
+.b.f{margin-top:12px}
+.i{align-self:flex-start;border-radius:6px 19px 19px 6px;transform-origin:0 100%}
+.i.f{border-top-left-radius:19px}
+.o{--bb:var(--blue);align-self:flex-end;color:#fff;background:linear-gradient(180deg,var(--bluet),var(--blue));border-radius:19px 6px 6px 19px;transform-origin:100% 100%}
+.o.f{border-top-right-radius:19px}
+.i.l{border-bottom-left-radius:0}.o.l{border-bottom-right-radius:0}
+.b.l:after{content:"";position:absolute;bottom:0;width:10px;height:17px;background:var(--bb);
+-webkit-mask:var(--tail) 0 0/100% 100% no-repeat;mask:var(--tail) 0 0/100% 100% no-repeat}
+.i.l:after{left:-9px}.o.l:after{right:-9px;transform:scaleX(-1)}
+.res{--bb:var(--resbg)}
+.n{font-size:12.5px;line-height:17px;font-weight:600;color:var(--stella);margin-bottom:1px}
+.res .n{color:var(--res)}
+.x{white-space:pre-wrap}
+.t{float:right;display:flex;align-items:center;gap:3px;margin:8px -4px -3px 12px;font-size:11px;line-height:1;color:var(--ink2);opacity:.85;font-variant-numeric:tabular-nums;user-select:none}
+.o .t{color:rgba(255,255,255,.78);opacity:1}
+.pd{opacity:.72}.pd .t svg{opacity:0}
+.fl .t svg{opacity:0}
+.o.fl{--bb:#8e8e93;background:#8e8e93;margin-right:28px}
+.o.fl:before{content:"!";position:absolute;right:-30px;bottom:1px;width:22px;height:22px;border-radius:50%;background:var(--red);color:#fff;font-size:14px;font-weight:700;line-height:22px;text-align:center}
+.er{align-self:flex-end;min-height:34px;margin:2px 28px 0 0;padding:0 2px;font-size:13px;font-weight:500;color:var(--red)}
+.c{margin-top:12px;border-radius:20px;padding:13px 16px 15px;transform-origin:50% 100%}
+.c .h{display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:13px;line-height:24px;font-weight:600;letter-spacing:.01em;text-transform:uppercase}
+.c .t{margin:0 0 0 auto;float:none;font-weight:400;text-transform:none;letter-spacing:0}
+.c .x{font-size:17px;line-height:23px}
+.aid{background:var(--aidbg);box-shadow:inset 0 0 0 1px var(--aidln)}
+.aid .h{color:var(--aid)}
+.ic{width:24px;height:24px;border-radius:7px;background:var(--aidi);color:#fff;display:grid;place-items:center}
+.aid .x+.x{margin-top:12px;padding-top:12px;box-shadow:0 -1px 0 var(--aidln)}
+.ann{background:var(--annbg);box-shadow:inset 0 0 0 1px var(--annln)}
+.ann .h{color:var(--ann)}
+.ty{margin-top:12px;padding:14px 15px 13px;display:flex;gap:5px}
+.ty i{width:8px;height:8px;border-radius:50%;background:var(--ink2);opacity:.4;animation:dt 1.3s infinite ease-in-out}
+.ty i:nth-child(2){animation-delay:.16s}.ty i:nth-child(3){animation-delay:.32s}
+@keyframes dt{0%,60%,100%{opacity:.35;transform:none}30%{opacity:.9;transform:translateY(-3px)}}
+
+/* быстрые ответы и поле ввода */
+.qr{flex:none;display:flex;gap:8px;overflow-x:auto;padding:8px calc(14px + env(safe-area-inset-right)) 6px calc(14px + env(safe-area-inset-left));background:var(--bg);scrollbar-width:none}
+.qr::-webkit-scrollbar{display:none}
+.qr button{position:relative;flex:none;display:flex;align-items:center;gap:7px;height:40px;padding:0 15px 0 12px;border-radius:99px;background:var(--chip);
+font-size:15px;font-weight:500;white-space:nowrap;box-shadow:inset 0 0 0 .5px var(--ln2);transition:transform .14s cubic-bezier(.2,.8,.2,1),background-color .14s}
+.qr button:after{content:"";position:absolute;inset:-3px 0}
+.qr button:active{transform:scale(.95)}
+.qr .loc{background:rgba(0,122,255,.12);color:var(--blue);box-shadow:none}
+.qr .loc:disabled{opacity:.6}
+.k-or{color:var(--orange)}.k-rd{color:var(--red)}.k-gr{color:var(--green)}.k-gy{color:var(--ink2)}
+form{flex:none;display:flex;align-items:flex-end;gap:8px;padding:6px calc(12px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));background:var(--hds);box-shadow:0 -.5px 0 var(--ln)}
+textarea{flex:1;display:block;height:44px;max-height:136px;margin:0;resize:none;border:1px solid var(--ln);border-radius:22px;padding:10px 16px;background:var(--fld);color:var(--ink);font:inherit;font-size:17px;line-height:22px;outline:0;transition:border-color .2s}
+textarea:focus{border-color:rgba(0,122,255,.55)}
+textarea::placeholder{color:var(--ink3)}
+.snd{flex:none;width:44px;height:44px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;transition:background-color .2s,color .2s,transform .2s cubic-bezier(.2,.8,.2,1)}
+.snd:disabled{background:var(--chip);color:var(--ink3);cursor:default;transform:scale(.9)}
+.snd:not(:disabled):active{transform:scale(.9)}
+@media (max-height:600px){.how{display:none}}
+@media (prefers-reduced-motion:reduce){*,:before,:after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <button class="bk" id="bk" type="button" aria-label="На главный экран" hidden><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+  <div class="hx"><b id="tt">Stella</b><span id="ts">Аварийная сеть</span></div>
+</header>
+<div class="off" id="off" role="status" hidden>Нет связи с коробкой. Проверьте, что телефон подключен к Wi-Fi SOS-STELLA-RESCUE.</div>
+
+<main class="home" id="home">
+  <h1>Вы в аварийной сети</h1>
+  <p class="lead">Здесь можно написать спасателям, даже когда нет интернета и мобильной связи.</p>
+  <button class="help" id="help" type="button">Мне нужна помощь</button>
+  <ol class="how">
+    <li><b>1</b><span>Напишите, где вы и что случилось</span></li>
+    <li><b>2</b><span>Стелла ответит и подскажет первые шаги</span></li>
+    <li><b>3</b><span>Спасатели увидят ваше сообщение</span></li>
+  </ol>
+  <p class="foot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></svg>Чат видят диспетчер и спасатели</p>
+</main>
+
+<main class="chat" id="chat" hidden>
+  <div class="sc" id="sc">
+    <div class="note"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></svg>Чат видят диспетчер и спасатели</div>
+    <div class="log" id="log" aria-live="polite"></div>
+    <div class="b i f l ty" id="ty" aria-label="Стелла печатает" hidden><i></i><i></i><i></i></div>
+  </div>
+  <div class="qr" id="qr">
+    <button type="button" class="loc" id="loc"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0 1 13 0c0 5.3-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span>Мое местоположение</span></button>
+    <button type="button"><svg class="k-or" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.8 2.6 20h18.8z"/><path d="M12 10v4.4"/><circle cx="12" cy="17.2" r=".4" fill="currentColor"/></svg>Меня завалило</button>
+    <button type="button"><svg class="k-rd" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Есть раненые</button>
+    <button type="button"><svg class="k-rd" width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3.2s6.2 6.6 6.2 10.9a6.2 6.2 0 0 1-12.4 0C5.8 9.8 12 3.2 12 3.2z"/></svg>Сильное кровотечение</button>
+    <button type="button"><svg class="k-gy" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 20.5V4.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M4 20.5h16"/><circle cx="14.3" cy="12.5" r=".9" fill="currentColor"/></svg>Не могу выйти</button>
+    <button type="button"><svg class="k-gr" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.4l2.8 2.8L16.2 9.6"/></svg>Я в безопасности</button>
+  </div>
+  <form id="form" autocomplete="off">
+    <textarea id="fld" rows="1" maxlength="1000" enterkeyhint="send" placeholder="Где вы и что случилось?" aria-label="Сообщение"></textarea>
+    <button class="snd" id="snd" type="submit" aria-label="Отправить" disabled><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5"/></svg></button>
+  </form>
+</main>
+</div>
+
+<script>
+(function(){
+  var d=document,$=function(i){return d.getElementById(i)},log=$('log'),sc=$('sc'),fld=$('fld'),snd=$('snd'),ty=$('ty');
+  var sid=null,sp=null,last=0,lastB=0,open=false,greeted=false,polled=false,busy=false,again=false,mode='',pend=[],fails=0,since=0;
+  var NAME={assistant:'Стелла',rescuer:'Спасатель'};
+  var SV='<svg width="%" height="%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" ';
+  var I={
+    ok:SV.replace(/%/g,15)+'stroke-width="2"><path d="M5 12.5l4.2 4.2L19 7"/></svg>',
+    aid:'<span class="ic">'+SV.replace(/%/g,14)+'stroke-width="3.4"><path d="M12 5v14M5 12h14"/></svg></span>',
+    ann:SV.replace(/%/g,20)+'stroke-width="1.9"><path d="M4 10v4h3l9 4.5v-13L7 10z"/><path d="M7 14l1.3 5h2.6l-1-4M19.5 10.5v3"/></svg>'
+  };
+  var GREET='Здравствуйте, я Стелла. Где вы находитесь и есть ли рядом раненые?';
+  var metas=d.querySelectorAll('meta[name=theme-color]'),mdef=[].map.call(metas,function(m){return m.content});
+
+  function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+  function api(m,u,b){
+    var o={method:m,cache:'no-store'};
+    if(b){o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(b)}
+    return fetch(u,o).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+      if(!r.ok){var e=new Error(typeof j.error==='string'?j.error:'');e.status=r.status;throw e}return j})});
+  }
+  function el(t,c,x){var e=d.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+  function now(){return Date.now()/1000}
+  function hm(ts){var t=new Date(ts>1e12?ts:ts*1000),p=function(n){return(n<10?'0':'')+n};return p(t.getHours())+':'+p(t.getMinutes())}
+  function near(){return sc.scrollHeight-sc.scrollTop-sc.clientHeight<140}
+  function down(){sc.scrollTop=sc.scrollHeight}
+
+  function add(r,x,ts,anim){
+    var st=near(),p=log.lastElementChild,e,t=el('span','t',hm(ts));
+    if(r==='advice'&&p&&p.classList.contains('aid')&&ts-p.dataset.ts<300){
+      p.appendChild(el('div','x',x));if(st)down();return p;
+    }
+    if(r==='advice'||r==='ann'){
+      var a=r==='ann',h=el('div','h');
+      e=el('div','c '+(a?'ann':'aid'));
+      h.innerHTML=a?I.ann:I.aid;
+      h.appendChild(el('span','',a?'Объявление':'Первая помощь'));h.appendChild(t);
+      e.appendChild(h);e.appendChild(el('div','x',x));e.dataset.ts=ts;
+    }else{
+      var o=r==='user',g=p&&p.dataset.r===r&&ts-p.dataset.ts<300;
+      if(g)p.classList.remove('l');
+      e=el('div','b '+(o?'o':'i')+(r==='rescuer'?' res':'')+(g?'':' f')+' l');
+      e.dataset.r=r;e.dataset.ts=ts;
+      if(!o&&!g)e.appendChild(el('div','n',NAME[r]||NAME.assistant));
+      e.appendChild(el('span','x',x));
+      if(o)t.insertAdjacentHTML('beforeend',I.ok);
+      e.appendChild(t);
+    }
+    if(!anim)e.classList.add('na');
+    log.appendChild(e);
+    if(st||r==='user')down();
+    return e;
+  }
+  function typing(on){if(ty.hidden===!on)return;var st=near();ty.hidden=!on;if(on&&st)down()}
+  function net(ok){fails=ok?0:fails+1;$('off').hidden=fails<2}
+
+  function ensure(){
+    if(sid)return Promise.resolve();
+    if(!sp)sp=api('POST','/api/session').then(function(j){sid=j.session_id;ls('stella_sid',sid)},function(e){sp=null;throw e});
+    return sp;
+  }
+  function poll(){
+    if(!sid)return;
+    if(busy){again=true;return}
+    busy=true;
+    api('GET','/api/messages?session_id='+encodeURIComponent(sid)+'&after='+last+'&after_broadcast='+lastB).then(function(r){
+      net(true);
+      var a=polled,ms=r.messages||[],bs=(r.broadcasts||[]).filter(function(b){return b.id>lastB});
+      bs.forEach(function(b){lastB=Math.max(lastB,b.id)});
+      bs=bs.filter(function(b){return b.ts>=since-.5});
+      if(ms.length)openChat();
+      ms.filter(function(m){return m.id>last}).concat(bs.map(function(b){b.role='ann';return b}))
+      .sort(function(x,y){return x.ts-y.ts}).forEach(function(m){
+        if(m.role==='ann')return add('ann',m.text,m.ts,a);
+        last=Math.max(last,m.id);
+        if(m.role==='user'&&pend.length&&pend[0].x===m.text)return pend.shift().e.classList.remove('pd');
+        add(m.role,m.text,m.ts,a);
+      });
+      polled=true;
+      if(open&&!greeted){greeted=true;if(!last)add('assistant',GREET,now(),a)}
+      typing(!!r.typing);
+    }).catch(function(){net(false)}).then(function(){busy=false;if(again){again=false;poll()}});
+  }
+  function status(){
+    return api('GET','/api/status').then(function(s){
+      var em=s.mode==='emergency',dr=s.source==='drill';since=s.since||0;
+      if(em&&mode!=='emergency')openChat();
+      mode=s.mode;
+      d.body.classList.toggle('em',em);
+      $('tt').textContent=em?(dr?'Учебная тревога':'Землетрясение'):'Stella';
+      $('ts').textContent=em?(s.note||(dr?'Землетрясение':'Режим ЧС')+' · аварийная сеть Stella'):'Аварийная сеть';
+      [].forEach.call(metas,function(m,i){m.content=em?getComputedStyle(d.body).getPropertyValue('--red').trim():mdef[i]});
+    }).catch(function(){});
+  }
+  function openChat(){
+    if(open)return;open=true;ls('stella_chat','1');
+    $('home').hidden=true;$('chat').hidden=false;$('bk').hidden=false;down();poll();
+  }
+
+  function post(q){
+    pend.push(q);q.e.classList.add('pd');q.e.classList.remove('fl');
+    ensure().then(function(){q.b.session_id=sid;return api('POST','/api/chat',q.b)}).then(poll).catch(function(err){
+      var i=pend.indexOf(q);if(i>=0)pend.splice(i,1);
+      q.e.classList.remove('pd');q.e.classList.add('fl');
+      var r=el('button','er',(err.status===429&&err.message?err.message:'Не отправлено')+' · Повторить');
+      r.type='button';r.onclick=function(){r.remove();post(q)};
+      log.insertBefore(r,q.e.nextSibling);if(near())down();
+    });
+  }
+  function send(x,extra){
+    x=(x||'').trim();if(!x)return;
+    if(!greeted){greeted=true;if(!last)add('assistant',GREET,now(),true)}
+    var b={text:x},k;for(k in extra||{})b[k]=extra[k];
+    post({x:x,b:b,e:add('user',x,now(),true)});
+  }
+  function grow(){fld.style.height='44px';fld.style.height=Math.min(fld.scrollHeight+2,136)+'px';snd.disabled=!fld.value.trim()}
+  function submit(){if(!fld.value.trim())return;send(fld.value);fld.value='';grow()}
+
+  $('help').onclick=openChat;
+  $('bk').onclick=function(){open=false;ls('stella_chat','0');$('chat').hidden=true;$('bk').hidden=true;$('home').hidden=false};
+  $('form').onsubmit=function(e){e.preventDefault();submit()};
+  fld.oninput=grow;
+  fld.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit()}};
+  snd.onmousedown=function(e){e.preventDefault()};
+  [].forEach.call(d.querySelectorAll('#qr button:not(.loc)'),function(b){b.onclick=function(){send(b.textContent)}});
+  $('loc').onclick=function(){
+    var b=this,s=b.lastChild;
+    var done=function(){b.disabled=false;s.textContent='Мое местоположение'};
+    var fail=function(){done();add('assistant','Не получилось определить, где вы. Напишите адрес, этаж и ориентиры рядом.',now(),true)};
+    if(!navigator.geolocation)return fail();
+    b.disabled=true;s.textContent='Определяю место';
+    navigator.geolocation.getCurrentPosition(function(p){
+      var c=p.coords;done();
+      send('Моё местоположение: '+c.latitude.toFixed(5)+', '+c.longitude.toFixed(5),{lat:c.latitude,lon:c.longitude,accuracy:c.accuracy});
+    },fail,{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+  };
+
+  sid=ls('stella_sid');if(sid&&!/^[0-9a-f]{32}$/.test(sid))sid=null;
+  status().catch(function(){}).then(function(){
+    if(ls('stella_chat')==='1')openChat();
+    ensure().then(poll,function(){net(false)});
+    setInterval(function(){sid?poll():ensure().then(poll,function(){net(false)})},2500);
+    setInterval(status,3000);
+  });
+})();
+</script>
+</body>
+</html>
