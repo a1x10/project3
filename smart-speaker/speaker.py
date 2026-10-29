@@ -1,17 +1,26 @@
 """Умная колонка на Orange Pi 4 LTS: ElevenLabs Conversational AI по WebSocket."""
 import argparse
+import json
 import os
 import queue
-import signal
+import sys
 import threading
+import time
+import urllib.request
+import zipfile
 
 import pyaudio
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import AudioInterface, Conversation
+from vosk import KaldiRecognizer, Model, SetLogLevel
 
 SAMPLE_RATE = 16000  # ElevenLabs ожидает PCM 16 кГц, 16 бит, моно
 CHUNK = 1600         # 100 мс; меньше блок -> меньше задержка
+
+MODEL_NAME = "vosk-model-small-ru-0.22"
+MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 
 class AlsaAudioInterface(AudioInterface):
@@ -24,6 +33,7 @@ class AlsaAudioInterface(AudioInterface):
         self.out_queue: "queue.Queue[bytes]" = queue.Queue()
         self.should_stop = threading.Event()
         self.threads = []
+        self.last_audio = time.time()
 
     def start(self, input_callback):
         self.input_callback = input_callback
@@ -53,6 +63,7 @@ class AlsaAudioInterface(AudioInterface):
         self.pa.terminate()
 
     def output(self, audio: bytes):
+        self.last_audio = time.time()
         self.out_queue.put(audio)
 
     def interrupt(self):
@@ -90,30 +101,112 @@ def env_int(name):
     return int(v) if v else None
 
 
+def ensure_model():
+    """Скачивает небольшую русскую модель Vosk (~45 МБ) при первом запуске."""
+    path = os.path.join(MODELS_DIR, MODEL_NAME)
+    if os.path.isdir(path):
+        return path
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    zip_path = path + ".zip"
+    print(f"Скачиваю модель для слова пробуждения (~45 МБ): {MODEL_URL}")
+    urllib.request.urlretrieve(MODEL_URL, zip_path)
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(MODELS_DIR)
+    os.remove(zip_path)
+    return path
+
+
+def wait_for_wake_word(model, wake_word, input_index):
+    """Блокируется, пока в микрофоне не прозвучит слово пробуждения."""
+    rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps([wake_word, "[unk]"], ensure_ascii=False))
+    pa = pyaudio.PyAudio()
+    stream = pa.open(
+        format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, input=True,
+        input_device_index=input_index, frames_per_buffer=CHUNK,
+    )
+    try:
+        while True:
+            data = stream.read(CHUNK, exception_on_overflow=False)
+            if rec.AcceptWaveform(data):
+                text = json.loads(rec.Result()).get("text", "")
+            else:
+                text = json.loads(rec.PartialResult()).get("partial", "")
+            if wake_word in text.split():
+                return
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+
+
+def run_session(client, agent_id, input_index, output_index, idle_timeout):
+    """Один разговор. Завершается после idle_timeout секунд тишины."""
+    audio = AlsaAudioInterface(input_index, output_index)
+    last_activity = [time.time()]
+
+    def touch(_=None):
+        last_activity[0] = time.time()
+
+    conversation = Conversation(
+        client,
+        agent_id,
+        requires_auth=True,
+        audio_interface=audio,
+        callback_agent_response=lambda t: (touch(), print(f"Колонка: {t}")),
+        callback_user_transcript=lambda t: (touch(), print(f"Вы: {t}")),
+    )
+    done = threading.Event()
+
+    def watchdog():
+        while not done.wait(0.5):
+            if time.time() - max(last_activity[0], audio.last_audio) > idle_timeout:
+                conversation.end_session()
+                return
+
+    threading.Thread(target=watchdog, daemon=True).start()
+    conversation.start_session()
+    try:
+        conversation.wait_for_session_end()
+    finally:
+        done.set()
+    return conversation
+
+
 def main():
-    load_dotenv()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    load_dotenv(override=True)
     ap = argparse.ArgumentParser()
     ap.add_argument("--list-devices", action="store_true")
+    ap.add_argument("--no-wake", action="store_true", help="без слова пробуждения: один разговор сразу")
     args = ap.parse_args()
     if args.list_devices:
         return list_devices()
 
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
-    conversation = Conversation(
-        client,
-        os.environ["ELEVENLABS_AGENT_ID"],
-        requires_auth=True,
-        audio_interface=AlsaAudioInterface(
-            env_int("INPUT_DEVICE_INDEX"), env_int("OUTPUT_DEVICE_INDEX")
-        ),
-        callback_agent_response=lambda t: print(f"Колонка: {t}"),
-        callback_user_transcript=lambda t: print(f"Вы: {t}"),
-    )
-    signal.signal(signal.SIGINT, lambda *_: conversation.end_session())
-    signal.signal(signal.SIGTERM, lambda *_: conversation.end_session())
-    conversation.start_session()
-    print("Слушаю... (Ctrl+C для выхода)")
-    print("Conversation ID:", conversation.wait_for_session_end())
+    agent_id = os.environ["ELEVENLABS_AGENT_ID"]
+    input_index, output_index = env_int("INPUT_DEVICE_INDEX"), env_int("OUTPUT_DEVICE_INDEX")
+    idle_timeout = float(os.getenv("IDLE_TIMEOUT", "15"))
+    wake_word = os.getenv("WAKE_WORD", "стелла").lower()
+
+    if args.no_wake:
+        run_session(client, agent_id, input_index, output_index, idle_timeout)
+        return
+
+    SetLogLevel(-1)
+    model = Model(ensure_model())
+    while True:
+        print(f"Жду слово пробуждения «{wake_word}»... (Ctrl+C для выхода)")
+        try:
+            wait_for_wake_word(model, wake_word, input_index)
+            print("Слышу! Начинаю разговор.")
+            run_session(client, agent_id, input_index, output_index, idle_timeout)
+        except KeyboardInterrupt:
+            print("Выход.")
+            return
+        except Exception as e:  # сеть/аудио: не падаем, а возвращаемся к ожиданию
+            print(f"Ошибка: {e}")
+            time.sleep(2)
 
 
 if __name__ == "__main__":
