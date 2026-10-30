@@ -33,6 +33,16 @@ GRAMMAR = sorted({WAKE} | NEXT | PREV | LIKE | PAUSE | RESUME | PLAYLIST | MUSIC
                  | {"плейлист", "включи", "мой"})
 
 
+def keep_awake() -> bool:
+    """Windows: пока программа работает, компьютер не уходит в сон, но экран гаснет как обычно.
+    Выключение компьютера и ручной «Сон» это не отменяет. Отключить: KEEP_AWAKE=0 в .env."""
+    if sys.platform != "win32" or os.getenv("KEEP_AWAKE", "1") == "0":
+        return False
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001  # без ES_DISPLAY_REQUIRED: экран может гаснуть
+    return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))
+
+
 def parse_command(text: str, wake: str = WAKE):
     """Текст после/вместе со словом «Стелла» → (команда, подробность).
     Команды: next, prev, like, pause, resume, playlist, weather, None (просто разговор)."""
