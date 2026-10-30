@@ -157,7 +157,7 @@ def play_playlist() -> str:
         # плейлист не задан: просто продолжаем то, что играло
         media_key("playpause")
         return "Файла playlists.json нет, поэтому просто нажала «играть/пауза»."
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:  # utf-8-sig: PowerShell добавляет BOM в начало файла
         data = json.load(f)
     link = data.get("default") or next(iter(data.values()), "")
     uri = _spotify_uri(link)
