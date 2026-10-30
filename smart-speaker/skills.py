@@ -25,12 +25,17 @@ PLAYLIST = {"плейлист", "плейлисте"}
 MUSIC = {"музыку", "музыка"}
 WEATHER = {"погода", "погоду", "погоды"}
 TOMORROW = {"завтра"}
+QUIET_WORDS = {"кино", "фильм", "фильма", "тихий", "тихо"}   # «режим кино», «тихий режим»
+STOP_BOTHERING = {"мешай", "мешать"}                         # «не мешай»
+WAKEUP = {"проснись"}
 FILLER = {"включи", "запусти", "мой", "мою", "моё", "моя", "какая", "какой", "сегодня", "сейчас", "на", "в", "и", "ещё",
           "поставь", "дальше"}
 
 # слова для узкой грамматики распознавателя (быстрее и точнее, чем свободная речь)
 GRAMMAR = sorted({WAKE} | NEXT | PREV | LIKE | PAUSE | RESUME | PLAYLIST | MUSIC | WEATHER | TOMORROW | FILLER
-                 | {"плейлист", "включи", "мой"})
+                 | QUIET_WORDS | STOP_BOTHERING | WAKEUP | {"режим", "не"} | {"плейлист", "включи", "мой"})
+# в режиме кино слушаем только «Стелла, проснись»: фильм почти не может случайно сказать это
+QUIET_GRAMMAR = sorted({WAKE} | WAKEUP)
 
 
 def in_session_command(text: str, wake: str = WAKE):
@@ -68,6 +73,9 @@ def parse_command(text: str, wake: str = WAKE):
         return None, ""
     after = set(words[words.index(wake) + 1:])
     norm = lambda s: {w.replace("ё", "е") for w in s}
+    if after & norm(WAKEUP): return "wakeup", ""
+    if ("режим" in after and after & norm(QUIET_WORDS)) or ("не" in after and after & norm(STOP_BOTHERING)):
+        return "quiet", ""
     if after & norm(NEXT): return "next", ""
     if after & norm(PREV): return "prev", ""
     if after & norm(LIKE): return "like", ""

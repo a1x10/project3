@@ -33,6 +33,27 @@ MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 
+STATE = {"quiet": False}  # режим кино: Стелла молчит и не реагирует на фильм
+
+
+def pick_output_by_name(pa):
+    """OUTPUT_DEVICE_NAME=V-113 (часть названия колонки): Стелла говорит на ней, а не на устройстве Windows по умолчанию.
+    Профили «гарнитура/Hands-Free» пропускаем: у них звук как в телефоне."""
+    want = os.getenv("OUTPUT_DEVICE_NAME", "").strip().lower()
+    if not want:
+        return None
+    head = "Головной телефон"
+    bad = ("hands-free", "bthhfenum", head.lower(), head.encode("utf-8").decode("cp1251", errors="replace").lower()[:8])
+    for i in range(pa.get_device_count()):
+        d = pa.get_device_info_by_index(i)
+        name = d["name"].lower()
+        if d["maxOutputChannels"] > 0 and want in name and not any(b in name for b in bad):
+            print(f"Стелла говорит на: {d['name']}", flush=True)
+            return i
+    print(f"Колонка «{want}» не найдена, звук идёт на устройство по умолчанию.", flush=True)
+    return None
+
+
 class AlsaAudioInterface(AudioInterface):
     """PyAudio-интерфейс с выбором микрофона и колонки."""
 
@@ -66,9 +87,10 @@ class AlsaAudioInterface(AudioInterface):
             format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, input=True,
             input_device_index=self.input_index, frames_per_buffer=CHUNK,
         )
+        out_index = self.output_index if self.output_index is not None else pick_output_by_name(self.pa)
         self.out_stream = self.pa.open(
             format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, output=True,
-            output_device_index=self.output_index, frames_per_buffer=CHUNK,
+            output_device_index=out_index, frames_per_buffer=CHUNK,
         )
         self.should_stop.clear()
         self.threads = [
@@ -153,8 +175,9 @@ class WakeListener:
     """Слушает поток микрофона: ждёт «Стелла» и фразу после неё («дальше», «лайк», «какая погода»...).
     feed() возвращает распознанный текст, когда фраза закончилась (или слишком затянулась)."""
 
-    def __init__(self, model, wake_word):
-        words = [w for w in dict.fromkeys(skills.GRAMMAR + [wake_word]) if model.vosk_model_find_word(w) != -1]
+    def __init__(self, model, wake_word, vocabulary=None):
+        vocabulary = vocabulary or skills.GRAMMAR
+        words = [w for w in dict.fromkeys(vocabulary + [wake_word]) if model.vosk_model_find_word(w) != -1]
         self.wake = wake_word
         self.rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps(words + ["[unk]"], ensure_ascii=False))
         self.since = None  # сколько отсчётов прошло с момента, когда услышали слово
@@ -176,9 +199,10 @@ class WakeListener:
         return None
 
 
-def wait_for_wake_word(model, wake_word, input_index):
-    """Блокируется, пока не прозвучит «Стелла ...»; возвращает всю распознанную фразу."""
-    listener = WakeListener(model, wake_word)
+def wait_for_wake_word(model, wake_word, input_index, quiet=False):
+    """Блокируется, пока не прозвучит «Стелла ...»; возвращает всю распознанную фразу.
+    В режиме кино (quiet) слушает только «Стелла, проснись»."""
+    listener = WakeListener(model, wake_word, skills.QUIET_GRAMMAR if quiet else None)
     pa = pyaudio.PyAudio()
     stream = pa.open(
         format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, input=True,
@@ -235,6 +259,11 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
                 return
             audio.interrupt()          # агент ещё не договорил «у меня нет доступа» - обрываем
             conversation.end_session()
+            if cmd == "quiet":
+                STATE["quiet"] = True
+                beep(False); beep(False)
+                print("Режим кино: молчу. Скажите «Стелла, проснись».")
+                return
             beep()
             print("Команда:", do_music(cmd))
         except Exception as e:
@@ -323,10 +352,24 @@ def main():
     model = Model(ensure_model())
     skills.keep_spotify_hidden(5)  # если Spotify уже открыт, спрячем его окно
     while True:
-        print(f"Жду слово пробуждения «{wake_word}»... (Ctrl+C для выхода)")
+        print("Режим кино: жду «Стелла, проснись»..." if STATE["quiet"] else
+              f"Жду слово пробуждения «{wake_word}»... (Ctrl+C для выхода)")
         try:
-            heard = wait_for_wake_word(model, wake_word, input_index)
+            heard = wait_for_wake_word(model, wake_word, input_index, STATE["quiet"])
             cmd, arg = skills.parse_command(heard, wake_word)
+            if STATE["quiet"]:                       # режим кино: реагируем только на «проснись»
+                if cmd == "wakeup":
+                    STATE["quiet"] = False
+                    beep()
+                    print("Я снова слушаю.")
+                continue
+            if cmd == "quiet":
+                STATE["quiet"] = True
+                beep(False); beep(False)
+                print("Режим кино: молчу и ничего не слушаю, кроме «Стелла, проснись».")
+                continue
+            if cmd == "wakeup":                      # «проснись», когда она и так не спит: просто разговор
+                cmd = None
             if cmd in ("next", "prev", "like", "pause", "resume", "playlist"):
                 beep()
                 try:
