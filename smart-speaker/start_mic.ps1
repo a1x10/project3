@@ -1,4 +1,4 @@
-# Микрофон ноутбука -> колонка на плате. Запуск: start_mic.bat
+# Laptop microphone -> speaker on the board. Run: start_mic.bat
 Set-Location $PSScriptRoot
 
 function Find-Python {
@@ -18,7 +18,7 @@ function Find-Python {
 }
 
 $py = Find-Python
-if (-not $py) { Write-Host "Python не найден. Задайте путь: `$env:PYEXE='C:\...\python.exe'; .\start_mic.ps1"; exit 1 }
+if (-not $py) { Write-Host "Python not found. Set path: `$env:PYEXE='C:\...\python.exe'; .\start_mic.ps1"; exit 1 }
 
 if (-not (Test-Path .venv-mic\Scripts\python.exe)) {
     & $py -m venv .venv-mic
@@ -26,7 +26,7 @@ if (-not (Test-Path .venv-mic\Scripts\python.exe)) {
 & .\.venv-mic\Scripts\python.exe -m pip install -q -r requirements-mic.txt
 
 if (-not (Test-Path host.txt)) {
-    $h = Read-Host "IP платы (например 192.168.8.11)"
+    $h = Read-Host "Board IP (for example 192.168.8.11)"
     $h | Set-Content host.txt -Encoding ascii
 }
 $hostip = (Get-Content host.txt -Raw).Trim()
@@ -35,6 +35,7 @@ $args2 = @("mic_client.py", "--host", $hostip)
 if (Test-Path device.txt) { $args2 += @("--device", (Get-Content device.txt -Raw).Trim()) }
 else {
     & .\.venv-mic\Scripts\python.exe mic_client.py --list-devices
-    Write-Host "`nЕсли нужен не микрофон по умолчанию, впишите его номер в файл device.txt рядом со скриптом."
+    Write-Host ""
+    Write-Host "To use a specific microphone, write its number into device.txt next to this script, then run again."
 }
 & .\.venv-mic\Scripts\python.exe @args2
