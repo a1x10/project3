@@ -1,0 +1,13 @@
+[Unit]
+Description=Stella: smart speaker with phone microphone
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/smart-speaker
+ExecStart=%h/smart-speaker/.venv/bin/python %h/smart-speaker/phone_speaker.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

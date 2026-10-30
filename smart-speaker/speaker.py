@@ -9,7 +9,10 @@ import time
 import urllib.request
 import zipfile
 
-import pyaudio
+try:
+    import pyaudio
+except ImportError:  # нужен только для режима с микрофоном на плате
+    pyaudio = None
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import AudioInterface, Conversation

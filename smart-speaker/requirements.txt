@@ -2,3 +2,4 @@ elevenlabs>=1.50.0
 PyAudio>=0.2.14
 python-dotenv>=1.0.0
 vosk>=0.3.45
+aiohttp>=3.9
