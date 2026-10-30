@@ -33,6 +33,22 @@ GRAMMAR = sorted({WAKE} | NEXT | PREV | LIKE | PAUSE | RESUME | PLAYLIST | MUSIC
                  | {"плейлист", "включи", "мой"})
 
 
+def in_session_command(text: str, wake: str = WAKE):
+    """Команда внутри уже идущего разговора (агент музыкой управлять не умеет).
+    Чтобы случайная фраза не включила музыку, «дальше/назад/пауза/продолжи» требуют слова «Стелла»;
+    «включи музыку/плейлист», «лайк» и «погода» работают и без него, но только в короткой реплике."""
+    tokens = re.findall(r"\w+", text.lower().replace("ё", "е"))
+    has_wake = wake in tokens
+    if has_wake:
+        tokens = tokens[tokens.index(wake) + 1:]
+    elif len(tokens) > 4:
+        return None, ""
+    cmd, arg = parse_command(wake + " " + " ".join(tokens), wake)
+    if cmd in ("next", "prev", "pause", "resume") and not has_wake:
+        return None, ""
+    return cmd, arg
+
+
 def keep_awake() -> bool:
     """Windows: пока программа работает, компьютер не уходит в сон, но экран гаснет как обычно.
     Выключение компьютера и ручной «Сон» это не отменяет. Отключить: KEEP_AWAKE=0 в .env."""
