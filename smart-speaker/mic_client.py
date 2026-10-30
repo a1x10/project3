@@ -82,6 +82,8 @@ def main():
                 print("•", STATES.get(last, last), flush=True)
             elif m["type"] == "msg":
                 print(("Вы: " if m["role"] == "user" else "Колонка: ") + m["text"], flush=True)
+            elif m["type"] == "notice":
+                print("!", m["text"], flush=True)
             elif m["type"] == "muted":
                 muted[0] = m["value"]
 

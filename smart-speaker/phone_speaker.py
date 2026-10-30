@@ -60,6 +60,27 @@ def ensure_cert():
     return cert, key
 
 
+def pick_output(pa):
+    """Номера устройств «плавают» (например, без включённого телевизора пропадает HDMI),
+    поэтому колонку ищем по имени. OUTPUT_DEVICE_NAME=default (по умолчанию), sysdefault, Headphones…"""
+    want = os.getenv("OUTPUT_DEVICE_NAME", "default").strip().lower()
+    outs = []
+    for i in range(pa.get_device_count()):
+        d = pa.get_device_info_by_index(i)
+        if d["maxOutputChannels"] > 0:
+            outs.append((i, d["name"]))
+    for i, name in outs:           # точное совпадение
+        if name.lower() == want:
+            return i, name
+    for i, name in outs:           # частичное
+        if want in name.lower():
+            return i, name
+    for i, name in outs:           # запасной вариант
+        if name.lower() in ("default", "sysdefault"):
+            return i, name
+    raise RuntimeError("Не найдено устройство вывода. Доступные: " + ", ".join(n for _, n in outs))
+
+
 class PiOutput(AudioInterface):
     """Выход на колонку платы. Вход (микрофон) приходит с телефона через Hub."""
 
@@ -80,9 +101,11 @@ class PiOutput(AudioInterface):
     def start(self, input_callback):
         if not os.getenv("DUMMY_OUTPUT"):  # DUMMY_OUTPUT нужен только для тестов без звуковой карты
             self.pa = speaker.pyaudio.PyAudio()
+            index, name = pick_output(self.pa)
+            print("Звук идёт на:", name, flush=True)
             self.stream = self.pa.open(
                 format=speaker.pyaudio.paInt16, channels=1, rate=speaker.SAMPLE_RATE, output=True,
-                output_device_index=self.output_index, frames_per_buffer=speaker.CHUNK,
+                output_device_index=index, frames_per_buffer=speaker.CHUNK,
             )
         self.stop_ev.clear()
         self.thread = threading.Thread(target=self._play, daemon=True)
