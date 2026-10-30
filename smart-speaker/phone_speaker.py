@@ -93,10 +93,12 @@ class PiOutput(AudioInterface):
         self.pa = self.stream = None
         self.last_audio = 0.0
         self.last_write = 0.0
+        # Секунд после конца речи колонки, пока микрофон выключен (задержка Bluetooth, эхо комнаты)
+        self.echo_tail = float(os.getenv("ECHO_TAIL", "1.6"))
 
     def is_playing(self):
-        # 0.8 с запаса: хвост звука в буфере и эхо комнаты
-        return (not self.q.empty()) or time.time() - max(self.last_audio, self.last_write) < 0.8
+        
+        return (not self.q.empty()) or time.time() - max(self.last_audio, self.last_write) < self.echo_tail
 
     def start(self, input_callback):
         if not os.getenv("DUMMY_OUTPUT"):  # DUMMY_OUTPUT нужен только для тестов без звуковой карты

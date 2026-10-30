@@ -38,12 +38,14 @@ class AlsaAudioInterface(AudioInterface):
         self.threads = []
         self.last_audio = time.time()
         self.last_write = 0.0
+        # Секунд после конца речи колонки, пока микрофон выключен (задержка Bluetooth, эхо комнаты)
+        self.echo_tail = float(os.getenv("ECHO_TAIL", "1.6"))
         # Пока колонка говорит, микрофон агенту не передаётся (иначе он слышит сам себя).
         # ALLOW_INTERRUPT=1 разрешает перебивать голосом (нужны наушники).
         self.allow_interrupt = os.getenv("ALLOW_INTERRUPT", "0") == "1"
 
     def is_playing(self):
-        return (not self.out_queue.empty()) or time.time() - max(self.last_audio, self.last_write) < 0.8
+        return (not self.out_queue.empty()) or time.time() - max(self.last_audio, self.last_write) < self.echo_tail
 
     def start(self, input_callback):
         self.input_callback = input_callback
