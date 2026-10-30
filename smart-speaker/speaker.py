@@ -42,12 +42,10 @@ def pick_output_by_name(pa):
     want = os.getenv("OUTPUT_DEVICE_NAME", "").strip().lower()
     if not want:
         return None
-    head = "Головной телефон"
-    bad = ("hands-free", "bthhfenum", head.lower(), head.encode("utf-8").decode("cp1251", errors="replace").lower()[:8])
     for i in range(pa.get_device_count()):
         d = pa.get_device_info_by_index(i)
         name = d["name"].lower()
-        if d["maxOutputChannels"] > 0 and want in name and not any(b in name for b in bad):
+        if d["maxOutputChannels"] > 0 and want in name and not skills.is_headset_profile(name):
             print(f"Стелла говорит на: {d['name']}", flush=True)
             return i
     print(f"Колонка «{want}» не найдена, звук идёт на устройство по умолчанию.", flush=True)
@@ -228,8 +226,14 @@ def beep(ok=True):
         pass
 
 
-def do_music(cmd):
+def do_music(cmd, arg=""):
     """Выполняет музыкальную команду, возвращает текст для консоли."""
+    if cmd == "volume_up":
+        return skills.change_volume(delta=+1)
+    if cmd == "volume_down":
+        return skills.change_volume(delta=-1)
+    if cmd == "volume_set":
+        return skills.change_volume(set_to=float(arg))
     if cmd == "next":
         return "Следующий трек" if skills.media_key("next") else "Не удалось переключить"
     if cmd == "prev":
@@ -257,6 +261,10 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
                     f"Пользователь спросил про погоду. Данные: {report} "
                     "Расскажи коротко и по-человечески, числа произноси словами, без списков.")
                 return
+            if cmd.startswith("volume"):   # громкость: разговор не прерываем
+                beep()
+                print("Команда:", do_music(cmd, arg))
+                return
             audio.interrupt()          # агент ещё не договорил «у меня нет доступа» - обрываем
             conversation.end_session()
             if cmd == "quiet":
@@ -265,7 +273,7 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
                 print("Режим кино: молчу. Скажите «Стелла, проснись».")
                 return
             beep()
-            print("Команда:", do_music(cmd))
+            print("Команда:", do_music(cmd, arg))
         except Exception as e:
             print(f"Команда не выполнена: {e}")
 
@@ -370,10 +378,10 @@ def main():
                 continue
             if cmd == "wakeup":                      # «проснись», когда она и так не спит: просто разговор
                 cmd = None
-            if cmd in ("next", "prev", "like", "pause", "resume", "playlist"):
+            if cmd in ("next", "prev", "like", "pause", "resume", "playlist", "volume_up", "volume_down", "volume_set"):
                 beep()
                 try:
-                    print("Команда:", do_music(cmd))
+                    print("Команда:", do_music(cmd, arg))
                 except Exception as e:
                     beep(False)
                     print(f"Команда не выполнена: {e}")

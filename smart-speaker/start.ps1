@@ -31,6 +31,8 @@ if (-not (Test-Path .venv\Scripts\python.exe)) {
 & .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt
 # optional echo cancellation (if no wheel for this Python, the speaker still works)
 & .\.venv\Scripts\python.exe -m pip install -q -r requirements-aec.txt
+# volume control of the speaker (Windows only)
+& .\.venv\Scripts\python.exe -m pip install -q -r requirements-win.txt
 if (-not (Test-Path .env)) {
     $k = Read-Host "ELEVENLABS_API_KEY"
     $a = Read-Host "ELEVENLABS_AGENT_ID"
