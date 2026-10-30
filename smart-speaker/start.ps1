@@ -1,4 +1,4 @@
-# Запуск колонки на Windows. Можно задать свой Python: $env:PYEXE="C:\Path\python.exe"
+# Run the speaker on Windows. Custom Python: $env:PYEXE="C:\Path\python.exe"
 Set-Location $PSScriptRoot
 
 function Find-Python {
@@ -19,7 +19,7 @@ function Find-Python {
 
 $py = Find-Python
 if (-not $py) {
-    Write-Host "Python не найден. Задайте путь: `$env:PYEXE='C:\...\python.exe'; .\start.ps1"
+    Write-Host "Python not found. Set path: `$env:PYEXE='C:\...\python.exe'; .\start.ps1"
     exit 1
 }
 Write-Host "Python: $py"
