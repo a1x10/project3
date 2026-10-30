@@ -19,7 +19,7 @@ import webbrowser
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOKEN_FILE = os.path.join(HERE, "spotify_token.json")
 REDIRECT = "http://127.0.0.1:8888/callback"
-SCOPES = "user-read-currently-playing user-read-playback-state user-library-modify"
+SCOPES = "user-read-currently-playing user-read-playback-state user-library-modify user-modify-playback-state"
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
@@ -105,9 +105,14 @@ def _token() -> str:
     return tok["access_token"]
 
 
-def _call(method, path, query=None):
+def _call(method, path, query=None, body=None):
     url = API + path + ("?" + urllib.parse.urlencode(query) if query else "")
-    req = urllib.request.Request(url, method=method, headers={"Authorization": "Bearer " + _token()})
+    headers = {"Authorization": "Bearer " + _token()}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, method=method, headers=headers, data=data)
     with urllib.request.urlopen(req, timeout=15) as r:
         body = r.read()
         return r.status, (json.loads(body) if body else None)
@@ -133,3 +138,79 @@ def like_current() -> str:
             raise
         _call("PUT", "/me/tracks", {"ids": tid})
     return f"Лайк: «{name}» — {artist}"
+
+
+class PremiumRequired(RuntimeError):
+    pass
+
+
+STOP_WORDS = {"песню", "песни", "трек", "композицию", "группу", "исполнителя", "артиста", "альбом", "плейлист",
+              "музыку", "пожалуйста", "мне", "от", "группы"}
+
+
+def _kind(query: str):
+    low = query.lower()
+    if "плейлист" in low:
+        return "playlist"
+    if any(w in low for w in ("группу", "группы", "исполнителя", "артиста")):
+        return "artist"
+    return "track"
+
+
+def _clean(query: str) -> str:
+    return " ".join(w for w in query.split() if w.lower() not in STOP_WORDS) or query
+
+
+def _error_reason(e: urllib.error.HTTPError) -> str:
+    try:
+        return json.loads(e.read().decode("utf-8")).get("error", {}).get("reason", "")
+    except Exception:
+        return ""
+
+
+def _device_id():
+    _, data = _call("GET", "/me/player/devices")
+    devices = (data or {}).get("devices", [])
+    for pref in (lambda d: d.get("is_active"), lambda d: d.get("type") == "Computer", lambda d: True):
+        for d in devices:
+            if pref(d):
+                return d["id"]
+    return None
+
+
+def search_and_play(query: str) -> str:
+    """Ищет трек/исполнителя/плейлист и запускает на активном устройстве Spotify (нужен Premium)."""
+    kind = _kind(query)
+    _, res = _call("GET", "/search", {"q": _clean(query), "type": kind, "limit": 1})
+    items = (res or {}).get(kind + "s", {}).get("items", [])
+    items = [i for i in items if i]
+    if not items:
+        raise LookupError(f"ничего не нашла по запросу «{query}»")
+    item = items[0]
+    body = {"uris": [item["uri"]]} if kind == "track" else {"context_uri": item["uri"]}
+    label = item["name"] + (" - " + ", ".join(a["name"] for a in item["artists"]) if kind == "track" else "")
+    try:
+        _call("PUT", "/me/player/play", None, body)
+    except urllib.error.HTTPError as e:
+        reason = _error_reason(e)
+        if e.code == 403:
+            raise PremiumRequired("нужен Spotify Premium для запуска трека по названию") from e
+        if e.code != 404:
+            raise
+        # нет активного устройства: открываем приложение и пробуем на его устройстве
+        try:
+            import os as _os
+            if hasattr(_os, "startfile"):
+                _os.startfile("spotify:")
+        except Exception:
+            pass
+        dev = None
+        for _ in range(10):
+            time.sleep(1)
+            dev = _device_id()
+            if dev:
+                break
+        if not dev:
+            raise RuntimeError("не нашла устройство Spotify: откройте приложение Spotify") from e
+        _call("PUT", "/me/player/play", {"device_id": dev}, body)
+    return f"Включаю: {label}"

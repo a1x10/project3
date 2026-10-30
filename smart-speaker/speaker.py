@@ -33,7 +33,7 @@ MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 
-STATE = {"quiet": False}  # режим кино: Стелла молчит и не реагирует на фильм
+STATE = {"quiet": False, "await_music": False}  # режим кино: Стелла молчит и не реагирует на фильм
 
 
 def pick_output_by_name(pa):
@@ -217,6 +217,19 @@ def wait_for_wake_word(model, wake_word, input_index, quiet=False):
         pa.terminate()
 
 
+def whats_playing_prompt():
+    """Сообщение агенту: что сейчас играет (он озвучит своим голосом)."""
+    track = skills.now_playing_text()
+    if track:
+        return (f"Пользователь спросил, что сейчас играет. Данные: {track}. "
+                "Скажи коротко: исполнитель и название трека. Не здоровайся заново.")
+    return "Пользователь спросил, что сейчас играет, но ничего не играет. Скажи это коротко."
+
+
+ASK_MUSIC_PROMPT = ("Пользователь хочет включить музыку, но название не расслышано. "
+                    "Спроси коротко: какой трек, исполнителя или плейлист включить? Не здоровайся заново.")
+
+
 def beep(ok=True):
     """Короткий сигнал: команда принята (Windows)."""
     try:
@@ -242,6 +255,8 @@ def do_music(cmd, arg=""):
         return "Пауза/играть" if skills.media_key("playpause") else "Не удалось"
     if cmd == "playlist":
         return skills.play_playlist()
+    if cmd == "search":
+        return skills.play_search(arg)
     if cmd == "like":
         return skills.like_current()
     return ""
@@ -250,7 +265,8 @@ def do_music(cmd, arg=""):
 def run_session(client, agent_id, input_index, output_index, idle_timeout, first_message=None):
     """Один разговор. Завершается после idle_timeout секунд тишины."""
     audio = AlsaAudioInterface(input_index, output_index)
-    st = {"last_user": time.time(), "agent_turns": 0}
+    st = {"last_user": time.time(), "agent_turns": 0,
+          "max_turns": 3 if STATE["await_music"] else 2}   # после вопроса «что включить?» ждём ответ дольше
 
     def run_command(cmd, arg):
         """Музыка/погода по голосу прямо во время разговора (агент сам этого не умеет)."""
@@ -260,6 +276,20 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
                 conversation.send_user_message(
                     f"Пользователь спросил про погоду. Данные: {report} "
                     "Расскажи коротко и по-человечески, числа произноси словами, без списков.")
+                return
+            if cmd == "whatsplaying":
+                conversation.send_user_message(whats_playing_prompt())
+                return
+            if cmd == "search_ask":            # «включи что-нибудь»: спрашиваем название, разговор продолжается
+                STATE["await_music"] = True
+                st["agent_turns"] = 0           # новый вопрос: счётчик «колонка говорила без ответа» начинаем заново
+                conversation.send_user_message(ASK_MUSIC_PROMPT)
+                return
+            if cmd == "search":
+                audio.interrupt()
+                conversation.end_session()
+                beep()
+                print("Команда:", do_music("search", arg))
                 return
             if cmd.startswith("volume"):   # громкость: разговор не прерываем
                 beep()
@@ -283,7 +313,11 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
             st["last_user"] = time.time()
             st["agent_turns"] = 0
             print(f"Вы: {text}")
-            cmd, arg = skills.in_session_command(text, os.getenv("WAKE_WORD", "стелла").lower())
+            if STATE["await_music"]:           # на вопрос «что включить?» отвечаем названием
+                STATE["await_music"] = False
+                cmd, arg = "search", text.strip(" .!?")
+            else:
+                cmd, arg = skills.in_session_command(text, os.getenv("WAKE_WORD", "стелла").lower())
             if cmd:
                 threading.Thread(target=run_command, args=(cmd, arg), daemon=True).start()
 
@@ -308,7 +342,7 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
             silent_for = time.time() - max(st["last_user"], audio.last_audio, audio.last_write)
             # Тихо дольше idle_timeout, либо колонка уже дважды сказала что-то без вашего ответа
             # (например «Вы здесь?») — значит разговор окончен.
-            if silent_for > idle_timeout or st["agent_turns"] >= 2:
+            if silent_for > idle_timeout or st["agent_turns"] >= st["max_turns"]:
                 conversation.end_session()
                 return
 
@@ -387,7 +421,12 @@ def main():
                     print(f"Команда не выполнена: {e}")
                 continue
             first = None
-            if cmd == "weather":
+            if cmd == "whatsplaying":
+                first = whats_playing_prompt()
+            elif cmd == "search_ask":
+                STATE["await_music"] = True
+                first = ASK_MUSIC_PROMPT
+            elif cmd == "weather":
                 try:
                     report = skills.weather_report(arg)
                     first = (f"Пользователь спросил про погоду. Данные: {report} "
@@ -396,7 +435,10 @@ def main():
                     print(f"Погода недоступна: {e}")
                     first = "Пользователь спросил про погоду, но сервис погоды сейчас недоступен. Скажи об этом коротко."
             print("Слышу! Начинаю разговор.")
-            run_session(client, agent_id, input_index, output_index, idle_timeout, first)
+            try:
+                run_session(client, agent_id, input_index, output_index, idle_timeout, first)
+            finally:
+                STATE["await_music"] = False
         except KeyboardInterrupt:
             print("Выход.")
             return
