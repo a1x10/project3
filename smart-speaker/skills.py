@@ -32,7 +32,10 @@ LOUDER = {"громче", "погромче", "прибавь", "побольш�
 QUIETER = {"тише", "потише", "убавь", "поменьше"}
 VOL_MAX = {"максимум", "максимальную"}
 VOL_HALF = {"половину"}
-FILLER = {"включи", "запусти", "мой", "мою", "моё", "моя", "какая", "какой", "сегодня", "сейчас", "на", "в", "и", "ещё",
+SEARCH_VERBS = {"включи", "поставь", "запусти", "найди", "играй"}
+TRACK_NOUNS = {"трек", "песня", "музыка", "мелодия", "композиция", "песни"}
+FILLER = {"пожалуйста", "любимую", "любимый", "мою", "мне", "эта", "это", "что", "за", "играет", "как", "называется",
+          "кто", "поёт", "сейчас", "трек", "песня", "песню", "мелодия", "композиция", "песни", "найди", "исполнитель", "включи", "запусти", "мой", "мою", "моё", "моя", "какая", "какой", "сегодня", "сейчас", "на", "в", "и", "ещё",
           "поставь", "дальше"}
 
 # слова для узкой грамматики распознавателя (быстрее и точнее, чем свободная речь)
@@ -42,10 +45,67 @@ GRAMMAR = sorted({WAKE} | NEXT | PREV | LIKE | PAUSE | RESUME | PLAYLIST | MUSIC
 QUIET_GRAMMAR = sorted({WAKE} | WAKEUP)
 
 
+def parse_command(text: str, wake: str = WAKE):
+    """Текст после/вместе со словом «Стелла» → (команда, подробность).
+    Команды: next, prev, like, pause, resume, playlist, weather, volume_*, quiet, wakeup, whatsplaying,
+    search_ask («включи <непонятное название>»: спросим, что включить), None (просто разговор)."""
+    raw = text.lower().replace("ё", "е").split()
+    if wake not in raw:
+        return None, ""
+    raw_after = raw[raw.index(wake) + 1:]
+    unknown = raw_after.count("[unk]")
+    after = {w for w in raw_after if w != "[unk]"}
+    norm = lambda s: {w.replace("ё", "е") for w in s}
+    if after & norm(WAKEUP): return "wakeup", ""
+    if ("режим" in after and after & norm(QUIET_WORDS)) or ("не" in after and after & norm(STOP_BOTHERING)):
+        return "quiet", ""
+    if after & norm(LOUDER): return "volume_up", ""
+    if after & norm(QUIETER): return "volume_down", ""
+    if after & norm(VOL_MAX): return "volume_set", "100"
+    if after & norm(VOL_HALF): return "volume_set", "50"
+    if after & norm(WEATHER): return "weather", ("tomorrow" if after & norm(TOMORROW) else "today")
+    if ("что" in after and ("играет" in after or ("за" in after and after & norm(TRACK_NOUNS)))) \
+            or ("кто" in after and "поет" in after) or ("как" in after and "называется" in after):
+        return "whatsplaying", ""
+    # «включи/поставь <название, которого нет в словаре>»: название не распознать, спросим его у человека
+    # (вместо английского названия модель часто подставляет случайное слово из своего списка, поэтому одного
+    # «[unk]» мало: «включи» без известного объекта - тоже повод спросить, что включить)
+    if (after & {"включи", "поставь", "запусти", "найди"} or (unknown and "играй" in after)) \
+            and not (after & (norm(PLAYLIST) | norm(MUSIC))):
+        return "search_ask", ""
+    if after & norm(NEXT): return "next", ""
+    if after & norm(PREV): return "prev", ""
+    if after & norm(LIKE): return "like", ""
+    if after & norm(PAUSE): return "pause", ""
+    if after & norm(RESUME): return "resume", ""
+    if after & norm(PLAYLIST) or ("включи" in after and after & norm(MUSIC)): return "playlist", ""
+    return None, ""
+
+
+SEARCH_RE = re.compile(
+    r"^\s*(?:стелла[,\s]+)?(?:пожалуйста[,\s]+)?(?:включи|поставь|запусти|найди|играй|сыграй)\s+(?:мне\s+)?"
+    r"(?:песню|песни|трек|композицию|музыку|группу|исполнителя|артиста|альбом)?\s*(.*?)[.!?\s]*$", re.I)
+GENERIC_QUERY = {"", "музыку", "музыка", "плейлист", "мой плейлист", "мою музыку", "мою любимую музыку", "что-нибудь",
+                 "любимую музыку", "любимый плейлист", "мой любимый плейлист"}
+
+
+def search_query(text: str):
+    """«Включи песню Believer» -> «Believer». Для общих фраз («включи музыку») возвращает None."""
+    m = SEARCH_RE.match(text.replace("ё", "е"))
+    if not m:
+        return None
+    q = m.group(1).strip(" ,.")
+    return None if q.lower() in GENERIC_QUERY else q
+
+
 def in_session_command(text: str, wake: str = WAKE):
     """Команда внутри уже идущего разговора (агент музыкой управлять не умеет).
     Чтобы случайная фраза не включила музыку, «дальше/назад/пауза/продолжи» требуют слова «Стелла»;
-    «включи музыку/плейлист», «лайк» и «погода» работают и без него, но только в короткой реплике."""
+    «включи музыку/плейлист», «лайк» и «погода» работают и без него, но только в короткой реплике.
+    «Включи песню Believer» (поиск по названию) работает по тексту, который распознал агент."""
+    q = search_query(text)
+    if q and parse_command(wake + " " + text, wake)[0] in (None, "search_ask", "playlist"):
+        return "search", q
     tokens = re.findall(r"\w+", text.lower().replace("ё", "е"))
     has_wake = wake in tokens
     if has_wake:
@@ -66,32 +126,6 @@ def keep_awake() -> bool:
     import ctypes
     ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001  # без ES_DISPLAY_REQUIRED: экран может гаснуть
     return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))
-
-
-def parse_command(text: str, wake: str = WAKE):
-    """Текст после/вместе со словом «Стелла» → (команда, подробность).
-    Команды: next, prev, like, pause, resume, playlist, weather, None (просто разговор)."""
-    words = text.lower().replace("ё", "е").split()
-    words = [w for w in words if w != "[unk]"]
-    if wake not in words:
-        return None, ""
-    after = set(words[words.index(wake) + 1:])
-    norm = lambda s: {w.replace("ё", "е") for w in s}
-    if after & norm(WAKEUP): return "wakeup", ""
-    if ("режим" in after and after & norm(QUIET_WORDS)) or ("не" in after and after & norm(STOP_BOTHERING)):
-        return "quiet", ""
-    if after & norm(LOUDER): return "volume_up", ""
-    if after & norm(QUIETER): return "volume_down", ""
-    if after & norm(VOL_MAX): return "volume_set", "100"
-    if after & norm(VOL_HALF): return "volume_set", "50"
-    if after & norm(NEXT): return "next", ""
-    if after & norm(PREV): return "prev", ""
-    if after & norm(LIKE): return "like", ""
-    if after & norm(PAUSE): return "pause", ""
-    if after & norm(RESUME): return "resume", ""
-    if after & norm(WEATHER): return "weather", ("tomorrow" if after & norm(TOMORROW) else "today")
-    if after & norm(PLAYLIST) or ("включи" in after and after & norm(MUSIC)): return "playlist", ""
-    return None, ""
 
 
 # ---------- громкость колонки ----------
@@ -284,6 +318,36 @@ def play_playlist() -> str:
 def like_current() -> str:
     import spotify_api
     return spotify_api.like_current()
+
+
+def now_playing_text():
+    """Что играет сейчас: через Spotify API (если подключён), иначе по заголовку окна Spotify. None - ничего не играет."""
+    try:
+        import spotify_api
+        cur = spotify_api.current_track()
+        if cur:
+            return f"{cur[2]} - {cur[1]}"
+    except Exception:
+        pass
+    return spotify_now_playing()
+
+
+def play_search(query: str) -> str:
+    """Находит трек/исполнителя/плейлист по названию и запускает. Premium + spotify_login.py: сразу играет.
+    Иначе (бесплатный аккаунт) только открывает поиск в Spotify: Spotify не позволяет запускать треки без Premium."""
+    try:
+        import spotify_api
+        return spotify_api.search_and_play(query)
+    except Exception as e:
+        reason = str(e)
+    uri = "spotify:search:" + urllib.parse.quote(query)
+    if sys.platform == "win32":
+        os.startfile(uri)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", uri])
+    else:
+        subprocess.Popen(["xdg-open", uri])
+    return f"Открыла поиск Spotify по «{query}» ({reason}). Запустите трек вручную или подключите Premium через spotify_login.py."
 
 
 # ---------- погода ----------
