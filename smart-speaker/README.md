@@ -38,3 +38,7 @@ mkdir -p ~/.config/systemd/user && cp stella.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now stella
 sudo loginctl enable-linger $USER
 ```
+
+## Микрофон с ноутбука (mic_client.py), без браузера
+Колонка и «мозг» на плате (`phone_speaker.py`), а микрофоном служит ноутбук с Windows:
+запустите `start_mic.bat` (спросит IP платы один раз). Enter в окне — заглушить/включить микрофон.
