@@ -71,9 +71,11 @@ class PiOutput(AudioInterface):
         self.thread = None
         self.pa = self.stream = None
         self.last_audio = 0.0
+        self.last_write = 0.0
 
     def is_playing(self):
-        return (not self.q.empty()) or time.time() - self.last_audio < 0.6
+        # 0.8 с запаса: хвост звука в буфере и эхо комнаты
+        return (not self.q.empty()) or time.time() - max(self.last_audio, self.last_write) < 0.8
 
     def start(self, input_callback):
         if not os.getenv("DUMMY_OUTPUT"):  # DUMMY_OUTPUT нужен только для тестов без звуковой карты
@@ -85,6 +87,7 @@ class PiOutput(AudioInterface):
         self.stop_ev.clear()
         self.thread = threading.Thread(target=self._play, daemon=True)
         self.thread.start()
+        self.hub.iface = self
         self.hub.session_cb = input_callback
         self.hub.set_state("listening")
 
@@ -117,12 +120,17 @@ class PiOutput(AudioInterface):
                 continue
             if self.stream:
                 self.stream.write(chunk)
+            self.last_write = time.time()
 
 
 class Hub:
     """Связывает телефоны (WebSocket), распознавание слова и разговор с агентом."""
 
     def __init__(self, loop, client, agent_id, output_index, wake_word, idle_timeout):
+        self.iface = None
+        # По умолчанию пока колонка говорит, микрофон агенту не передаётся (иначе он слышит сам себя).
+        # ALLOW_INTERRUPT=1 разрешает перебивать колонку голосом, но нужен наушник/разнесённые устройства.
+        self.allow_interrupt = os.getenv("ALLOW_INTERRUPT", "0") == "1"
         self.loop, self.client, self.agent_id = loop, client, agent_id
         self.output_index, self.wake_word, self.idle_timeout = output_index, wake_word, idle_timeout
         self.clients = set()
@@ -167,6 +175,9 @@ class Hub:
             pcm = self.q.get()
             cb = self.session_cb
             if cb:
+                iface = self.iface
+                if iface and not self.allow_interrupt and iface.is_playing():
+                    pcm = b"\0" * len(pcm)
                 cb(pcm)
                 continue
             if self.busy:
