@@ -18,6 +18,8 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import AudioInterface, Conversation
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
+import skills
+
 try:
     import echo_cancel
 except ImportError:  # файл echo_cancel.py не скопирован - работаем без эхоподавления
@@ -147,9 +149,36 @@ def ensure_model():
     return path
 
 
+class WakeListener:
+    """Слушает поток микрофона: ждёт «Стелла» и фразу после неё («дальше», «лайк», «какая погода»...).
+    feed() возвращает распознанный текст, когда фраза закончилась (или слишком затянулась)."""
+
+    def __init__(self, model, wake_word):
+        words = [w for w in dict.fromkeys(skills.GRAMMAR + [wake_word]) if model.vosk_model_find_word(w) != -1]
+        self.wake = wake_word
+        self.rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps(words + ["[unk]"], ensure_ascii=False))
+        self.since = None  # сколько отсчётов прошло с момента, когда услышали слово
+
+    def feed(self, data: bytes):
+        if self.rec.AcceptWaveform(data):
+            text = json.loads(self.rec.Result()).get("text", "")
+            self.since = None
+            return text if self.wake in text.split() else None
+        partial = json.loads(self.rec.PartialResult()).get("partial", "")
+        if self.since is None and self.wake in partial.split():
+            self.since = 0
+        if self.since is not None:
+            self.since += len(data) // 2
+            if self.since > 1.8 * SAMPLE_RATE:  # фраза затянулась: действуем по тому, что уже есть
+                self.rec.Reset()
+                self.since = None
+                return partial
+        return None
+
+
 def wait_for_wake_word(model, wake_word, input_index):
-    """Блокируется, пока в микрофоне не прозвучит слово пробуждения."""
-    rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps([wake_word, "[unk]"], ensure_ascii=False))
+    """Блокируется, пока не прозвучит «Стелла ...»; возвращает всю распознанную фразу."""
+    listener = WakeListener(model, wake_word)
     pa = pyaudio.PyAudio()
     stream = pa.open(
         format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, input=True,
@@ -157,20 +186,40 @@ def wait_for_wake_word(model, wake_word, input_index):
     )
     try:
         while True:
-            data = stream.read(CHUNK, exception_on_overflow=False)
-            if rec.AcceptWaveform(data):
-                text = json.loads(rec.Result()).get("text", "")
-            else:
-                text = json.loads(rec.PartialResult()).get("partial", "")
-            if wake_word in text.split():
-                return
+            text = listener.feed(stream.read(CHUNK, exception_on_overflow=False))
+            if text is not None:
+                return text
     finally:
         stream.stop_stream()
         stream.close()
         pa.terminate()
 
 
-def run_session(client, agent_id, input_index, output_index, idle_timeout):
+def beep(ok=True):
+    """Короткий сигнал: команда принята (Windows)."""
+    try:
+        import winsound
+        winsound.Beep(1000 if ok else 400, 90)
+    except Exception:
+        pass
+
+
+def do_music(cmd):
+    """Выполняет музыкальную команду, возвращает текст для консоли."""
+    if cmd == "next":
+        return "Следующий трек" if skills.media_key("next") else "Не удалось переключить"
+    if cmd == "prev":
+        return "Предыдущий трек" if skills.media_key("prev") else "Не удалось переключить"
+    if cmd in ("pause", "resume"):
+        return "Пауза/играть" if skills.media_key("playpause") else "Не удалось"
+    if cmd == "playlist":
+        return skills.play_playlist()
+    if cmd == "like":
+        return skills.like_current()
+    return ""
+
+
+def run_session(client, agent_id, input_index, output_index, idle_timeout, first_message=None):
     """Один разговор. Завершается после idle_timeout секунд тишины."""
     audio = AlsaAudioInterface(input_index, output_index)
     st = {"last_user": time.time(), "agent_turns": 0}
@@ -209,6 +258,17 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout):
 
     threading.Thread(target=watchdog, daemon=True).start()
     conversation.start_session()
+    if first_message:  # например, данные о погоде: агент озвучит их своим голосом
+        def send_first():
+            for _ in range(80):  # ждём соединения до 8 секунд
+                if getattr(conversation, "_ws", None):
+                    try:
+                        conversation.send_user_message(first_message)
+                    except Exception as e:
+                        print(f"Не удалось передать сообщение агенту: {e}")
+                    return
+                time.sleep(0.1)
+        threading.Thread(target=send_first, daemon=True).start()
     try:
         conversation.wait_for_session_end()
     finally:
@@ -242,9 +302,27 @@ def main():
     while True:
         print(f"Жду слово пробуждения «{wake_word}»... (Ctrl+C для выхода)")
         try:
-            wait_for_wake_word(model, wake_word, input_index)
+            heard = wait_for_wake_word(model, wake_word, input_index)
+            cmd, arg = skills.parse_command(heard, wake_word)
+            if cmd in ("next", "prev", "like", "pause", "resume", "playlist"):
+                beep()
+                try:
+                    print("Команда:", do_music(cmd))
+                except Exception as e:
+                    beep(False)
+                    print(f"Команда не выполнена: {e}")
+                continue
+            first = None
+            if cmd == "weather":
+                try:
+                    report = skills.weather_report(arg)
+                    first = (f"Пользователь спросил про погоду. Данные: {report} "
+                             "Расскажи коротко и по-человечески, числа произноси словами, без списков, не здоровайся заново.")
+                except Exception as e:
+                    print(f"Погода недоступна: {e}")
+                    first = "Пользователь спросил про погоду, но сервис погоды сейчас недоступен. Скажи об этом коротко."
             print("Слышу! Начинаю разговор.")
-            run_session(client, agent_id, input_index, output_index, idle_timeout)
+            run_session(client, agent_id, input_index, output_index, idle_timeout, first)
         except KeyboardInterrupt:
             print("Выход.")
             return
