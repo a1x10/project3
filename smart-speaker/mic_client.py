@@ -46,6 +46,9 @@ def main():
     if args.list_devices:
         return list_devices()
 
+    if sys.platform == "win32":  # пока микрофон работает, ноутбук не засыпает (экран может гаснуть)
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
     url = f"wss://{args.host}:{args.port}/ws"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False          # у платы самоподписанный сертификат

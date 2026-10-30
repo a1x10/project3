@@ -294,9 +294,12 @@ def main():
     wake_word = os.getenv("WAKE_WORD", "стелла").lower()
 
     if args.no_wake:
+        skills.keep_awake()
         run_session(client, agent_id, input_index, output_index, idle_timeout)
         return
 
+    if skills.keep_awake():
+        print("Компьютер не уйдёт в сон, пока работает Стелла (экран может гаснуть).")
     SetLogLevel(-1)
     model = Model(ensure_model())
     skills.keep_spotify_hidden(5)  # если Spotify уже открыт, спрячем его окно
