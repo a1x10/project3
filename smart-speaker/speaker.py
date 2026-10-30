@@ -18,6 +18,11 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import AudioInterface, Conversation
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
+try:
+    import echo_cancel
+except ImportError:  # файл echo_cancel.py не скопирован - работаем без эхоподавления
+    echo_cancel = None
+
 SAMPLE_RATE = 16000  # ElevenLabs ожидает PCM 16 кГц, 16 бит, моно
 CHUNK = 1600         # 100 мс; меньше блок -> меньше задержка
 
@@ -43,6 +48,12 @@ class AlsaAudioInterface(AudioInterface):
         # Пока колонка говорит, микрофон агенту не передаётся (иначе он слышит сам себя).
         # ALLOW_INTERRUPT=1 разрешает перебивать голосом (нужны наушники).
         self.allow_interrupt = os.getenv("ALLOW_INTERRUPT", "0") == "1"
+        # Эхоподавление (если стоит aec-audio-processing): микрофон не выключается, колонка себя не слышит
+        self.aec = None
+        if echo_cancel and echo_cancel.available():
+            self.aec = echo_cancel.EchoCanceller(
+                SAMPLE_RATE, int(os.getenv("ECHO_REF_DELAY_MS", "0")), int(os.getenv("AEC_GATE", "200")))
+        print("Эхоподавление:", "включено" if self.aec else "выключено (микрофон отключается, пока колонка говорит)", flush=True)
 
     def is_playing(self):
         return (not self.out_queue.empty()) or time.time() - max(self.last_audio, self.last_write) < self.echo_tail
@@ -89,9 +100,12 @@ class AlsaAudioInterface(AudioInterface):
     def _record(self):
         while not self.should_stop.is_set():
             data = self.in_stream.read(CHUNK, exception_on_overflow=False)
-            if not self.allow_interrupt and self.is_playing():
+            if self.aec:
+                data = self.aec.process(data, self.is_playing())
+            elif not self.allow_interrupt and self.is_playing():
                 data = b"\0" * len(data)
-            self.input_callback(data)
+            if data:
+                self.input_callback(data)
 
     def _play(self):
         while not self.should_stop.is_set():
@@ -99,6 +113,8 @@ class AlsaAudioInterface(AudioInterface):
                 chunk = self.out_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
+            if self.aec:
+                self.aec.feed_reference(chunk)
             self.out_stream.write(chunk)
             self.last_write = time.time()
 
