@@ -155,24 +155,37 @@ def wait_for_wake_word(model, wake_word, input_index):
 def run_session(client, agent_id, input_index, output_index, idle_timeout):
     """Один разговор. Завершается после idle_timeout секунд тишины."""
     audio = AlsaAudioInterface(input_index, output_index)
-    last_activity = [time.time()]
+    st = {"last_user": time.time(), "agent_turns": 0}
 
-    def touch(_=None):
-        last_activity[0] = time.time()
+    def on_user(text):
+        # Пустые реплики вроде «...» (тишина/шум) не считаем и не показываем.
+        if any(c.isalnum() for c in text):
+            st["last_user"] = time.time()
+            st["agent_turns"] = 0
+            print(f"Вы: {text}")
+
+    def on_agent(text):
+        st["agent_turns"] += 1
+        print(f"Колонка: {text}")
 
     conversation = Conversation(
         client,
         agent_id,
         requires_auth=True,
         audio_interface=audio,
-        callback_agent_response=lambda t: (touch(), print(f"Колонка: {t}")),
-        callback_user_transcript=lambda t: (touch(), print(f"Вы: {t}")),
+        callback_agent_response=on_agent,
+        callback_user_transcript=on_user,
     )
     done = threading.Event()
 
     def watchdog():
         while not done.wait(0.5):
-            if not audio.is_playing() and time.time() - max(last_activity[0], audio.last_audio) > idle_timeout:
+            if audio.is_playing():
+                continue
+            silent_for = time.time() - max(st["last_user"], audio.last_audio, audio.last_write)
+            # Тихо дольше idle_timeout, либо колонка уже дважды сказала что-то без вашего ответа
+            # (например «Вы здесь?») — значит разговор окончен.
+            if silent_for > idle_timeout or st["agent_turns"] >= 2:
                 conversation.end_session()
                 return
 
@@ -199,7 +212,7 @@ def main():
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
     agent_id = os.environ["ELEVENLABS_AGENT_ID"]
     input_index, output_index = env_int("INPUT_DEVICE_INDEX"), env_int("OUTPUT_DEVICE_INDEX")
-    idle_timeout = float(os.getenv("IDLE_TIMEOUT", "15"))
+    idle_timeout = float(os.getenv("IDLE_TIMEOUT", "8"))
     wake_word = os.getenv("WAKE_WORD", "стелла").lower()
 
     if args.no_wake:
