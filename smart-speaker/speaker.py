@@ -37,6 +37,13 @@ class AlsaAudioInterface(AudioInterface):
         self.should_stop = threading.Event()
         self.threads = []
         self.last_audio = time.time()
+        self.last_write = 0.0
+        # Пока колонка говорит, микрофон агенту не передаётся (иначе он слышит сам себя).
+        # ALLOW_INTERRUPT=1 разрешает перебивать голосом (нужны наушники).
+        self.allow_interrupt = os.getenv("ALLOW_INTERRUPT", "0") == "1"
+
+    def is_playing(self):
+        return (not self.out_queue.empty()) or time.time() - max(self.last_audio, self.last_write) < 0.8
 
     def start(self, input_callback):
         self.input_callback = input_callback
@@ -80,6 +87,8 @@ class AlsaAudioInterface(AudioInterface):
     def _record(self):
         while not self.should_stop.is_set():
             data = self.in_stream.read(CHUNK, exception_on_overflow=False)
+            if not self.allow_interrupt and self.is_playing():
+                data = b"\0" * len(data)
             self.input_callback(data)
 
     def _play(self):
@@ -89,6 +98,7 @@ class AlsaAudioInterface(AudioInterface):
             except queue.Empty:
                 continue
             self.out_stream.write(chunk)
+            self.last_write = time.time()
 
 
 def list_devices():
@@ -162,7 +172,7 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout):
 
     def watchdog():
         while not done.wait(0.5):
-            if time.time() - max(last_activity[0], audio.last_audio) > idle_timeout:
+            if not audio.is_playing() and time.time() - max(last_activity[0], audio.last_audio) > idle_timeout:
                 conversation.end_session()
                 return
 
