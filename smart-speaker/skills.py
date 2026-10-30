@@ -7,6 +7,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 
@@ -79,6 +81,49 @@ def _spotify_uri(link: str) -> str:
     return link  # уже spotify:... или свой URI
 
 
+def hide_spotify(seconds: float = 10.0) -> int:
+    """Скрывает окна Spotify (музыка продолжает играть, медиаклавиши работают).
+    Windows: несколько секунд подряд прячет окно, пока приложение запускается. Возвращает число скрытых окон."""
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def exe_name(hwnd):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        handle = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ""
+        buf, size = ctypes.create_unicode_buffer(520), wintypes.DWORD(520)
+        ok = kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size))
+        kernel32.CloseHandle(handle)
+        return os.path.basename(buf.value).lower() if ok else ""
+
+    hidden = [0]
+
+    def on_window(hwnd, _):
+        if user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0 and exe_name(hwnd) == "spotify.exe":
+            user32.ShowWindow(hwnd, 0)  # SW_HIDE
+            hidden[0] += 1
+        return True
+
+    callback = enum_proc(on_window)
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        user32.EnumWindows(callback, 0)
+        time.sleep(0.3)
+    return hidden[0]
+
+
+def keep_spotify_hidden(seconds: float = 10.0):
+    """Фоновое скрытие окна Spotify (отключается SPOTIFY_HIDDEN=0 в .env)."""
+    if os.getenv("SPOTIFY_HIDDEN", "1") != "0":
+        threading.Thread(target=lambda: hide_spotify(seconds), daemon=True).start()
+
+
 def play_playlist() -> str:
     """Запускает плейлист из playlists.json (ключ "default") в приложении Spotify."""
     path = os.path.join(HERE, "playlists.json")
@@ -92,6 +137,7 @@ def play_playlist() -> str:
     uri = _spotify_uri(link)
     if sys.platform == "win32":
         os.startfile(uri)  # откроет Spotify и начнёт плейлист
+        keep_spotify_hidden()
     elif sys.platform == "darwin":
         subprocess.Popen(["open", uri])
     else:

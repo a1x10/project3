@@ -299,6 +299,7 @@ def main():
 
     SetLogLevel(-1)
     model = Model(ensure_model())
+    skills.keep_spotify_hidden(5)  # если Spotify уже открыт, спрячем его окно
     while True:
         print(f"Жду слово пробуждения «{wake_word}»... (Ctrl+C для выхода)")
         try:
