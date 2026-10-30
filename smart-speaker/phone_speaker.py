@@ -128,6 +128,8 @@ class Hub:
 
     def __init__(self, loop, client, agent_id, output_index, wake_word, idle_timeout):
         self.iface = None
+        self.conversation = None
+        self.muted = False
         # По умолчанию пока колонка говорит, микрофон агенту не передаётся (иначе он слышит сам себя).
         # ALLOW_INTERRUPT=1 разрешает перебивать колонку голосом, но нужен наушник/разнесённые устройства.
         self.allow_interrupt = os.getenv("ALLOW_INTERRUPT", "0") == "1"
@@ -155,7 +157,23 @@ class Hub:
         self.state = state
         self.broadcast({"type": "state", "state": state, "wake_word": self.wake_word})
 
+    def set_muted(self, value: bool):
+        """Кнопка «Заглушить» на странице: микрофон не слушаем, текущий разговор завершаем."""
+        self.muted = value
+        if value:
+            try:
+                while True:
+                    self.q.get_nowait()
+            except queue.Empty:
+                pass
+            conv = self.conversation
+            if conv:
+                threading.Thread(target=conv.end_session, daemon=True).start()
+        self.broadcast({"type": "muted", "value": value})
+
     def feed(self, pcm: bytes):
+        if self.muted:
+            return
         try:
             self.q.put_nowait(pcm)
         except queue.Full:
@@ -209,6 +227,7 @@ class Hub:
             callback_agent_response=lambda t: touch("agent", t),
             callback_user_transcript=lambda t: touch("user", t),
         )
+        self.conversation = conversation
         done = threading.Event()
 
         def watchdog():
@@ -231,6 +250,7 @@ class Hub:
             print("Ошибка разговора:", e, flush=True)
         finally:
             done.set()
+            self.conversation = None
             self.session_cb = None
             if iface.last_audio == 0.0 and time.time() - started < 5:
                 self.broadcast({"type": "notice", "text": "Не удалось начать разговор. Проверьте звук и ключи."})
@@ -245,10 +265,18 @@ async def ws_handler(request):
     await ws.prepare(request)
     hub.clients.add(ws)
     await ws.send_str(json.dumps({"type": "state", "state": hub.state, "wake_word": hub.wake_word}, ensure_ascii=False))
+    await ws.send_str(json.dumps({"type": "muted", "value": hub.muted}))
     try:
         async for m in ws:
             if m.type == WSMsgType.BINARY:
                 hub.feed(m.data)
+            elif m.type == WSMsgType.TEXT:
+                try:
+                    msg = json.loads(m.data)
+                except ValueError:
+                    continue
+                if msg.get("type") == "mute":
+                    hub.set_muted(bool(msg.get("value")))
     finally:
         hub.clients.discard(ws)
     return ws
