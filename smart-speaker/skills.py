@@ -28,12 +28,16 @@ TOMORROW = {"завтра"}
 QUIET_WORDS = {"кино", "фильм", "фильма", "тихий", "тихо"}   # «режим кино», «тихий режим»
 STOP_BOTHERING = {"мешай", "мешать"}                         # «не мешай»
 WAKEUP = {"проснись"}
+LOUDER = {"громче", "погромче", "прибавь", "побольше"}
+QUIETER = {"тише", "потише", "убавь", "поменьше"}
+VOL_MAX = {"максимум", "максимальную"}
+VOL_HALF = {"половину"}
 FILLER = {"включи", "запусти", "мой", "мою", "моё", "моя", "какая", "какой", "сегодня", "сейчас", "на", "в", "и", "ещё",
           "поставь", "дальше"}
 
 # слова для узкой грамматики распознавателя (быстрее и точнее, чем свободная речь)
 GRAMMAR = sorted({WAKE} | NEXT | PREV | LIKE | PAUSE | RESUME | PLAYLIST | MUSIC | WEATHER | TOMORROW | FILLER
-                 | QUIET_WORDS | STOP_BOTHERING | WAKEUP | {"режим", "не"} | {"плейлист", "включи", "мой"})
+                 | LOUDER | QUIETER | VOL_MAX | VOL_HALF | {"громкость"} | QUIET_WORDS | STOP_BOTHERING | WAKEUP | {"режим", "не"} | {"плейлист", "включи", "мой"})
 # в режиме кино слушаем только «Стелла, проснись»: фильм почти не может случайно сказать это
 QUIET_GRAMMAR = sorted({WAKE} | WAKEUP)
 
@@ -76,6 +80,10 @@ def parse_command(text: str, wake: str = WAKE):
     if after & norm(WAKEUP): return "wakeup", ""
     if ("режим" in after and after & norm(QUIET_WORDS)) or ("не" in after and after & norm(STOP_BOTHERING)):
         return "quiet", ""
+    if after & norm(LOUDER): return "volume_up", ""
+    if after & norm(QUIETER): return "volume_down", ""
+    if after & norm(VOL_MAX): return "volume_set", "100"
+    if after & norm(VOL_HALF): return "volume_set", "50"
     if after & norm(NEXT): return "next", ""
     if after & norm(PREV): return "prev", ""
     if after & norm(LIKE): return "like", ""
@@ -84,6 +92,46 @@ def parse_command(text: str, wake: str = WAKE):
     if after & norm(WEATHER): return "weather", ("tomorrow" if after & norm(TOMORROW) else "today")
     if after & norm(PLAYLIST) or ("включи" in after and after & norm(MUSIC)): return "playlist", ""
     return None, ""
+
+
+# ---------- громкость колонки ----------
+HEADSET_MARKERS = ("hands-free", "bthhfenum", "головной телефон",
+                   "Головной телефон".encode("utf-8").decode("cp1251", errors="replace").lower()[:8])
+
+
+def is_headset_profile(name: str) -> bool:
+    """Профиль «гарнитура/Hands-Free» у Bluetooth-колонки: звук как в телефоне, его пропускаем."""
+    name = name.lower()
+    return any(m in name for m in HEADSET_MARKERS)
+
+
+def _speaker_device():
+    """Устройство колонки: OUTPUT_DEVICE_NAME (например V-113), иначе устройство Windows по умолчанию."""
+    from pycaw.constants import DEVICE_STATE, EDataFlow
+    from pycaw.utils import AudioUtilities
+    want = os.getenv("OUTPUT_DEVICE_NAME", "").strip().lower()
+    if want:
+        for d in AudioUtilities.GetAllDevices(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value):
+            name = (d.FriendlyName or "")
+            if want in name.lower() and not is_headset_profile(name):
+                return d
+    return AudioUtilities.GetSpeakers()
+
+
+def change_volume(delta=None, set_to=None) -> str:
+    """Громкость колонки (на ту, на которую идут голос Стеллы и музыка): шаг VOLUME_STEP процентов или точное значение."""
+    if sys.platform != "win32":
+        return "Громкость пока умеет менять только Windows."
+    try:
+        dev = _speaker_device()
+    except ImportError:
+        return "Для громкости нужен пакет pycaw: pip install pycaw"
+    step = float(os.getenv("VOLUME_STEP", "10"))
+    cur = dev.volume_percent
+    new = float(set_to) if set_to is not None else cur + (delta or 0) * step
+    new = max(0.0, min(100.0, new))
+    dev.volume_percent = new
+    return f"Громкость {round(new)}%"
 
 
 # ---------- музыка ----------
