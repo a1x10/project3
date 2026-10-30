@@ -107,15 +107,16 @@ def _spotify_uri(link: str) -> str:
     return link  # уже spotify:... или свой URI
 
 
-def hide_spotify(seconds: float = 10.0) -> int:
-    """Скрывает окна Spotify (музыка продолжает играть, медиаклавиши работают).
-    Windows: несколько секунд подряд прячет окно, пока приложение запускается. Возвращает число скрытых окон."""
+def _spotify_windows():
+    """Windows: главные окна Spotify [(hwnd, заголовок, видимо)]. Заголовок «Artist - Song», когда играет музыка,
+    и «Spotify Free/Premium», когда ничего не играет."""
     if sys.platform != "win32":
-        return 0
+        return []
     import ctypes
     from ctypes import wintypes
     user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
     enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found = []
 
     def exe_name(hwnd):
         pid = wintypes.DWORD()
@@ -128,26 +129,79 @@ def hide_spotify(seconds: float = 10.0) -> int:
         kernel32.CloseHandle(handle)
         return os.path.basename(buf.value).lower() if ok else ""
 
-    hidden = [0]
-
     def on_window(hwnd, _):
-        if user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0 and exe_name(hwnd) == "spotify.exe":
-            user32.ShowWindow(hwnd, 0)  # SW_HIDE
-            hidden[0] += 1
+        n = user32.GetWindowTextLengthW(hwnd)
+        if n > 0:
+            cls = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, cls, 256)
+            if cls.value == "Chrome_WidgetWin_1" and exe_name(hwnd) == "spotify.exe":
+                title = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, title, n + 1)
+                found.append((hwnd, title.value, bool(user32.IsWindowVisible(hwnd))))
         return True
 
-    callback = enum_proc(on_window)
-    deadline = time.time() + seconds
+    user32.EnumWindows(enum_proc(on_window), 0)
+    return found
+
+
+def spotify_now_playing():
+    """Название играющего трека или None (Windows)."""
+    for _, title, _ in _spotify_windows():
+        if title and not title.lower().startswith("spotify"):
+            return title
+    return None
+
+
+def hide_spotify(seconds: float = 10.0) -> int:
+    """Скрывает окна Spotify (музыка продолжает играть, медиаклавиши работают). Возвращает число скрытых окон."""
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+    hidden, deadline = 0, time.time() + seconds
     while time.time() < deadline:
-        user32.EnumWindows(callback, 0)
+        for hwnd, _, visible in _spotify_windows():
+            if visible:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+                hidden += 1
         time.sleep(0.3)
-    return hidden[0]
+    return hidden
 
 
 def keep_spotify_hidden(seconds: float = 10.0):
     """Фоновое скрытие окна Spotify (отключается SPOTIFY_HIDDEN=0 в .env)."""
     if os.getenv("SPOTIFY_HIDDEN", "1") != "0":
         threading.Thread(target=lambda: hide_spotify(seconds), daemon=True).start()
+
+
+def _ensure_playing(windows=None, hide_window=None, press_play=None, now=time.time, sleep=time.sleep, log=print):
+    """После запуска плейлиста: прячем окно, ждём, пока заиграет; если Spotify открылся, но молчит,
+    нажимаем «играть» (один раз). Зависимости переданы параметрами, чтобы логику можно было проверить без Windows."""
+    windows = windows or _spotify_windows
+    press_play = press_play or (lambda: media_key("playpause"))
+    if hide_window is None and os.getenv("SPOTIFY_HIDDEN", "1") != "0":
+        import ctypes
+        hide_window = lambda hwnd: ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    t0, pressed, idle_since = now(), False, None
+    while now() - t0 < 25:
+        wins = windows()
+        if hide_window:
+            for hwnd, _, visible in wins:
+                if visible:
+                    hide_window(hwnd)
+        track = next((t for _, t, _ in wins if t and not t.lower().startswith("spotify")), None)
+        if track:
+            log(f"Играет: {track}")
+            return True
+        if wins and idle_since is None:
+            idle_since = now()
+        # окно Spotify есть, но музыки нет уже 3 секунды -> нажимаем «играть» (один раз)
+        if wins and not pressed and now() - idle_since > 3:
+            press_play()
+            pressed = True
+            log("Spotify открылся, но не играл: нажала «играть».")
+        sleep(0.5)
+    log("Spotify не начал играть. Проверьте, что приложение Spotify установлено и вы в нём вошли.")
+    return False
 
 
 def play_playlist() -> str:
@@ -163,7 +217,7 @@ def play_playlist() -> str:
     uri = _spotify_uri(link)
     if sys.platform == "win32":
         os.startfile(uri)  # откроет Spotify и начнёт плейлист
-        keep_spotify_hidden()
+        threading.Thread(target=_ensure_playing, daemon=True).start()
     elif sys.platform == "darwin":
         subprocess.Popen(["open", uri])
     else:
