@@ -237,11 +237,17 @@ class Hub:
     # --- один разговор ---
     def run_session(self):
         iface = PiOutput(self, self.output_index)
-        last_activity = [time.time()]
+        st = {"last_user": time.time(), "agent_turns": 0}
         started = time.time()
 
         def touch(role, text):
-            last_activity[0] = time.time()
+            if role == "user":
+                if not any(c.isalnum() for c in text):   # «...» = тишина/шум
+                    return
+                st["last_user"] = time.time()
+                st["agent_turns"] = 0
+            else:
+                st["agent_turns"] += 1
             print(("Вы: " if role == "user" else "Колонка: ") + text, flush=True)
             self.broadcast({"type": "msg", "role": role, "text": text})
 
@@ -260,8 +266,8 @@ class Hub:
                 if self.session_cb and playing != speaking:
                     speaking = playing
                     self.set_state("speaking" if playing else "listening")
-                idle = time.time() - max(last_activity[0], iface.last_audio)
-                if not playing and idle > self.idle_timeout:
+                idle = time.time() - max(st["last_user"], iface.last_audio, iface.last_write)
+                if not playing and (idle > self.idle_timeout or st["agent_turns"] >= 2):
                     conversation.end_session()
                     return
 
@@ -318,7 +324,7 @@ def main():
     agent_id = os.environ["ELEVENLABS_AGENT_ID"]
     output_index = speaker.env_int("OUTPUT_DEVICE_INDEX")
     wake_word = os.getenv("WAKE_WORD", "стелла").lower()
-    idle_timeout = float(os.getenv("IDLE_TIMEOUT", "20"))
+    idle_timeout = float(os.getenv("IDLE_TIMEOUT", "8"))
 
     async def on_startup(app):
         hub = Hub(asyncio.get_running_loop(), client, agent_id, output_index, wake_word, idle_timeout)
