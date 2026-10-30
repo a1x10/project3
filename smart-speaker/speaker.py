@@ -224,12 +224,31 @@ def run_session(client, agent_id, input_index, output_index, idle_timeout, first
     audio = AlsaAudioInterface(input_index, output_index)
     st = {"last_user": time.time(), "agent_turns": 0}
 
+    def run_command(cmd, arg):
+        """Музыка/погода по голосу прямо во время разговора (агент сам этого не умеет)."""
+        try:
+            if cmd == "weather":
+                report = skills.weather_report(arg)
+                conversation.send_user_message(
+                    f"Пользователь спросил про погоду. Данные: {report} "
+                    "Расскажи коротко и по-человечески, числа произноси словами, без списков.")
+                return
+            audio.interrupt()          # агент ещё не договорил «у меня нет доступа» - обрываем
+            conversation.end_session()
+            beep()
+            print("Команда:", do_music(cmd))
+        except Exception as e:
+            print(f"Команда не выполнена: {e}")
+
     def on_user(text):
         # Пустые реплики вроде «...» (тишина/шум) не считаем и не показываем.
         if any(c.isalnum() for c in text):
             st["last_user"] = time.time()
             st["agent_turns"] = 0
             print(f"Вы: {text}")
+            cmd, arg = skills.in_session_command(text, os.getenv("WAKE_WORD", "стелла").lower())
+            if cmd:
+                threading.Thread(target=run_command, args=(cmd, arg), daemon=True).start()
 
     def on_agent(text):
         st["agent_turns"] += 1
