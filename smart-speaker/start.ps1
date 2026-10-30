@@ -24,7 +24,7 @@ if (-not $py) {
 }
 Write-Host "Python: $py"
 
-if (-not (Test-Path .venv\Scripts\python.exe)) {
+if (-not (Test-Path .venv\Scripts\python.exe)) { 
     if (Test-Path .venv) { Remove-Item .venv -Recurse -Force }
     & $py -m venv .venv
 }
