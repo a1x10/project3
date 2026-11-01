@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' blob: mediastream: http: https:; connect-src 'self' ws: wss: http: https:; font-src 'self' data:">
+  <title>STELLS</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="bg"></canvas>
+  <div class="vignette"></div>
+
+  <header id="titlebar">
+    <div class="tb-brand"><span class="tb-logo"></span>STELLS <small>AI Platform</small></div>
+    <div class="tb-drag"></div>
+    <div class="tb-status" id="tbStatus"></div>
+    <div class="tb-btns">
+      <button data-win="min" title="Свернуть">&#x2013;</button>
+      <button data-win="max" title="Развернуть">&#x25A1;</button>
+      <button data-win="close" class="close" title="Закрыть">&#x2715;</button>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <footer id="support">
+    Если что-то не получается — обратитесь в службу поддержки:
+    <a data-ext="wa">WhatsApp +7 702 538 97 49</a> ·
+    <a data-ext="tg">Telegram @Stells_help</a> ·
+    <a data-ext="creator">Создатель @l3xn0</a>
+  </footer>
+
+  <div id="modalRoot"></div>
+  <div id="toasts"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
