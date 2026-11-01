@@ -38,5 +38,4 @@ jobs:
             stells/dist/*.exe
             stells/dist/*.dmg
             stells/dist/*.AppImage
-            stells/dist/*.deb
           if-no-files-found: ignore
