@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     tags: ['stells-v*']
+    branches: ['stells']
+    paths: ['stells/**', '.github/workflows/stells-build.yml']
 
 jobs:
   build:
