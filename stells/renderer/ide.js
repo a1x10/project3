@@ -2,6 +2,7 @@
 // Кнопка «Подключить коннектор» запускает скрипт и связывает его с пультом.
 import { LANGS, TEMPLATES } from './data.js';
 import { link } from './link.js';
+import { icon } from './icons.js';
 
 const api = window.stells;
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -60,12 +61,12 @@ export async function openIDE({ onConnected } = {}) {
       <button class="ide-btn" id="ideSave">Сохранить…</button>
       <button class="ide-btn" id="ideTpl">Шаблон</button>
       <span style="flex:1"></span>
-      <button class="ide-btn connect" id="ideConnect">⚡ Подключить коннектор</button>
-      <button class="ide-btn stop" id="ideStop" hidden>■ Остановить</button>
-      <button class="ide-btn" id="ideClose" title="Закрыть">✕</button>
+      <button class="ide-btn connect" id="ideConnect">${icon('plug-zap', 14)} Подключить коннектор</button>
+      <button class="ide-btn stop" id="ideStop" hidden>${icon('circle-stop', 14)} Остановить</button>
+      <button class="ide-btn" id="ideClose" title="Закрыть (Esc)">${icon('x', 14)}</button>
     </div>
     <div class="ide-mid">
-      <div class="ide-act"><span class="on" title="Проводник">📄</span><span title="Справка" id="ideHelpIc">❔</span></div>
+      <div class="ide-act"><span class="on" title="Проводник">${icon('copy', 22)}</span><span title="Поиск">${icon('search', 22)}</span><span title="Терминал">${icon('terminal', 22)}</span></div>
       <div class="ide-explorer">
         <div class="h">Проводник — connectors</div>
         <div class="f on" id="ideFile">connector.py</div>
@@ -88,11 +89,11 @@ export async function openIDE({ onConnected } = {}) {
         <div class="ide-panel">
           <div class="ide-ptabs"><span class="on" data-p="term">Терминал</span><span data-p="out">Вывод коннектора</span><span style="flex:1"></span><span id="ideClear">очистить</span></div>
           <div class="term-out" id="termOut"></div>
-          <div class="term-in" id="termIn"><b>❯</b><input id="termInput" placeholder="введите команду и нажмите Enter (например: python --version)"></div>
+          <div class="term-in" id="termIn"><b>›</b><input id="termInput" placeholder="введите команду и нажмите Enter (например: python --version)"></div>
         </div>
       </div>
     </div>
-    <div class="ide-status" id="ideStatus"><span>⎇ connector</span><span id="ideStLang">Python</span><span id="ideStConn">Коннектор не запущен</span><span style="flex:1"></span><span id="ideStPos">Стр 1, Стлб 1</span><span>UTF-8</span></div>
+    <div class="ide-status" id="ideStatus"><span>${icon('route', 13)} connector</span><span id="ideStLang">Python</span><span id="ideStConn">Коннектор не запущен</span><span style="flex:1"></span><span id="ideStPos">Стр 1, Стлб 1</span><span>UTF-8</span></div>
   </div>`;
   document.body.appendChild(root);
   open = root;
@@ -133,7 +134,7 @@ export async function openIDE({ onConnected } = {}) {
   const setLive = (v) => {
     live = v;
     $('#ideConnect').classList.toggle('live', v);
-    $('#ideConnect').textContent = v ? '✓ Коннектор подключён' : '⚡ Подключить коннектор';
+    $('#ideConnect').innerHTML = v ? icon('circle-check', 14) + ' Коннектор подключён' : icon('plug-zap', 14) + ' Подключить коннектор';
     $('#ideStop').hidden = !v;
     $('#ideStatus').classList.toggle('live', v);
     $('#ideStConn').textContent = v ? 'Коннектор работает · пульт управляет через него' : 'Коннектор не запущен';
@@ -170,7 +171,7 @@ export async function openIDE({ onConnected } = {}) {
     if (e.key === 'Enter') {
       const cmd = termInput.value; termInput.value = '';
       if (cmd.trim()) { hist.push(cmd); hIdx = hist.length; }
-      appendTerm(`❯ ${cmd}\n`);
+      appendTerm(`› ${cmd}\n`);
       if (cmd.trim() === 'clear' || cmd.trim() === 'cls') { termLog = ''; showPanel('term'); return; }
       api.term.write(termId, cmd + '\n');
     } else if (e.key === 'ArrowUp') { if (hIdx > 0) termInput.value = hist[--hIdx]; e.preventDefault(); }

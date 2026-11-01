@@ -5,6 +5,8 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' blob: mediastream: http: https:; connect-src 'self' ws: wss: http: https:; font-src 'self' data:">
   <title>STELLS</title>
+  <link rel="stylesheet" href="../node_modules/@fontsource-variable/inter/index.css">
+  <link rel="stylesheet" href="../node_modules/@fontsource-variable/jetbrains-mono/index.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,23 +14,23 @@
   <div class="vignette"></div>
 
   <header id="titlebar">
-    <div class="tb-brand"><span class="tb-logo"></span>STELLS <small>AI Platform</small></div>
+    <div class="tb-brand" id="tbBrand"><span class="tb-name">STELLS</span><small>AI Platform</small></div>
     <div class="tb-drag"></div>
     <div class="tb-status" id="tbStatus"></div>
     <div class="tb-btns">
-      <button data-win="min" title="Свернуть">&#x2013;</button>
-      <button data-win="max" title="Развернуть">&#x25A1;</button>
-      <button data-win="close" class="close" title="Закрыть">&#x2715;</button>
+      <button data-win="min" title="Свернуть"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button data-win="max" title="Развернуть"><svg width="10" height="10" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button data-win="close" class="close" title="Закрыть"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1"/></svg></button>
     </div>
   </header>
 
   <main id="app"></main>
 
   <footer id="support">
-    Если что-то не получается — обратитесь в службу поддержки:
-    <a data-ext="wa">WhatsApp +7 702 538 97 49</a> ·
-    <a data-ext="tg">Telegram @Stells_help</a> ·
-    <a data-ext="creator">Создатель @l3xn0</a>
+    <span class="sup-l">Если что-то не получается — обратитесь в службу поддержки</span>
+    <a data-ext="wa" class="sup-a"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>WhatsApp +7 702 538 97 49</a>
+    <a data-ext="tg" class="sup-a"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>Telegram @Stells_help</a>
+    <a data-ext="creator" class="sup-a"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>Создатель @l3xn0</a>
   </footer>
 
   <div id="modalRoot"></div>

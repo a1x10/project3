@@ -3,6 +3,8 @@ import { BOARDS, FAMILY_FILTERS, OS_LIST, MODEL_TYPES, USAGES, SUPPORT } from '.
 import { link } from './link.js';
 import { vision } from './vision.js';
 import { openIDE } from './ide.js';
+import { icon } from './icons.js';
+import { logo, wordmark } from './brand.js';
 import { h, toast, modal, mountDrone, mountCar, mountRobot, mountCameras, mountWol } from './panels.js';
 
 const api = window.stells;
@@ -15,6 +17,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const save = async (p) => (cfg = await api.config.set(p));
 
 // ---------------------------------------------------------------- оболочка
+document.getElementById('tbBrand').insertAdjacentHTML('afterbegin', logo(20));
 document.querySelectorAll('[data-win]').forEach((b) => (b.onclick = () => api.win[b.dataset.win]()));
 const EXT = { wa: SUPPORT.whatsappUrl, tg: SUPPORT.telegramUrl, creator: SUPPORT.creatorUrl };
 document.addEventListener('click', (e) => { const a = e.target.closest('[data-ext]'); if (a) { e.preventDefault(); api.openExternal(EXT[a.dataset.ext] || a.dataset.ext); } });
@@ -22,8 +25,10 @@ document.addEventListener('click', (e) => { const a = e.target.closest('[data-ex
 function updateStatus() {
   const s = document.getElementById('tbStatus');
   if (!cfg.registered) { s.innerHTML = ''; return; }
-  s.innerHTML = `<span><span class="dot ${link.state === 'online' ? 'on' : link.state === 'connecting' ? 'wait' : ''}"></span> ${esc(link.label())}</span>
-    <span><span class="dot ${vision.source ? 'on' : ''}"></span> Зрение ${vision.source ? 'активно' : 'выкл'}</span>`;
+  s.innerHTML = `<span class="tchip">${icon('cpu', 13)}<span class="dot ${link.state === 'online' ? 'on' : link.state === 'connecting' ? 'wait' : ''}"></span>${esc(link.label())}</span>
+    <span class="tchip">${icon('scan-eye', 13)}<span class="dot ${vision.source ? 'on' : ''}"></span>${vision.source ? vision.fps + ' FPS' : 'Зрение выкл'}</span>
+    <button class="tchip kbd-btn" id="cmdkBtn" title="Командная палитра">${icon('command', 13)} K</button>`;
+  s.querySelector('#cmdkBtn').onclick = openPalette;
 }
 link.addEventListener('state', updateStatus);
 vision.addEventListener('stopped', updateStatus);
@@ -38,7 +43,10 @@ function show(el) {
   updateStatus();
   return el;
 }
-function stepsBar(n, total = 8) { return `<div class="steps">${Array.from({ length: total }, (_, i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</div>`; }
+const STEP_NAMES = ['Старт', 'Профиль', 'Плата', 'ОС', 'Модель', 'Установка', 'Зрение', 'Режим'];
+function stepsBar(n) {
+  return `<ol class="stepper">${STEP_NAMES.map((t, i) => `<li class="${i < n ? 'done' : i === n ? 'cur' : ''}"><span class="sn">${i < n ? icon('check', 12) : i + 1}</span><span class="st">${t}</span></li>`).join('')}</ol>`;
+}
 
 function greeting() {
   const hr = new Date().getHours();
@@ -61,10 +69,12 @@ async function splash() {
   const name = cfg.registered ? cfg.user.name : '';
   const g = name ? `${greeting()}, ${esc(name)}!` : 'Добро пожаловать';
   const el = show(h(`<section class="screen splash">
-    <div class="logo3d">STELLS</div>
+    <div class="splash-mark">${logo(112, { animated: true })}</div>
+    ${wordmark('xl')}
     <div class="greet">${g}</div>
     <div class="sub">Передовые ИИ-модели и машинное зрение для ваших плат</div>
     <div class="loader"><div class="bar"><i></i></div><div class="lt"><span id="lt">Загрузка ядра…</span><span id="lp">0%</span></div></div>
+    <div class="splash-foot">v${esc(info.version)} · проект Алексея · ${esc({ win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[info.platform] || info.platform)}</div>
   </section>`));
   if (name) speak(`${greeting()}, ${name}. Добро пожаловать в Стеллс.`);
   const stages = ['Загрузка ядра…', 'Инициализация 3D-движка…', 'Проверка SLT-ключа…', 'Запуск машинного зрения…', 'Подключение к плате…', 'Готово'];
@@ -84,18 +94,21 @@ async function splash() {
 // ---------------------------------------------------------------- 1. приветствие
 function welcome() {
   scene3d?.setMode('core');
-  const el = show(h(`<section class="screen"><div class="card mid glass hero">
+  document.body.classList.remove('in-dash');
+  const el = show(h(`<section class="screen"><div class="card glass hero">
     ${stepsBar(0)}
-    <span class="pill">◆ ПРОЕКТ STELLS</span>
-    <h1>Пройдите регистрацию<br>для получения доступа к нашим <span class="grad">передовым моделям</span></h1>
-    <p class="lead">от проекта STELLS, разработанным Алексеем.<br>LLM, VLM, машинное зрение и управление платами — в одном приложении.</p>
-    <div class="feats">
-      <div class="feat"><b>🧠 6 типов моделей</b><span>LLM, LM, CV, VLM, SLM, LMM</span></div>
-      <div class="feat"><b>🔌 150+ плат</b><span>Raspberry Pi, Banana Pi, ODROID, Arduino, NanoPi, Jetson…</span></div>
-      <div class="feat"><b>👁 Машинное зрение</b><span>Локально на ПК и на плате</span></div>
-      <div class="feat"><b>🛸 Пульты</b><span>Дроны, машины, роботы, камеры, WOL</span></div>
+    <div class="hero-grid"><div class="hero-l">
+    <span class="pill">${icon('sparkles', 14)} Проект STELLS</span>
+    <h1>Пройдите регистрацию для получения доступа к нашим <span class="grad">передовым моделям</span></h1>
+    <p class="lead">от проекта STELLS, разработанным Алексеем. LLM, VLM, машинное зрение и управление платами — в одном приложении.</p>
+    <div class="hero-cta"><button class="btn primary xl" id="go">Продолжить ${icon('arrow-right', 18)}</button><span class="muted small">Регистрация занимает меньше минуты</span></div>
     </div>
-    <div class="actions" style="justify-content:center"><button class="btn primary xl" id="go">Продолжить<span class="shine"></span></button></div>
+    <div class="feats">
+      <div class="feat"><i class="fi">${icon('brain-circuit', 20)}</i><b>6 типов моделей</b><span>LLM, LM, CV, VLM, SLM, LMM</span></div>
+      <div class="feat"><i class="fi">${icon('circuit-board', 20)}</i><b>180+ плат</b><span>Raspberry Pi, Banana Pi, ODROID, Arduino, NanoPi, Jetson…</span></div>
+      <div class="feat"><i class="fi">${icon('scan-eye', 20)}</i><b>Машинное зрение</b><span>Локально на ПК и на плате</span></div>
+      <div class="feat"><i class="fi">${icon('gamepad-2', 20)}</i><b>Пульты управления</b><span>Дроны, машины, роботы, камеры, WOL</span></div>
+    </div></div>
   </div></section>`));
   el.querySelector('#go').onclick = () => { scene3d?.pulse(); register(); };
 }
@@ -137,11 +150,12 @@ function register() {
 // ---------------------------------------------------------------- 3. выбор платы
 function boardStep() {
   scene3d?.setMode('board');
+  document.body.classList.remove('in-dash');
   let fam = 'Все', q = '', sel = cfg.board?.id || null;
   const el = show(h(`<section class="screen"><div class="card glass" style="height:100%">
     ${stepsBar(2)}
     <div class="row"><div><div class="eyebrow">Шаг 1 из 4</div><h2>Выберите плату</h2></div><span class="spacer"></span>
-      <input class="input" id="bq" placeholder="🔍 Поиск: Raspberry Pi 5, ODROID-N2+, Nano ESP32…" style="width:360px"></div>
+      <label class="search">${icon('search', 16)}<input class="input" id="bq" placeholder="Поиск: Raspberry Pi 5, ODROID-N2+, Nano ESP32…"></label></div>
     <div class="chips" id="chips">${FAMILY_FILTERS.map((f) => `<button class="chip ${f === 'Все' ? 'on' : ''}" data-f="${esc(f)}">${f === 'Все' ? 'No filtering — показать все' : esc(f)}</button>`).join('')}</div>
     <div class="list" id="blist"></div>
     <div class="sel-bar"><div class="what" id="bwhat">Плата не выбрана</div><span class="spacer"></span>
@@ -153,7 +167,7 @@ function boardStep() {
     const ql = q.toLowerCase();
     const items = BOARDS.filter((b) => (fam === 'Все' || b.family === fam) && (!ql || (b.name + ' ' + b.note + ' ' + b.group).toLowerCase().includes(ql)));
     const groups = new Map();
-    for (const b of items) { const k = `${b.family} · ${b.group}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
+    for (const b of items) { const k = /^\d — /.test(b.group) ? `${b.family} · ${b.group.replace(/^\d — /, '')}` : b.family; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
     list.innerHTML = items.length ? '' : '<p class="muted">Ничего не найдено. Если вашей платы нет — напишите в поддержку.</p>';
     for (const [k, arr] of groups) {
       list.appendChild(h(`<div class="group-title">${esc(k)}</div>`));
@@ -190,7 +204,7 @@ function osStep() {
     <div class="row"><div><div class="eyebrow">Шаг 2 из 4 · ${esc(cfg.board?.name)}</div><h2>Выберите операционную систему, на которой работает плата</h2></div></div>
     <p class="muted small" style="margin:0 0 10px">Компьютер: <b style="color:var(--text)">${esc(hostOs)} ${esc(info.osRelease)} (${esc(info.arch)})</b> — определено автоматически. Показаны ОС, подходящие для вашей платы.
       <label class="check" style="display:inline-flex;margin-left:12px"><input type="checkbox" id="allOs"> Показать все ОС</label></p>
-    <input class="input" id="oq" placeholder="🔍 Поиск ОС" style="margin-bottom:6px">
+    <label class="search" style="margin-bottom:6px">${icon('search', 16)}<input class="input" id="oq" placeholder="Поиск операционной системы"></label>
     <div class="list" id="olist"></div>
     <div class="sel-bar"><div class="what" id="owhat"></div><span class="spacer"></span>
       <button class="btn ghost" id="back">Назад</button><button class="btn primary" id="go" disabled>Продолжить<span class="shine"></span></button></div>
@@ -229,8 +243,8 @@ function modelStep() {
     <div class="eyebrow">Шаг 3 из 4</div>
     <h2>Выберите вариант нашей модели для вас</h2>
     <div class="models" id="mlist"></div>
-    <div class="warn">⚠ <b>Предупреждение:</b> скачивать только на мощное железо, и без <b>SLT key</b> программу невозможно будет запустить.<br>
-      Ключ можно получить у разработчика: служба поддержки WhatsApp <a data-ext="wa">+7 702 538 97 49</a>, Telegram <a data-ext="tg">@Stells_help</a>, создатель <a data-ext="creator">@l3xn0</a>.</div>
+    <div class="warn"><i class="wi">${icon('triangle-alert', 18)}</i><div><b>Предупреждение:</b> скачивать только на мощное железо, и без <b>SLT key</b> программу невозможно будет запустить.<br>
+      Ключ можно получить у разработчика: служба поддержки WhatsApp <a data-ext="wa">+7 702 538 97 49</a>, Telegram <a data-ext="tg">@Stells_help</a>, создатель <a data-ext="creator">@l3xn0</a>.</div></div>
     <div class="keyrow"><input class="input" id="key" placeholder="SLT-XXXX-XXXX-XXXX-XXXX" maxlength="26" value="${esc(cfg.sltKey)}"><button class="btn" id="check">Проверить ключ</button></div>
     <div class="keymsg" id="kmsg"></div>
     <div class="actions"><button class="btn ghost" id="back">Назад</button><span class="spacer"></span><button class="btn primary" id="go" disabled>Скачать и установить<span class="shine"></span></button></div>
@@ -264,7 +278,7 @@ function modelStep() {
     normalize();
     const r = await api.validateKey(key.value);
     keyOk = r.ok;
-    msg.textContent = r.ok ? '✓ Ключ действителен. Доступ к моделям открыт.' : '✕ ' + r.reason;
+    msg.innerHTML = (r.ok ? icon('shield-check', 15) + ' Ключ действителен. Доступ к моделям открыт.' : icon('shield-alert', 15) + ' ' + esc(r.reason));
     msg.className = 'keymsg ' + (r.ok ? 'ok' : 'bad');
     key.classList.toggle('err', !r.ok);
     upd();
@@ -310,7 +324,7 @@ function installStep() {
     </div>
     <div class="box" style="background:linear-gradient(135deg,rgba(56,225,255,.08),rgba(138,92,255,.1));border-radius:14px;box-shadow:0 0 0 1px var(--line-2) inset">
       <div class="row"><div><b>Скачать управление моделью в плате с компьютера удалённо</b><div class="muted small">Нажмите на кнопку «Скачать» — скачается архив прошивки для ${esc(b.name)}</div></div>
-        <span class="spacer"></span><button class="btn primary" id="dl">⬇ Скачать<span class="shine"></span></button></div>
+        <span class="spacer"></span><button class="btn primary" id="dl">${icon('download', 16)} Скачать</button></div>
       <div class="prog" id="fwprog" hidden><div class="bar"><i id="fbar"></i></div><div class="pt"><span id="ftxt">—</span><span id="fpct"></span></div></div>
     </div>
     <div class="actions"><button class="btn ghost" id="back">Назад</button><span class="spacer"></span><button class="btn" id="next" disabled>Далее</button></div>
@@ -339,7 +353,7 @@ function installStep() {
     off();
     if (!r.ok) { ftxt.textContent = 'Ошибка: ' + r.reason + '. Обратитесь в службу поддержки.'; return toast(r.reason, 'err'); }
     fbar.style.width = '100%';
-    ftxt.innerHTML = `✓ Архив сохранён: <a id="showfw">${esc(r.path)}</a>`;
+    ftxt.innerHTML = `${icon('circle-check', 14)} Архив сохранён: <a id="showfw">${esc(r.path)}</a>`;
     el.querySelector('#showfw').onclick = () => api.showItem(r.path);
     el.querySelector('#next').disabled = false;
     el.querySelector('#next').classList.add('primary');
@@ -355,8 +369,8 @@ function askVisionMode() {
     <h2>Запустить локально машинное зрение для платы на этом компьютере?</h2>
     <p class="lead">Компьютер будет анализировать видео с платы (или с веб-камеры) и передавать результаты в пульт. Это разгружает плату — подходит даже для Raspberry Pi Zero и Arduino.</p>
     <div class="actions" style="justify-content:stretch;flex-direction:column;align-items:stretch">
-      <button class="btn primary xl" data-local>▶ Запустить локально на этом компьютере<span class="shine"></span></button>
-      <button class="btn" data-server style="margin-top:6px">🌐 Свой сервер</button>
+      <button class="btn primary xl" data-local>${icon('monitor', 20)} Запустить локально на этом компьютере<span class="shine"></span></button>
+      <button class="btn" data-server style="margin-top:6px">${icon('server', 16)} Свой сервер</button>
     </div>`, (m) => {
     m.querySelector('[data-local]').onclick = async () => { m.close(); await save({ visionMode: 'local' }); visionStep(); };
     m.querySelector('[data-server]').onclick = async () => { m.close(); await save({ visionMode: 'server' }); visionStep(); };
@@ -398,31 +412,32 @@ function visionStep() {
       if (!document.body.contains(el)) { toast(r.python ? 'Python-модуль машинного зрения установлен' : 'Встроенное зрение активно; Python-модуль можно доустановить в «Машинное зрение»', r.python ? 'ok' : 'warn'); return; }
       el.querySelector('#go').firstChild.textContent = 'Далее';
       el.querySelector('#vbar').style.width = '100%'; el.querySelector('#vpct').textContent = '100%';
-      el.querySelector('#vtxt').textContent = r.python ? '✓ Машинное зрение установлено (Python + OpenCV)' : '✓ Встроенное машинное зрение готово (Python-модуль можно доустановить позже в «Настройках»)';
+      el.querySelector('#vtxt').textContent = r.python ? 'Машинное зрение установлено (Python + OpenCV)' : 'Встроенное машинное зрение готово (Python-модуль можно доустановить позже в «Настройках»)';
       el.querySelector('#go').disabled = false;
     });
   } else {
     el.querySelector('#test').onclick = async () => {
       const u = el.querySelector('#srv').value.trim().replace(/\/+$/, '');
       const t = el.querySelector('#tres');
-      try { const r = await fetch(u + '/detections', { signal: AbortSignal.timeout(4000) }); const j = await r.json(); t.innerHTML = `<span style="color:var(--green)">✓ Сервер отвечает · ${j.fps ?? 0} FPS</span>`; }
-      catch (e) { t.innerHTML = `<span style="color:var(--red)">✕ Нет ответа (${esc(e.message)}). Если что-то не получается — обратитесь в службу поддержки.</span>`; }
+      try { const r = await fetch(u + '/detections', { signal: AbortSignal.timeout(4000) }); const j = await r.json(); t.innerHTML = `<span style="color:var(--green)">${icon('circle-check', 14)} Сервер отвечает · ${j.fps ?? 0} FPS</span>`; }
+      catch (e) { t.innerHTML = `<span style="color:var(--red)">${icon('circle-x', 14)} Нет ответа (${esc(e.message)}). Если что-то не получается — обратитесь в службу поддержки.</span>`; }
     };
   }
 }
 
 // ---------------------------------------------------------------- 8. способ использования
 function usageStep() {
+  document.body.classList.remove('in-dash');
   const el = show(h(`<section class="screen"><div class="card glass">
     ${stepsBar(7)}
     <div class="eyebrow">Машинное зрение готово</div>
     <h2>Выберите способ использования машинного зрения</h2>
     <div class="usages" id="ulist"></div>
-    <div class="beta-note">🔒 В закрытом тестировании. Если хотите купить — напишите создателю <a data-ext="creator"><b>@l3xn0</b></a></div>
+    <div class="beta-note">${icon('lock', 15)} В закрытом тестировании. Если хотите купить — напишите создателю <a data-ext="creator"><b>@l3xn0</b></a></div>
   </div></section>`));
   const ul = el.querySelector('#ulist');
   for (const u of USAGES) {
-    const c = h(`<button class="usage"><div class="ic">${u.icon}</div><div class="n">${u.n}</div><b>${esc(u.title)}</b><span>${esc(u.desc)}</span><div class="closed">ЗАКРЫТЫЙ ТЕСТ</div></button>`);
+    const c = h(`<button class="usage"><div class="n">0${u.n}</div><div class="ic">${icon(u.icon, 34)}</div><b>${esc(u.title)}</b><span>${esc(u.desc)}</span><div class="closed">${icon('lock', 11)} Закрытый тест</div></button>`);
     c.onclick = async () => { await save({ usage: u.id, registered: true }); await api.config.set({ autostart: cfg.autostart }); scene3d?.pulse(); dashboard('control'); };
     ul.appendChild(c);
   }
@@ -431,16 +446,20 @@ function usageStep() {
 // ---------------------------------------------------------------- панель управления
 let unmount = null;
 const NAV = [
-  ['home', '◈', 'Главная'], ['control', '🎮', 'Пульт'], ['vision', '👁', 'Машинное зрение'], ['board', '🔌', 'Плата'],
-  ['models', '🧠', 'Модели'], ['code', '⌨', 'Коннектор / Терминал'], ['guide', '📘', 'Инструкции'], ['settings', '⚙', 'Настройки'], ['support', '💬', 'Поддержка'],
+  ['home', 'house', 'Главная'], ['control', 'gamepad-2', 'Пульт'], ['vision', 'scan-eye', 'Машинное зрение'], ['board', 'cpu', 'Плата'],
+  ['models', 'brain-circuit', 'Модели'], ['code', 'square-terminal', 'Коннектор и терминал'], ['guide', 'book-open', 'Инструкции'], ['settings', 'settings', 'Настройки'], ['support', 'life-buoy', 'Поддержка'],
 ];
 function dashboard(page = 'home') {
   scene3d?.setMode('dash');
+  document.body.classList.add('in-dash');
   const el = show(h(`<section class="dash">
     <aside class="side glass">
-      <div class="me"><div class="avatar">${esc((cfg.user.name || '?')[0].toUpperCase())}</div><div><b>${esc(cfg.user.name)}</b><span>${esc(cfg.board?.name || '')}</span></div></div>
-      ${NAV.map(([id, ic, t]) => `<button class="nav" data-nav="${id}"><span class="ni">${ic}</span>${t}</button>`).join('')}
-      <div class="foot">STELLS v${esc(info.version)}<br>Проект Алексея · <a data-ext="creator">@l3xn0</a></div>
+      <div class="me"><div class="avatar">${esc((cfg.user.name || '?')[0].toUpperCase())}</div><div class="me-t"><b>${esc(cfg.user.name)}</b><span>${esc(cfg.board?.name || '')}</span></div></div>
+      <div class="nav-sec">Рабочее место</div>
+      ${NAV.slice(0, 5).map(([id, ic, t]) => `<button class="nav" data-nav="${id}">${icon(ic, 17)}<span>${t}</span></button>`).join('')}
+      <div class="nav-sec">Инструменты</div>
+      ${NAV.slice(5).map(([id, ic, t]) => `<button class="nav" data-nav="${id}">${icon(ic, 17)}<span>${t}</span></button>`).join('')}
+      <div class="foot"><div class="foot-brand">${logo(18)} STELLS <span>v${esc(info.version)}</span></div>Проект Алексея · <a data-ext="creator">@l3xn0</a></div>
     </aside>
     <div class="content" id="content"></div>
   </section>`));
@@ -462,7 +481,7 @@ const PAGES = {
     root.innerHTML = '';
     const p = h(`<div class="page">
       <div class="page-head"><div><div class="eyebrow">${greeting()}</div><h2>${esc(cfg.user.name)}, всё готово к работе</h2></div><span class="spacer"></span>
-        <button class="btn primary" data-go="control">${u ? u.icon + ' Открыть пульт: ' + u.title : 'Открыть пульт'}<span class="shine"></span></button></div>
+        <button class="btn primary" data-go="control">${u ? icon(u.icon, 16) + ' Открыть пульт: ' + u.title : 'Открыть пульт'}</button></div>
       <div class="cols c4">
         <div class="stat glass"><div class="k">Плата</div><div class="v" id="hBoard">—</div></div>
         <div class="stat glass"><div class="k">Температура</div><div class="v" id="hTemp">— <small>°C</small></div></div>
@@ -470,7 +489,7 @@ const PAGES = {
         <div class="stat glass"><div class="k">Модель</div><div class="v" style="font-size:20px">${esc(cfg.model?.name || cfg.model?.type || '—')}</div></div>
       </div>
       <div class="cols main-side">
-        <div class="box glass"><h3>👁 Живое машинное зрение <span class="spacer"></span><span class="badge live" id="hFps">—</span></h3>
+        <div class="box glass"><h3>${icon('scan-eye', 16)} Живое машинное зрение <span class="spacer"></span><span class="badge live" id="hFps">—</span></h3>
           <div class="video"><canvas></canvas><div class="empty" data-empty>Машинное зрение запускается автоматически при старте.<br>Разрешите доступ к камере или подключите плату.</div></div></div>
         <div class="box glass"><h3>Конфигурация</h3>
           <div class="kv">
@@ -481,8 +500,8 @@ const PAGES = {
             <span>Связь</span><span id="hLink">—</span><span>Аптайм платы</span><span id="hUp">—</span>
           </div>
           <div class="row wrap" style="margin-top:16px">
-            <button class="btn sm" data-go="board">🔌 Подключить плату</button><button class="btn sm" data-go="models">🧠 Модели</button>
-            <button class="btn sm" data-go="usage">🔁 Сменить режим</button></div>
+            <button class="btn sm" data-go="board">${icon('plug-zap', 15)} Подключить плату</button><button class="btn sm" data-go="models">${icon('brain-circuit', 15)} Модели</button>
+            <button class="btn sm" data-go="usage">${icon('refresh-cw', 15)} Сменить режим</button></div>
         </div>
       </div>
     </div>`);
@@ -511,13 +530,13 @@ const PAGES = {
   vision(root) {
     root.innerHTML = '';
     const p = h(`<div class="page">
-      <div class="page-head"><h2>👁 Машинное зрение</h2><span class="badge live" id="vStat">—</span></div>
+      <div class="page-head"><h2>Машинное зрение</h2><span class="badge live" id="vStat">—</span></div>
       <div class="cols main-side">
         <div class="box glass">
           <div class="video"><canvas style="cursor:crosshair"></canvas><div class="empty" data-empty>Источник не выбран</div><div class="hud-tl" id="vHud"></div></div>
           <div class="row wrap" style="margin-top:10px">
-            <button class="btn sm" data-s="webcam">📷 Камера компьютера</button><button class="btn sm" data-s="board">🛰 Камера платы</button>
-            <button class="btn sm" data-s="py">🐍 Python-модуль (ONNX)</button><button class="btn sm" data-s="srv">🌐 Свой сервер</button><button class="btn sm ghost" data-s="stop">■ Стоп</button>
+            <button class="btn sm" data-s="webcam">${icon('camera', 15)} Камера компьютера</button><button class="btn sm" data-s="board">${icon('satellite-dish', 15)} Камера платы</button>
+            <button class="btn sm" data-s="py">${icon('code', 15)} Python-модуль (ONNX)</button><button class="btn sm" data-s="srv">${icon('server', 15)} Свой сервер</button><button class="btn sm ghost" data-s="stop">${icon('circle-stop', 15)} Стоп</button>
           </div>
         </div>
         <div class="box glass">
@@ -569,14 +588,14 @@ const PAGES = {
   board(root) {
     root.innerHTML = '';
     const p = h(`<div class="page">
-      <div class="page-head"><h2>🔌 Плата · ${esc(cfg.board?.name)}</h2><span class="spacer"></span><span class="badge" id="bState">—</span></div>
+      <div class="page-head"><h2>Плата <span class="h-sub">${esc(cfg.board?.name)}</span></h2><span class="spacer"></span><span class="badge" id="bState">—</span></div>
       <div class="box glass">
         <h3>Подключение</h3>
         <div class="row wrap">
           <input class="input" id="bHost" placeholder="IP-адрес платы (192.168.x.x, 100.x.x.x для Tailscale)" style="flex:2;min-width:220px" value="${esc(cfg.devices?.[0]?.host || '')}">
           <input class="input" id="bToken" placeholder="Токен (если задан)" style="flex:1;min-width:140px">
-          <button class="btn primary" id="bConn">Подключить</button><button class="btn" id="bFind">🔍 Найти в сети</button>
-          <button class="btn" id="bUsb">USB / Serial</button><button class="btn ghost" id="bOff">Отключить</button>
+          <button class="btn primary" id="bConn">Подключить</button><button class="btn" id="bFind">${icon('radar', 15)} Найти в сети</button>
+          <button class="btn" id="bUsb">${icon('usb', 15)} USB / Serial</button><button class="btn ghost" id="bOff">Отключить</button>
         </div>
         <div id="bFound" class="row wrap" style="margin-top:10px"></div>
       </div>
@@ -584,7 +603,7 @@ const PAGES = {
       <div class="cols c2">
         <div class="box glass"><h3>Прошивка (управление моделью в плате)</h3>
           <p class="muted small">Архив содержит агент STELLS, установщик службы автозапуска, конфиг под вашу плату и примеры коннекторов.</p>
-          <div class="row wrap"><button class="btn primary" id="bDl">⬇ Скачать прошивку</button><button class="btn" id="bDlAs">Сохранить как…</button></div>
+          <div class="row wrap"><button class="btn primary" id="bDl">${icon('download', 15)} Скачать прошивку</button><button class="btn" id="bDlAs">Сохранить как…</button></div>
           <div class="small muted" id="bDlRes" style="margin-top:8px"></div>
           <pre class="code">${cfg.board?.kind === 'mcu' ? 'Arduino IDE → открыть arduino/stells_arduino/stells_arduino.ino → Загрузить' : 'scp -r stells-firmware pi@IP:~/\nssh pi@IP\ncd stells-firmware/agent && sudo bash install.sh'}</pre>
         </div>
@@ -618,7 +637,7 @@ const PAGES = {
     p.querySelector('#bUsb').onclick = async () => { const r = await link.connectSerial(); addLog(r.ok ? 'USB-плата подключена' : 'USB: ' + r.reason); };
     p.querySelector('#bOff').onclick = () => { link.disconnect(); addLog('Отключено'); };
     let fwPath = null;
-    p.querySelector('#bDl').onclick = async () => { const r = await api.firmware.download(); if (r.ok) { fwPath = r.path; p.querySelector('#bDlRes').innerHTML = `✓ <a>${esc(r.path)}</a>`; p.querySelector('#bDlRes a').onclick = () => api.showItem(r.path); } else toast(r.reason, 'err'); };
+    p.querySelector('#bDl').onclick = async () => { const r = await api.firmware.download(); if (r.ok) { fwPath = r.path; p.querySelector('#bDlRes').innerHTML = `${icon('circle-check', 14)} <a>${esc(r.path)}</a>`; p.querySelector('#bDlRes a').onclick = () => api.showItem(r.path); } else toast(r.reason, 'err'); };
     p.querySelector('#bDlAs').onclick = async () => { if (!fwPath) { const r = await api.firmware.download(); fwPath = r.path; } const d = await api.firmware.saveAs(fwPath); if (d) toast('Сохранено: ' + d, 'ok'); };
     const onLog = (e) => addLog(e.detail);
     const onTel = (e) => {
@@ -634,7 +653,7 @@ const PAGES = {
   models(root) {
     root.innerHTML = '';
     const p = h(`<div class="page">
-      <div class="page-head"><h2>🧠 Модели</h2><span class="spacer"></span><button class="btn primary" id="mImp">+ Подключить файл модели</button></div>
+      <div class="page-head"><h2>Модели</h2><span class="spacer"></span><button class="btn primary" id="mImp">${icon('plus', 16)} Подключить файл модели</button></div>
       <div class="cols c3" id="mCat"></div>
       <div class="box glass"><h3>Установленные модели <span class="spacer"></span><a class="small" id="mFolder">открыть папку</a></h3><div id="mInst"></div>
         <p class="small muted">Поддерживаются: .onnx (YOLO — используется машинным зрением автоматически), .gguf (LLM/SLM/VLM через llama.cpp), .tflite, .rknn (Rockchip NPU), .hef (Hailo), .engine (TensorRT/Jetson), .safetensors, .pt.</p></div>
@@ -644,7 +663,7 @@ const PAGES = {
       const inst = await api.models.installed();
       p.querySelector('#mInst').innerHTML = inst.length ? '' : '<p class="muted">Пока нет файлов моделей.</p>';
       for (const f of inst) {
-        const r = h(`<div class="row" style="padding:10px;border-radius:10px;background:rgba(255,255,255,.03);margin-bottom:6px"><code></code><span class="spacer"></span><span class="small muted">${(f.size / 1048576).toFixed(1)} МБ</span><button class="btn sm ghost">✕</button></div>`);
+        const r = h(`<div class="row" style="padding:10px;border-radius:10px;background:rgba(255,255,255,.03);margin-bottom:6px"><code></code><span class="spacer"></span><span class="small muted">${(f.size / 1048576).toFixed(1)} МБ</span><button class="btn sm ghost icon-only" title="Удалить">${icon('trash-2', 15)}</button></div>`);
         r.querySelector('code').textContent = f.file;
         r.querySelector('button').onclick = async () => { await api.models.remove(f.file); refresh(); };
         p.querySelector('#mInst').appendChild(r);
@@ -655,7 +674,7 @@ const PAGES = {
         const have = inst.some((f) => f.file === m.file);
         const c = h(`<div class="box glass"><div class="row"><b style="font-size:20px">${esc(m.type)}</b><span class="spacer"></span><span class="badge ${have ? 'live' : ''}">${have ? 'установлена' : m.url ? 'доступна' : 'скоро'}</span></div>
           <div class="muted small" style="margin:6px 0 10px">${esc(m.name)} — ${esc(m.desc)}<br>Минимум ОЗУ: ${m.minRam} ГБ</div>
-          <button class="btn sm ${m.url && !have ? 'primary' : ''}" ${m.url && !have ? '' : 'disabled'}>${have ? '✓ Установлена' : m.url ? '⬇ Скачать' : 'Будет подключена разработчиком'}</button>
+          <button class="btn sm ${m.url && !have ? 'primary' : ''}" ${m.url && !have ? '' : 'disabled'}>${have ? icon('check', 14) + ' Установлена' : m.url ? icon('download', 14) + ' Скачать' : 'Будет подключена разработчиком'}</button>
           <div class="prog" hidden><div class="bar"><i></i></div></div></div>`);
         c.querySelector('button').onclick = async () => {
           const pr = c.querySelector('.prog'); pr.hidden = false;
@@ -673,7 +692,7 @@ const PAGES = {
 
   guide(root) {
     root.innerHTML = '';
-    root.appendChild(h(`<div class="page"><div class="page-head"><h2>📘 Инструкции</h2></div>
+    root.appendChild(h(`<div class="page"><div class="page-head"><h2>Инструкции</h2></div>
       <div class="cols c2" style="font-size:14px;line-height:1.65;color:var(--muted)">
         <div class="box glass"><h3 style="color:var(--text)">1. Подготовка платы</h3>
           Запишите ОС на карту памяти (Raspberry Pi Imager / balenaEtcher), включите SSH и Wi-Fi. Подключите плату к той же сети, что и компьютер.
@@ -698,7 +717,7 @@ const PAGES = {
 
   settings(root) {
     root.innerHTML = '';
-    const p = h(`<div class="page"><div class="page-head"><h2>⚙ Настройки</h2></div>
+    const p = h(`<div class="page"><div class="page-head"><h2>Настройки</h2></div>
       <div class="cols c2">
         <div class="box glass">
           <h3>Запуск</h3>
@@ -742,16 +761,64 @@ const PAGES = {
 
   support(root) {
     root.innerHTML = '';
-    root.appendChild(h(`<div class="page"><div class="page-head"><h2>💬 Служба поддержки</h2></div>
+    root.appendChild(h(`<div class="page"><div class="page-head"><h2>Служба поддержки</h2></div>
       <div class="cols c3">
-        <div class="box glass" style="text-align:center"><div style="font-size:42px">🟢</div><h3>WhatsApp</h3><p class="muted">${SUPPORT.whatsapp}</p><button class="btn primary" data-ext="wa">Написать</button></div>
-        <div class="box glass" style="text-align:center"><div style="font-size:42px">✈</div><h3>Telegram</h3><p class="muted">${SUPPORT.telegram}</p><button class="btn primary" data-ext="tg">Написать</button></div>
-        <div class="box glass" style="text-align:center"><div style="font-size:42px">👤</div><h3>Создатель</h3><p class="muted">${SUPPORT.creator} — покупка, ключи, закрытое тестирование</p><button class="btn primary" data-ext="creator">Написать</button></div>
+        <div class="box glass" style="text-align:center"><div class="big-ic">${icon('message-circle', 28)}</div><h3>WhatsApp</h3><p class="muted">${SUPPORT.whatsapp}</p><button class="btn primary" data-ext="wa">Написать</button></div>
+        <div class="box glass" style="text-align:center"><div class="big-ic">${icon('send', 28)}</div><h3>Telegram</h3><p class="muted">${SUPPORT.telegram}</p><button class="btn primary" data-ext="tg">Написать</button></div>
+        <div class="box glass" style="text-align:center"><div class="big-ic">${icon('user', 28)}</div><h3>Создатель</h3><p class="muted">${SUPPORT.creator} — покупка, ключи, закрытое тестирование</p><button class="btn primary" data-ext="creator">Написать</button></div>
       </div>
       <div class="box glass muted">Если что-то не получается — обратитесь в службу поддержки. Укажите плату (<b>${esc(cfg.board?.name)}</b>), ОС (<b>${esc(cfg.os?.name)}</b>), версию STELLS (<b>${esc(info.version)}</b>) и приложите скриншот.</div>
     </div>`));
   },
 };
+
+// ---------------------------------------------------------------- командная палитра (Ctrl+K)
+function openPalette() {
+  if (!cfg.registered || document.querySelector('.palette-bg')) return;
+  const nav = (p) => () => { const b = document.querySelector(`[data-nav=${p}]`); b ? b.click() : dashboard(p); };
+  const CMDS = [
+    ...NAV.map(([id, ic, t]) => ({ ic, t, hint: 'Перейти', run: nav(id) })),
+    { ic: 'camera', t: 'Запустить камеру компьютера', hint: 'Зрение', run: () => vision.startWebcam() },
+    { ic: 'circle-stop', t: 'Остановить машинное зрение', hint: 'Зрение', run: () => vision.stop() },
+    { ic: 'radar', t: 'Найти платы в сети', hint: 'Плата', run: async () => { const l = await api.net.discover(); toast(l.length ? 'Найдено: ' + l.map((d) => `${d.name} (${d.host})`).join(', ') : 'Платы не найдены', l.length ? 'ok' : 'warn'); } },
+    { ic: 'orbit', t: 'Запустить симулятор', hint: 'Плата', run: () => { link.startSim(); toast('Симулятор запущен', 'ok'); } },
+    { ic: 'unplug', t: 'Отключиться от платы', hint: 'Плата', run: () => link.disconnect() },
+    { ic: 'download', t: 'Скачать прошивку для платы', hint: 'Плата', run: async () => { const r = await api.firmware.download(); r.ok ? api.showItem(r.path) : toast(r.reason, 'err'); } },
+    { ic: 'refresh-cw', t: 'Сменить способ использования', hint: 'Режим', run: usageStep },
+    { ic: 'folder-open', t: 'Открыть папку моделей', hint: 'Модели', run: () => api.openPath(info.paths.models) },
+    { ic: 'message-circle', t: 'Написать в поддержку (WhatsApp)', hint: 'Поддержка', run: () => api.openExternal(SUPPORT.whatsappUrl) },
+    { ic: 'send', t: 'Написать в поддержку (Telegram)', hint: 'Поддержка', run: () => api.openExternal(SUPPORT.telegramUrl) },
+  ];
+  const bg = h(`<div class="palette-bg"><div class="palette">
+    <label class="pal-in">${icon('search', 18)}<input placeholder="Команда или раздел…" autofocus><kbd>Esc</kbd></label>
+    <div class="pal-list"></div></div></div>`);
+  document.body.appendChild(bg);
+  const inp = bg.querySelector('input'), list = bg.querySelector('.pal-list');
+  let sel = 0, items = CMDS;
+  const close = () => bg.remove();
+  const render = () => {
+    const q = inp.value.toLowerCase().trim();
+    items = CMDS.filter((c) => !q || (c.t + ' ' + c.hint).toLowerCase().includes(q));
+    sel = Math.min(sel, Math.max(0, items.length - 1));
+    list.innerHTML = items.length ? items.map((c, i) => `<div class="pal-item ${i === sel ? 'on' : ''}" data-i="${i}">${icon(c.ic, 16)}<span>${esc(c.t)}</span><em>${esc(c.hint)}</em></div>`).join('') : '<div class="pal-empty">Ничего не найдено</div>';
+    list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  };
+  inp.oninput = () => { sel = 0; render(); };
+  inp.onkeydown = (e) => {
+    if (e.key === 'ArrowDown') { sel = (sel + 1) % items.length; render(); e.preventDefault(); }
+    if (e.key === 'ArrowUp') { sel = (sel - 1 + items.length) % items.length; render(); e.preventDefault(); }
+    if (e.key === 'Enter' && items[sel]) { close(); items[sel].run(); }
+    if (e.key === 'Escape') close();
+  };
+  list.onclick = (e) => { const it = e.target.closest('.pal-item'); if (it) { close(); items[+it.dataset.i].run(); } };
+  bg.onmousedown = (e) => { if (e.target === bg) close(); };
+  render(); inp.focus();
+}
+addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === '~' || e.code === 'Backquote') && cfg.registered) { e.preventDefault(); openIDE(); }
+});
+setInterval(() => { if (cfg.registered && vision.source) { const c = document.querySelector('#tbStatus .tchip:nth-child(2)'); if (c) c.lastChild.textContent = vision.fps + ' FPS'; } }, 1000);
 
 // ---------------------------------------------------------------- автозапуск зрения и подключения
 async function autoStartServices() {

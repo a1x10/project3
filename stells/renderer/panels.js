@@ -3,11 +3,13 @@ import { link } from './link.js';
 import { vision, Vision } from './vision.js';
 import { Drone3D } from './three-bg.js';
 import { openIDE } from './ide.js';
+import { icon } from './icons.js';
 
 const api = window.stells;
 export const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 export function toast(text, kind = '') {
-  const el = h(`<div class="toast ${kind}"></div>`); el.textContent = text;
+  const ic = { ok: 'circle-check', err: 'circle-x', warn: 'triangle-alert' }[kind] || 'info';
+  const el = h(`<div class="toast ${kind}">${icon(ic, 17)}<span></span></div>`); el.querySelector('span').textContent = text;
   document.getElementById('toasts').appendChild(el);
   setTimeout(() => { el.style.transition = '.4s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, 4200);
 }
@@ -41,10 +43,10 @@ function mountVideo(root, id, { pick = false } = {}) {
 }
 function sourceBar() {
   return `<div class="row wrap" style="margin-top:10px">
-    <button class="btn sm" data-src="webcam">📷 Камера компьютера</button>
-    <button class="btn sm" data-src="board">🛰 Камера платы</button>
-    <button class="btn sm" data-src="py">🐍 Python-зрение</button>
-    <button class="btn sm ghost" data-src="stop">■ Стоп</button>
+    <button class="btn sm" data-src="webcam">${icon('camera', 15)} Камера ПК</button>
+    <button class="btn sm" data-src="board">${icon('satellite-dish', 15)} Камера платы</button>
+    <button class="btn sm" data-src="py">${icon('code', 15)} Python-зрение</button>
+    <button class="btn sm ghost" data-src="stop">${icon('circle-stop', 15)} Стоп</button>
   </div>`;
 }
 function bindSources(root) {
@@ -66,10 +68,10 @@ function connBar(kind) {
     <div class="row wrap">
       <input class="input" style="flex:1;min-width:160px" placeholder="IP платы, напр. 192.168.1.50" data-host>
       <button class="btn sm primary" data-c="ws">Подключить</button>
-      <button class="btn sm" data-c="find">🔍 Найти в сети</button>
-      <button class="btn sm" data-c="usb">USB / Serial</button>
-      ${kind === 'drone' ? '<button class="btn sm" data-c="ide">⌨ Свой коннектор</button>' : ''}
-      <button class="btn sm" data-c="sim">Симулятор</button>
+      <button class="btn sm" data-c="find">${icon('radar', 15)} Найти в сети</button>
+      <button class="btn sm" data-c="usb">${icon('usb', 15)} USB</button>
+      ${kind === 'drone' ? `<button class="btn sm" data-c="ide">${icon('square-terminal', 15)} Свой коннектор</button>` : ''}
+      <button class="btn sm" data-c="sim">${icon('orbit', 15)} Симулятор</button>
       <button class="btn sm ghost" data-c="off">Отключить</button>
     </div>
   </div>`;
@@ -130,7 +132,7 @@ function makeStick(el, { springY = true, onMove }) {
 export function mountDrone(root, cfg) {
   root.innerHTML = '';
   const page = h(`<div class="page">
-    <div class="page-head"><h2>🛸 Пульт дрона</h2><span class="badge beta">закрытое тестирование</span><span class="spacer"></span>
+    <div class="page-head"><h2>Пульт дрона</h2><span class="badge beta">закрытое тестирование</span><span class="spacer"></span>
       <span class="badge" id="dMode">—</span><span class="badge" id="dArm">DISARMED</span></div>
     ${connBar('drone')}
     <div class="cols main-side">
@@ -156,10 +158,10 @@ export function mountDrone(root, cfg) {
             <div class="btngrid">
               <button class="btn sm ok" data-d="arm">ARM</button>
               <button class="btn sm danger" data-d="disarm">DISARM</button>
-              <button class="btn sm" data-d="rtl">⌂ RTL</button>
-              <button class="btn sm primary" data-d="takeoff">▲ Взлёт</button>
-              <button class="btn sm" data-d="land">▼ Посадка</button>
-              <button class="btn sm danger" data-d="kill">✋ СТОП</button>
+              <button class="btn sm" data-d="rtl">${icon('house-plus', 15)} RTL</button>
+              <button class="btn sm primary" data-d="takeoff">${icon('plane-takeoff', 15)} Взлёт</button>
+              <button class="btn sm" data-d="land">${icon('plane-landing', 15)} Посадка</button>
+              <button class="btn sm danger" data-d="kill">${icon('octagon-x', 15)} СТОП</button>
             </div>
             <div class="row"><span class="small muted">Высота взлёта</span><input type="range" class="slider" id="toAlt" min="1" max="30" value="3"><b id="toAltV">3 м</b></div>
             <select class="input" id="dModeSel" style="padding:9px 12px">
@@ -175,7 +177,7 @@ export function mountDrone(root, cfg) {
       </div>
     </div>
     <div class="script-card" id="scriptCard">
-      <div class="row"><h3 style="margin:0">⌨ Ни один вариант не подошёл? Напишите свой скрипт подключения</h3><span class="spacer"></span><span class="badge beta">наведите / нажмите</span></div>
+      <div class="row"><h3 style="margin:0">${icon('file-code-2', 18)} Ни один вариант не подошёл? Напишите свой скрипт подключения</h3><span class="spacer"></span><span class="badge beta">наведите / нажмите</span></div>
       <div class="muted small" style="margin-top:6px">Откроется редактор как VS Code с настоящим терминалом. Пишите коннектор на любом языке (Python, C++, Rust, Go, JS, Lua…), нажмите «Подключить коннектор» — и пульт начнёт управлять вашим дроном через него.</div>
       <div class="code-peek">for line in sys.stdin:\n    cmd = json.loads(line)        # команды пульта\n    my_drone.send(cmd)             # ваш протокол\n    print(json.dumps(telemetry))   # телеметрия в пульт</div>
     </div>
@@ -214,6 +216,15 @@ export function mountDrone(root, cfg) {
   const offConn = bindConn(page, cfg, () => openIDE({ onConnected: betaOffer }));
   bindSources(page);
   const offVideo = mountVideo(page, 'dVideo', { pick: true });
+  page.querySelector('#dVideo').insertAdjacentHTML('beforeend', `<svg class="ahi" viewBox="-200 -120 400 240" preserveAspectRatio="xMidYMid meet">
+    <g id="ahiH"><line x1="-260" y1="0" x2="-40" y2="0"/><line x1="40" y1="0" x2="260" y2="0"/>
+      ${[-20, -10, 10, 20].map((p) => `<line x1="-22" y1="${p * 3}" x2="22" y2="${p * 3}" class="lad"/><text x="28" y="${p * 3 + 4}">${-p}</text>`).join('')}</g>
+    <path d="M-34 0 H-12 L0 10 L12 0 H34" class="ac"/><circle r="2.5" class="ac-dot"/>
+    <g transform="translate(0,-92)"><path d="M0 0 l-5 -7 h10z" class="ac-dot"/></g>
+    <text id="ahiHdg" x="0" y="-102" class="hdg">000°</text>
+    <text id="ahiAlt" x="190" y="4" class="side r">ALT 0.0</text><text id="ahiSpd" x="-190" y="4" class="side">SPD 0.0</text>
+  </svg>`);
+  const ahiH = page.querySelector('#ahiH');
   let d3;
   try { d3 = new Drone3D(page.querySelector('#d3d')); }
   catch { d3 = { set() {}, dispose() {} }; page.querySelector('#d3d').innerHTML = '<div class="empty muted small" style="display:grid;place-items:center;height:100%">3D недоступно: обновите драйвер видеокарты</div>'; }
@@ -275,6 +286,10 @@ export function mountDrone(root, cfg) {
   const onTel = (e) => {
     const d = e.detail.drone || {};
     d3.set(d);
+    ahiH.setAttribute('transform', `rotate(${-(d.roll || 0)}) translate(0 ${(d.pitch || 0) * 3})`);
+    page.querySelector('#ahiHdg').textContent = String(Math.round(((d.yaw ?? d.heading ?? 0) + 360) % 360)).padStart(3, '0') + '°';
+    page.querySelector('#ahiAlt').textContent = 'ALT ' + Number(d.alt || 0).toFixed(1) + ' м';
+    page.querySelector('#ahiSpd').textContent = 'SPD ' + Number(d.speed || 0).toFixed(1);
     page.querySelector('#dArm').textContent = d.armed ? 'ARMED' : 'DISARMED';
     page.querySelector('#dArm').className = 'badge ' + (d.armed ? 'live' : '');
     page.querySelector('#dMode').textContent = d.mode || '—';
@@ -283,11 +298,11 @@ export function mountDrone(root, cfg) {
   };
   link.addEventListener('telemetry', onTel);
   onTel({ detail: link.telemetry });
-  const onState = () => (page.querySelector('#dLink').textContent = link.label());
+  const onState = () => { page.querySelector('#dLink').textContent = link.label(); page.querySelector('.ahi').classList.toggle('on', link.state === 'online'); };
   link.addEventListener('state', onState); onState();
 
   function betaOffer() {
-    modal(`<h2>🎉 Коннектор подключён к дрону</h2>
+    modal(`<div class="modal-ic ok">${icon('circle-check', 26)}</div><h2>Коннектор подключён к дрону</h2>
       <p class="lead">Система предлагает <b>бета-тест программы управления дроном с ИИ</b>: AI-пилот использует машинное зрение,
       чтобы следовать за выбранным объектом и держать его в центре кадра.</p>
       <div class="howto">
@@ -307,7 +322,7 @@ export function mountDrone(root, cfg) {
 export function mountCar(root, cfg) {
   root.innerHTML = '';
   const page = h(`<div class="page">
-    <div class="page-head"><h2>🚗 Пульт машины / ровера</h2><span class="badge beta">закрытое тестирование</span></div>
+    <div class="page-head"><h2>Пульт машины</h2><span class="badge beta">закрытое тестирование</span></div>
     ${connBar('car')}
     <div class="cols main-side">
       <div class="box glass">${videoBox('cVideo')}${sourceBar()}
@@ -317,7 +332,7 @@ export function mountCar(root, cfg) {
         <div style="display:grid;place-items:center"><div class="stick" id="cStick" style="width:220px;height:220px"><div class="knob"></div></div></div>
         <div class="row" style="margin-top:14px"><span class="small muted">Макс. скорость</span><input type="range" class="slider" id="cSpeed" min="10" max="100" value="60"><b id="cSpeedV">60%</b></div>
         <div class="btngrid" style="margin-top:12px">
-          <button class="btn sm" id="cLights">💡 Фары</button><button class="btn sm danger" id="cStop">■ Стоп</button><button class="btn sm" id="cHorn">📢 Сигнал</button>
+          <button class="btn sm" id="cLights">${icon('lightbulb', 15)} Фары</button><button class="btn sm danger" id="cStop">${icon('circle-stop', 15)} Стоп</button><button class="btn sm" id="cHorn">${icon('megaphone', 15)} Сигнал</button>
         </div>
         <div class="kv" style="margin-top:14px" id="cTel"></div>
         <p class="small muted">Клавиатура: W/A/S/D или стрелки. Схема: L298N/TB6612, левый мотор GPIO 17/18, правый 22/23, фары GPIO 27 (меняется в stells-config.json).</p>
@@ -358,7 +373,7 @@ export function mountRobot(root, cfg) {
   root.innerHTML = '';
   const names = ['Основание', 'Плечо', 'Локоть', 'Захват'];
   const page = h(`<div class="page">
-    <div class="page-head"><h2>🤖 Пульт робота</h2><span class="badge beta">закрытое тестирование</span></div>
+    <div class="page-head"><h2>Пульт робота</h2><span class="badge beta">закрытое тестирование</span></div>
     ${connBar('robot')}
     <div class="cols main-side">
       <div class="box glass">${videoBox('rVideo')}${sourceBar()}</div>
@@ -366,8 +381,8 @@ export function mountRobot(root, cfg) {
         <h3>Сервоприводы</h3>
         ${names.map((n, i) => `<div class="field"><label>${n} — <b id="sv${i}">0°</b></label><input type="range" class="slider" min="-90" max="90" value="0" data-servo="${i}"></div>`).join('')}
         <div class="btngrid">
-          <button class="btn sm" data-pose="home">⌂ Домой</button><button class="btn sm" data-pose="grab">✊ Взять</button><button class="btn sm" data-pose="drop">✋ Отпустить</button>
-          <button class="btn sm" data-pose="rec">● Запомнить</button><button class="btn sm" data-pose="play">▶ Повторить</button><button class="btn sm danger" data-pose="stop">■ Стоп</button>
+          <button class="btn sm" data-pose="home">${icon('house', 15)} Домой</button><button class="btn sm" data-pose="grab">${icon('grab', 15)} Взять</button><button class="btn sm" data-pose="drop">${icon('hand', 15)} Отпустить</button>
+          <button class="btn sm" data-pose="rec">${icon('circle-dot', 15)} Запомнить</button><button class="btn sm" data-pose="play">${icon('play', 15)} Повторить</button><button class="btn sm danger" data-pose="stop">${icon('circle-stop', 15)} Стоп</button>
         </div>
         <p class="small muted">Сервоприводы: GPIO 12, 13, 19, 26 (Linux-платы) или пины 3, 10, 11, 12 (Arduino).</p>
       </div>
@@ -395,8 +410,8 @@ export function mountRobot(root, cfg) {
 export function mountCameras(root, cfg) {
   root.innerHTML = '';
   const page = h(`<div class="page">
-    <div class="page-head"><h2>📷 Камеры с ИИ</h2><span class="badge beta">закрытое тестирование</span><span class="spacer"></span>
-      <button class="btn sm" id="camSnap">📸 Снимок</button><button class="btn sm" id="camRec">⏺ Запись</button></div>
+    <div class="page-head"><h2>Камеры с ИИ</h2><span class="badge beta">закрытое тестирование</span><span class="spacer"></span>
+      <button class="btn sm" id="camSnap">${icon('image', 15)} Снимок</button><button class="btn sm" id="camRec">${icon('circle-dot', 15)} Запись</button></div>
     <div class="cols main-side">
       <div class="box glass">${videoBox('camMain')}${sourceBar()}
         <div class="row wrap" style="margin-top:10px">
@@ -442,15 +457,16 @@ export function mountCameras(root, cfg) {
   };
   let rec = null;
   page.querySelector('#camRec').onclick = (e) => {
+    const btn = e.currentTarget;
     if (rec) { rec.stop(); return; }
     const chunks = [];
     rec = new MediaRecorder(mainCanvas.captureStream(25), { mimeType: 'video/webm' });
     rec.ondataavailable = (ev) => chunks.push(ev.data);
     rec.onstop = () => {
       const a = document.createElement('a'); a.download = `stells-${Date.now()}.webm`; a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })); a.click();
-      e.target.textContent = '⏺ Запись'; e.target.classList.remove('danger'); rec = null; toast('Видео сохранено', 'ok');
+      btn.innerHTML = icon('circle-dot', 15) + ' Запись'; btn.classList.remove('danger'); rec = null; toast('Видео сохранено', 'ok');
     };
-    rec.start(); e.target.textContent = '■ Остановить'; e.target.classList.add('danger');
+    rec.start(); btn.innerHTML = icon('circle-stop', 15) + ' Остановить'; btn.classList.add('danger');
   };
   const extra = page.querySelector('#camExtra');
   const addCam = (url) => {
@@ -469,7 +485,7 @@ export function mountCameras(root, cfg) {
 export function mountWol(root, cfg) {
   root.innerHTML = '';
   const page = h(`<div class="page">
-    <div class="page-head"><h2>⚡ Wake-on-LAN</h2><span class="badge beta">закрытое тестирование</span></div>
+    <div class="page-head"><h2>Wake-on-LAN</h2><span class="badge beta">закрытое тестирование</span></div>
     <div class="cols main-side">
       <div class="box glass">
         <h3>Устройства</h3>
@@ -500,9 +516,9 @@ export function mountWol(root, cfg) {
     l.innerHTML = devices.length ? '' : '<p class="muted">Добавьте компьютер, который нужно включать по сети.</p>';
     devices.forEach((d, i) => {
       const row = h(`<div class="row" style="padding:12px;border-radius:12px;background:rgba(255,255,255,.03);margin-bottom:8px">
-        <div class="avatar" style="width:34px;height:34px;font-size:15px">⚡</div>
+        <div class="tile-ic">${icon('power', 18)}</div>
         <div style="flex:1"><b></b><div class="small muted"></div></div>
-        <button class="btn sm primary" data-w="pc">Разбудить</button><button class="btn sm" data-w="board">Через плату</button><button class="btn sm ghost" data-w="del">✕</button></div>`);
+        <button class="btn sm primary" data-w="pc">Разбудить</button><button class="btn sm" data-w="board">Через плату</button><button class="btn sm ghost icon-only" data-w="del" title="Удалить">${icon('trash-2', 15)}</button></div>`);
       row.querySelector('b').textContent = d.name; row.querySelector('.small').textContent = `${d.mac} · ${d.broadcast}`;
       row.querySelector('[data-w=pc]').onclick = async () => { const r = await api.net.wol(d); toast(r.ok ? `Магический пакет отправлен на ${d.name}` : r.reason, r.ok ? 'ok' : 'err'); };
       row.querySelector('[data-w=board]').onclick = () => toast(link.send({ type: 'wol', mac: d.mac, broadcast: d.broadcast }) ? 'Команда отправлена через плату' : 'Плата не подключена', link.state === 'online' ? 'ok' : 'warn');
