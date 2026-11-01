@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     tags: ['stells-v*']
+    branches: ['claude/vigilant-brown-mk0i81']
+    paths: ['stells/**', '.github/workflows/stells-build.yml']
 
 jobs:
   build:
