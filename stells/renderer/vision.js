@@ -173,20 +173,20 @@ export class Vision extends EventTarget {
       const s = Math.min(cv.width / sw, cv.height / sh), dw = sw * s, dh = sh * s, ox = (cv.width - dw) / 2, oy = (cv.height - dh) / 2;
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
       ctx.drawImage(src, ox, oy, dw, dh);
-      ctx.lineWidth = 2; ctx.font = '600 12px Inter, Segoe UI, sans-serif';
+      ctx.lineWidth = 1.5; ctx.font = '600 11px "Inter Variable", Inter, Segoe UI, sans-serif';
       for (const d of this.detections) {
         const [x, y, w, h] = d.box;
-        const col = d.kind === 'target' ? '#ff4fd8' : d.kind === 'model' ? '#ffc24a' : '#38e1ff';
+        const col = d.kind === 'target' ? '#c4b5ff' : d.kind === 'model' ? '#f5b544' : '#86aaff';
         ctx.strokeStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 12;
         ctx.strokeRect(ox + x * dw, oy + y * dh, w * dw, h * dh);
         ctx.shadowBlur = 0;
         const txt = `${d.label} ${Math.round(d.score * 100)}%`;
         ctx.fillStyle = col; ctx.fillRect(ox + x * dw, oy + y * dh - 18, ctx.measureText(txt).width + 10, 18);
-        ctx.fillStyle = '#050713'; ctx.fillText(txt, ox + x * dw + 5, oy + y * dh - 5);
+        ctx.fillStyle = '#06070a'; ctx.fillText(txt, ox + x * dw + 5, oy + y * dh - 5);
       }
       if (this.target) {
         const tx = ox + this.target.x * dw, ty = oy + this.target.y * dh;
-        ctx.strokeStyle = '#ff4fd8'; ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI * 2); ctx.moveTo(tx - 24, ty); ctx.lineTo(tx + 24, ty); ctx.moveTo(tx, ty - 24); ctx.lineTo(tx, ty + 24); ctx.stroke();
+        ctx.strokeStyle = '#c4b5ff'; ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI * 2); ctx.moveTo(tx - 24, ty); ctx.lineTo(tx + 24, ty); ctx.moveTo(tx, ty - 24); ctx.lineTo(tx, ty + 24); ctx.stroke();
       }
     }
   }

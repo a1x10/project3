@@ -22,8 +22,8 @@ export class Scene3D {
   build() {
     const s = this.scene;
     s.add(new THREE.AmbientLight(0x6070ff, 0.5));
-    const l1 = new THREE.PointLight(0x38e1ff, 120, 60); l1.position.set(8, 6, 10); s.add(l1);
-    const l2 = new THREE.PointLight(0xff4fd8, 90, 60); l2.position.set(-10, -6, 6); s.add(l2);
+    const l1 = new THREE.PointLight(0x7aa2ff, 110, 60); l1.position.set(8, 6, 10); s.add(l1);
+    const l2 = new THREE.PointLight(0x8b6cff, 80, 60); l2.position.set(-10, -6, 6); s.add(l2);
 
     // звёзды
     const N = 2600, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
@@ -31,31 +31,31 @@ export class Scene3D {
     for (let i = 0; i < N; i++) {
       const r = 40 + Math.random() * 140, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
       pos.set([r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th), r * Math.cos(ph)], i * 3);
-      c.setHSL(0.55 + Math.random() * 0.3, 0.8, 0.6 + Math.random() * 0.4);
+      c.setHSL(0.6 + Math.random() * 0.1, 0.45, 0.7 + Math.random() * 0.3);
       col.set([c.r, c.g, c.b], i * 3);
     }
     const sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    this.stars = new THREE.Points(sg, new THREE.PointsMaterial({ size: 0.35, vertexColors: true, transparent: true, opacity: 0.9, sizeAttenuation: true }));
+    this.stars = new THREE.Points(sg, new THREE.PointsMaterial({ size: 0.28, vertexColors: true, transparent: true, opacity: 0.75, sizeAttenuation: true }));
     s.add(this.stars);
 
     // ядро ИИ
     this.core = new THREE.Group();
     const ico = new THREE.Mesh(new THREE.IcosahedronGeometry(3.2, 1),
-      new THREE.MeshBasicMaterial({ color: 0x38e1ff, wireframe: true, transparent: true, opacity: 0.35 }));
-    const inner = new THREE.Mesh(new THREE.IcosahedronGeometry(2.1, 4),
-      new THREE.MeshStandardMaterial({ color: 0x1a1240, emissive: 0x5b2cff, emissiveIntensity: 0.9, roughness: 0.25, metalness: 0.7, flatShading: true }));
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(4.6, 32, 32),
-      new THREE.MeshBasicMaterial({ color: 0x8a5cff, transparent: true, opacity: 0.06, side: THREE.BackSide }));
+      new THREE.MeshBasicMaterial({ color: 0x86aaff, wireframe: true, transparent: true, opacity: 0.18 }));
+    const inner = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25, 3),
+      new THREE.MeshStandardMaterial({ color: 0x0c1230, emissive: 0x2f4fd6, emissiveIntensity: 0.35, roughness: 0.3, metalness: 0.85, flatShading: true }));
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(3.6, 32, 32),
+      new THREE.MeshBasicMaterial({ color: 0x5b8cff, transparent: true, opacity: 0.018, side: THREE.BackSide }));
     this.core.add(ico, inner, glow);
     this.coreIco = ico; this.coreInner = inner;
     this.rings = [];
     for (let i = 0; i < 3; i++) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(5 + i * 1.3, 0.025, 8, 160),
-        new THREE.MeshBasicMaterial({ color: [0x38e1ff, 0x8a5cff, 0xff4fd8][i], transparent: true, opacity: 0.55 }));
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(5 + i * 1.3, 0.012, 8, 200),
+        new THREE.MeshBasicMaterial({ color: [0x86aaff, 0x5b8cff, 0x8b6cff][i], transparent: true, opacity: 0.4 }));
       ring.rotation.set(Math.random() * 3, Math.random() * 3, 0);
-      const sat = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      const sat = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
       sat.position.x = 5 + i * 1.3;
       ring.add(sat);
       this.rings.push(ring); this.core.add(ring);
@@ -68,7 +68,7 @@ export class Scene3D {
     s.add(this.board);
 
     // сетка-«пол»
-    const grid = new THREE.GridHelper(200, 80, 0x2b2f6a, 0x15183a);
+    const grid = new THREE.GridHelper(200, 80, 0x1c2547, 0x10142a);
     grid.position.y = -9; grid.material.transparent = true; grid.material.opacity = 0.35;
     this.grid = grid; s.add(grid);
   }
@@ -96,7 +96,7 @@ export class Scene3D {
     this.core.scale.setScalar(sc);
 
     const target = {
-      core: [0, 0, 18], board: [6, 1, 20], dash: [9, -1, 26], splash: [0, 0, 14],
+      core: [0, 0, 18], board: [6, 1, 20], dash: [9, -1, 26], splash: [0, 0, 24],
     }[this.mode] || [0, 0, 18];
     this.core.position.x += ((this.mode === 'board' ? -7 : this.mode === 'dash' ? 7 : 0) - this.core.position.x) * 0.04;
     this.cam.position.x += (target[0] + this.mouse.x * 3 - this.cam.position.x) * 0.04;
@@ -127,7 +127,7 @@ function makeBoard() {
   const led = add(new THREE.SphereGeometry(0.06, 8, 8), new THREE.MeshBasicMaterial({ color: 0x3dffa8 }), -2.7, 0.15, 1.7);
   led.userData.led = true;
   const wire = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(6.2, 0.2, 4.2)),
-    new THREE.LineBasicMaterial({ color: 0x38e1ff, transparent: true, opacity: 0.6 }));
+    new THREE.LineBasicMaterial({ color: 0x86aaff, transparent: true, opacity: 0.45 }));
   g.add(wire);
   g.position.set(5, 0, 0);
   g.scale.setScalar(1.25);
@@ -147,10 +147,10 @@ export class Drone3D {
     this.cam.lookAt(0, 0, 0);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(3, 6, 4); this.scene.add(d);
-    const p = new THREE.PointLight(0x38e1ff, 30, 20); p.position.set(-3, 2, 3); this.scene.add(p);
+    const p = new THREE.PointLight(0x7aa2ff, 30, 20); p.position.set(-3, 2, 3); this.scene.add(p);
     this.drone = new THREE.Group();
     const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.35, 1.5), new THREE.MeshStandardMaterial({ color: 0x1b1f3a, metalness: 0.7, roughness: 0.3 }));
-    const top = new THREE.Mesh(new THREE.SphereGeometry(0.45, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8a5cff, metalness: 0.5, roughness: 0.2, emissive: 0x2a1060 }));
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.45, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x5b8cff, metalness: 0.6, roughness: 0.2, emissive: 0x10224f }));
     top.position.y = 0.17;
     const camM = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 16), new THREE.MeshStandardMaterial({ color: 0x050505, metalness: 1, roughness: 0.1 }));
     camM.position.set(0, -0.15, 0.75);
@@ -163,13 +163,13 @@ export class Drone3D {
       a.position.set(x * 0.7, 0, z * 0.7);
       const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.22, 16), new THREE.MeshStandardMaterial({ color: 0x777c99, metalness: 0.9, roughness: 0.2 }));
       motor.position.set(x * 1.4, 0.08, z * 1.4);
-      const prop = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.02, 32), new THREE.MeshBasicMaterial({ color: i < 2 ? 0x38e1ff : 0xff4fd8, transparent: true, opacity: 0.35 }));
+      const prop = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.02, 32), new THREE.MeshBasicMaterial({ color: i < 2 ? 0x86aaff : 0xf5b544, transparent: true, opacity: 0.35 }));
       prop.position.set(x * 1.4, 0.22, z * 1.4);
       this.props.push(prop);
       this.drone.add(a, motor, prop);
     });
     this.scene.add(this.drone);
-    const grid = new THREE.GridHelper(12, 24, 0x38e1ff, 0x1d2250); grid.position.y = -1.3; grid.material.transparent = true; grid.material.opacity = 0.4;
+    const grid = new THREE.GridHelper(12, 24, 0x3b5bb0, 0x161c38); grid.position.y = -1.3; grid.material.transparent = true; grid.material.opacity = 0.4;
     this.scene.add(grid);
     this.grid = grid;
     this.att = { roll: 0, pitch: 0, yaw: 0, alt: 0, armed: false };
