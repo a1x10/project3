@@ -4,6 +4,7 @@ import { vision, Vision } from './vision.js';
 import { Drone3D } from './three-bg.js';
 import { openIDE } from './ide.js';
 import { icon } from './icons.js';
+import { commander, autopilot, arena, arenaStop, selfCheck, rcToMotors, MOTORS } from './autopilot.js';
 
 const api = window.stells;
 export const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -151,6 +152,38 @@ export function mountDrone(root, cfg) {
     </div>
     <div class="cols main-side">
       <div class="box glass">
+        <h3>${icon('sparkles', 16)} ИИ-командир дрона <span class="muted small" style="font-weight:500">управление русским текстом</span><span class="spacer"></span>
+          <button class="switch" id="cmdSwitch" role="switch" aria-checked="false"><i></i><span>ВЫКЛЮЧЕНО</span></button></h3>
+        <div class="quick" id="cmdQuick">
+          ${['Взлёт 3 м и найди человека', 'Взлети на 3 метра, поверни направо на 90 градусов, пролети вперёд 2 секунды и следи за целью', 'Взлети на 4 метра и пролети змейкой', 'Облети круг 10 секунд и вернись домой', 'Сделай квадрат и сядь']
+            .map((q) => `<button class="btn sm" data-q="${q}">${q.length > 42 ? q.slice(0, 40) + '…' : q}</button>`).join('')}
+        </div>
+        <div class="cmd-row">
+          <input class="input" id="cmdText" placeholder="Например: взлети на 3 метра, поверни налево на 45 градусов и следи за целью">
+          <button class="btn primary" id="cmdRun">${icon('play', 15)} Выполнить</button>
+          <button class="btn danger" id="cmdStop">${icon('octagon-x', 15)} Стоп</button>
+        </div>
+        <div class="cols c2" style="margin-top:12px">
+          <div><div class="mini-h">План полёта</div><ol class="plan" id="cmdPlan"><li class="plan-empty">Включите ИИ-командира и отдайте команду</li></ol></div>
+          <div><div class="mini-h">Журнал и телеметрия</div><div class="log" id="cmdLog" style="height:170px"></div></div>
+        </div>
+      </div>
+      <div class="box glass">
+        <h3>${icon('gauge', 16)} 4 мотора · ШИМ <span class="spacer"></span><span class="badge" id="mArmed">DISARM</span></h3>
+        <div class="quad" id="quad">
+          ${[2, 0, 1, 3].map((i) => `<div class="mot" data-m="${i}"><div class="mot-h"><b>${MOTORS[i].id}</b><span>${MOTORS[i].pos}</span></div><div class="mot-bar"><i></i></div><div class="mot-v">1000</div></div>`).join('')}
+          <div class="quad-body">${icon('drone', 40)}<span>вперёд ↑</span></div>
+        </div>
+        <div class="row wrap" style="margin-top:12px">
+          <button class="btn sm" id="arenaBtn">${icon('box', 15)} 3D-арена (C)</button>
+          <button class="btn sm" id="selfBtn">${icon('shield-check', 15)} Самодиагностика</button>
+        </div>
+        <p class="small muted" style="margin:10px 0 0">Тест без дрона: включите 3D-арену — ИИ увидит красную мишень и будет за ней следить. На плате с прямыми ESC моторы получают эти же значения ШИМ.</p>
+        <div class="warn" style="margin-top:10px;font-size:12px"><i class="wi">${icon('triangle-alert', 16)}</i><div>Прямые ESC на GPIO не стабилизируют дрон в воздухе — для полётов нужен полётный контроллер (ArduPilot / PX4 / Betaflight), агент сам переключится на MAVLink. Прямой режим — для стендовой проверки моторов <b>без пропеллеров</b>.</div></div>
+      </div>
+    </div>
+    <div class="cols main-side">
+      <div class="box glass">
         <h3>Управление <span class="spacer"></span><span class="muted small">клавиатура: W/S газ, A/D рыскание, стрелки — крен/тангаж · геймпад поддерживается</span></h3>
         <div class="sticks">
           <div><div class="stick" id="stL"><div class="knob"></div></div><div class="stick-label">Газ / Рыскание</div></div>
@@ -279,8 +312,88 @@ export function mountDrone(root, cfg) {
       rc.yaw = Math.max(-1, Math.min(1, (vision.target.x - 0.5) * 2.2));
       rc.pitch = Math.max(-0.5, Math.min(0.5, (0.12 - vision.target.size) * 3));
     }
-    if (link.state === 'online') link.send({ type: 'rc', ...rc });
+    const out = autopilot.active ? autopilot.rc : rc;
+    if (autopilot.active) { L.set(out.yaw, 1 - out.throttle * 2); R.set(out.roll, -out.pitch); }
+    const armed = !!link.telemetry.drone?.armed;
+    const pwm = rcToMotors(out, armed);
+    drawMotors(pwm, armed);
+    if (link.state === 'online') {
+      link.send({ type: 'rc', ...out });
+      if (link.via === 'ws') link.send({ type: 'motors', pwm, armed });
+    }
   }, 50);
+
+  // ---- ИИ-командир
+  const sw = page.querySelector('#cmdSwitch'), cmdLog = page.querySelector('#cmdLog'), planEl = page.querySelector('#cmdPlan');
+  const logLine = (t) => { cmdLog.textContent += `[${new Date().toLocaleTimeString()}] ${t}\n`; cmdLog.scrollTop = cmdLog.scrollHeight; };
+  const setSwitch = (on) => {
+    commander.enabled = on;
+    sw.classList.toggle('on', on); sw.setAttribute('aria-checked', on);
+    sw.querySelector('span').textContent = on ? 'ВКЛЮЧЕНО' : 'ВЫКЛЮЧЕНО';
+    logLine(on ? 'ИИ-управление русским текстом включено.' : 'ИИ-управление выключено.');
+  };
+  sw.onclick = () => setSwitch(!commander.enabled);
+  setSwitch(commander.enabled);
+  const renderPlan = (plan, cur) => {
+    planEl.innerHTML = plan.map((st, i) => `<li class="ps-${st.state}${i === cur ? ' cur' : ''}"><span class="pi">${st.state === 'done' ? icon('check', 12) : st.state === 'skip' ? icon('x', 12) : st.state === 'fail' ? icon('x', 12) : i + 1}</span>${st.label}</li>`).join('');
+  };
+  const runText = (text) => {
+    const r = commander.parse(text);
+    if (!r.ok) { toast(r.reason, 'warn'); logLine(r.reason); return; }
+    logLine('Команда: ' + text);
+    renderPlan(r.steps.map((x) => ({ ...x, state: x.kind === 'unknown' ? 'skip' : 'wait' })), -1);
+    autopilot.run(r.steps);
+  };
+  page.querySelector('#cmdRun').onclick = () => { const t = page.querySelector('#cmdText').value.trim(); if (t) runText(t); };
+  page.querySelector('#cmdText').onkeydown = (e) => { if (e.key === 'Enter') page.querySelector('#cmdRun').click(); };
+  page.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => { page.querySelector('#cmdText').value = b.dataset.q; runText(b.dataset.q); }));
+  page.querySelector('#cmdStop').onclick = () => { autopilot.abort(); link.send({ type: 'drone', cmd: 'land' }); logLine('Стоп: план прерван, посадка.'); };
+  const onPlan = (e) => renderPlan(e.detail.plan, e.detail.cur);
+  const onLog = (e) => logLine(e.detail);
+  const onPhoto = () => page.querySelector('#dVideo canvas').toBlob((b) => { const a = document.createElement('a'); a.download = `stells-ai-${Date.now()}.png`; a.href = URL.createObjectURL(b); a.click(); logLine('Снимок сохранён в «Загрузки».'); });
+  autopilot.addEventListener('plan', onPlan); autopilot.addEventListener('log', onLog); autopilot.addEventListener('photo', onPhoto);
+  let telTick = 0;
+  const onTelLog = (e) => { const d = e.detail.drone; if (autopilot.active && d && ++telTick % 10 === 0) logLine(`ALT ${Number(d.alt || 0).toFixed(1)} м · HDG ${Math.round(d.yaw || 0)}° · ${d.mode || ''}`); };
+  link.addEventListener('telemetry', onTelLog);
+
+  // ---- моторы
+  const motEls = [...page.querySelectorAll('.mot')];
+  function drawMotors(pwm, armed) {
+    for (const el of motEls) {
+      const v = pwm[+el.dataset.m];
+      el.querySelector('i').style.height = ((v - 1000) / 10) + '%';
+      el.querySelector('.mot-v').textContent = v;
+      el.classList.toggle('hot', v > 1650);
+    }
+    const b = page.querySelector('#mArmed'); b.textContent = armed ? 'ARMED' : 'DISARM'; b.className = 'badge ' + (armed ? 'live' : '');
+  }
+
+  // ---- арена и самодиагностика
+  const arenaBtn = page.querySelector('#arenaBtn');
+  const toggleArena = () => {
+    const a = arena();
+    if (a.running) { a.stop(); arenaBtn.classList.remove('primary'); logLine('3D-арена выключена.'); }
+    else {
+      try { a.start(); arenaBtn.classList.add('primary'); logLine('3D-арена включена: красная мишень летает над полем.'); }
+      catch (e) { toast('3D-арене нужен WebGL: обновите драйвер видеокарты', 'err'); }
+    }
+  };
+  arenaBtn.onclick = toggleArena;
+  page.querySelector('#selfBtn').onclick = async () => {
+    const r = await selfCheck();
+    const okAll = r.every((x) => x.ok);
+    modal(`<div class="modal-ic ${okAll ? 'ok' : 'bad'}">${icon(okAll ? 'shield-check' : 'shield-alert', 26)}</div>
+      <h2>Самодиагностика: ${okAll ? 'все узлы в порядке' : 'есть проблемы'}</h2>
+      <div class="checks">${r.map((x, i) => `<div class="chk ${x.ok ? 'ok' : 'bad'}"><span class="ci">${icon(x.ok ? 'circle-check' : 'circle-x', 18)}</span><div><b>${i + 1}. ${x.name}</b><span>${x.detail}</span></div></div>`).join('')}</div>
+      <div class="actions"><button class="btn primary" data-close>Готово</button></div>`);
+    logLine('Самодиагностика: ' + r.map((x) => (x.ok ? 'OK' : 'ОШИБКА') + ' ' + x.name).join('; '));
+  };
+  const hot = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.ctrlKey || e.metaKey) return;
+    if (e.code === 'KeyG') setSwitch(!commander.enabled);
+    if (e.code === 'KeyC') toggleArena();
+  };
+  addEventListener('keydown', hot);
 
   const tel = page.querySelector('#dTel');
   const onTel = (e) => {
@@ -294,7 +407,7 @@ export function mountDrone(root, cfg) {
     page.querySelector('#dArm').className = 'badge ' + (d.armed ? 'live' : '');
     page.querySelector('#dMode').textContent = d.mode || '—';
     const items = [['Высота', d.alt, 'м'], ['Батарея', d.battery, '%'], ['Скорость', d.speed, 'м/с'], ['Крен', d.roll, '°'], ['Тангаж', d.pitch, '°'], ['Курс', d.yaw ?? d.heading, '°'], ['Спутники', d.sats, ''], ['Широта', d.lat?.toFixed?.(5), ''], ['Долгота', d.lon?.toFixed?.(5), '']];
-    tel.innerHTML = items.map(([k, v, u]) => `<div class="stat" style="padding:8px 10px;background:rgba(255,255,255,.03);border-radius:10px"><div class="k" style="font-size:10px">${k}</div><div class="v" style="font-size:17px">${v ?? '—'} <small>${v != null ? u : ''}</small></div></div>`).join('');
+    tel.innerHTML = items.map(([k, v, u]) => `<div class="stat" style="padding:8px 10px;background:rgba(255,255,255,.03);border-radius:10px"><div class="k" style="font-size:10px">${k}</div><div class="v" style="font-size:17px">${typeof v === 'number' ? +v.toFixed(Math.abs(v) < 100 ? 2 : 1) : v ?? '—'} <small>${v != null ? u : ''}</small></div></div>`).join('');
   };
   link.addEventListener('telemetry', onTel);
   onTel({ detail: link.telemetry });
@@ -315,7 +428,12 @@ export function mountDrone(root, cfg) {
       (m) => { m.querySelector('[data-yes]').onclick = () => { aiBox.checked = true; toast('AI-пилот (бета) включён. Нажмите на цель в видео.', 'ok'); m.close(); }; });
   }
 
-  return () => { offConn(); offVideo(); d3.dispose(); clearInterval(loop); removeEventListener('keydown', kd); removeEventListener('keyup', ku); link.removeEventListener('telemetry', onTel); link.removeEventListener('state', onState); };
+  return () => {
+    offConn(); offVideo(); d3.dispose(); clearInterval(loop); removeEventListener('keydown', kd); removeEventListener('keyup', ku); removeEventListener('keydown', hot);
+    link.removeEventListener('telemetry', onTel); link.removeEventListener('telemetry', onTelLog); link.removeEventListener('state', onState);
+    autopilot.removeEventListener('plan', onPlan); autopilot.removeEventListener('log', onLog); autopilot.removeEventListener('photo', onPhoto);
+    autopilot.abort(); arenaStop();
+  };
 }
 
 // ---------------------------------------------------------------- МАШИНА

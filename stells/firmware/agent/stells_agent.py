@@ -57,7 +57,9 @@ DEFAULTS = {
     "vision": {"motion": True, "model": "", "confidence": 0.45},
     "car": {"left": [17, 18], "right": [22, 23], "lights": 27},
     "robot": {"servos": [12, 13, 19, 26]},
-    "drone": {"connection": "/dev/serial0", "baud": 57600},
+    "drone": {"connection": "/dev/serial0", "baud": 57600,
+              # driver: auto | esc | mavlink | sim. esc — регуляторы напрямую на GPIO (M1..M4)
+              "driver": "auto", "escPins": [17, 18, 27, 22], "escHz": 50, "failsafeMs": 500},
 }
 
 
@@ -407,6 +409,98 @@ class Drone:
                                        int(throttle * 1000), int(yaw * 1000), 0)
 
 
+class MotorDriver:
+    """Прямое управление 4 регуляторами (ESC) с GPIO платы.
+    Raspberry Pi 4/3/Zero -> pigpio (нужен демон pigpiod), Raspberry Pi 5 -> lgpio.
+    Без библиотек — режим симуляции (значения пишутся в лог/телеметрию).
+    Порядок: M1 передний правый, M2 задний левый, M3 передний левый, M4 задний правый."""
+    PWM_MIN, PWM_MAX = 1000, 2000
+
+    def __init__(self, cfg):
+        d = cfg["drone"]
+        self.pins = list(d.get("escPins", [17, 18, 27, 22]))
+        self.hz = int(d.get("escHz", 50))
+        self.failsafe = int(d.get("failsafeMs", 500)) / 1000
+        self.pwm = [self.PWM_MIN] * 4
+        self.armed = False
+        self.last = 0
+        self.backend = "sim"
+        self.h = None
+        model = ""
+        try:
+            with open("/proc/device-tree/model") as f:
+                model = f.read()
+        except Exception:
+            pass
+        want = d.get("driver", "auto")
+        if want in ("auto", "esc"):
+            if "Raspberry Pi 5" in model:
+                self._try_lgpio() or self._try_pigpio()
+            else:
+                self._try_pigpio() or self._try_lgpio()
+        log(f"Драйвер моторов: {self.backend} (пины {self.pins})")
+        self.write([self.PWM_MIN] * 4)
+        threading.Thread(target=self._watchdog, daemon=True).start()
+
+    def _try_pigpio(self):
+        try:
+            import pigpio
+            pi = pigpio.pi()
+            if not pi.connected:
+                raise RuntimeError("демон pigpiod не запущен (sudo systemctl enable --now pigpiod)")
+            self.h, self.backend = pi, "pigpio"
+            return True
+        except Exception as e:
+            log("pigpio недоступен:", e)
+            return False
+
+    def _try_lgpio(self):
+        try:
+            import lgpio
+            for chip in (4, 0):  # на Pi 5 GPIO заголовка — gpiochip4 (или 0 на новых ядрах)
+                try:
+                    h = lgpio.gpiochip_open(chip)
+                    break
+                except Exception:
+                    h = None
+            if h is None:
+                raise RuntimeError("gpiochip не найден")
+            for p in self.pins:
+                lgpio.gpio_claim_output(h, p)
+            self.h, self.backend, self._lg = h, "lgpio", lgpio
+            return True
+        except Exception as e:
+            log("lgpio недоступен:", e)
+            return False
+
+    def write(self, pwm):
+        pwm = [int(max(self.PWM_MIN, min(self.PWM_MAX, v))) for v in pwm]
+        self.pwm = pwm
+        if self.backend == "pigpio":
+            for p, v in zip(self.pins, pwm):
+                self.h.set_servo_pulsewidth(p, v)
+        elif self.backend == "lgpio":
+            for p, v in zip(self.pins, pwm):
+                self._lg.tx_servo(self.h, p, v, self.hz)
+
+    def set(self, pwm, armed):
+        self.last = time.time()
+        self.armed = bool(armed)
+        self.write(pwm if self.armed else [self.PWM_MIN] * 4)
+
+    def disarm(self):
+        self.armed = False
+        self.write([self.PWM_MIN] * 4)
+
+    def _watchdog(self):
+        # нет команд дольше failsafe -> моторы в 1000 мкс
+        while True:
+            time.sleep(0.1)
+            if self.armed and time.time() - self.last > self.failsafe:
+                log("Failsafe: связь потеряна — DISARM")
+                self.disarm()
+
+
 def send_wol(mac, broadcast="255.255.255.255", port=9):
     hexmac = "".join(c for c in mac if c in "0123456789abcdefABCDEF")
     pkt = b"\xff" * 6 + bytes.fromhex(hexmac) * 16
@@ -431,7 +525,7 @@ def discovery_responder(cfg):
             s.sendto(json.dumps(info).encode(), addr)
 
 
-async def main_ws(cfg, vision, car, robot, drone):
+async def main_ws(cfg, vision, car, robot, drone, motors=None):
     async def handler(ws):
         authed = not cfg.get("token")
         log("Подключился клиент", ws.remote_address)
@@ -443,7 +537,11 @@ async def main_ws(cfg, vision, car, robot, drone):
                 # failsafe: нет команд движения 1.5 с -> стоп моторов
                 if time.time() - last_cmd > 1.5:
                     car.stop()
-                await ws.send(json.dumps({"type": "telemetry", "system": system_info(), "drone": drone.tel,
+                tel = dict(drone.tel)
+                if motors:
+                    tel.update(motors=motors.pwm, motorDriver=motors.backend)
+                    tel.setdefault("armed", motors.armed)
+                await ws.send(json.dumps({"type": "telemetry", "system": system_info(), "drone": tel,
                                           "vision": {"fps": round(vision.fps, 1) if vision else 0,
                                                      "detections": vision.detections if vision else []}}))
 
@@ -476,7 +574,15 @@ async def main_ws(cfg, vision, car, robot, drone):
                 elif t == "servo":
                     robot.set(int(msg.get("index", 0)), msg.get("angle", 0))
                 elif t == "drone":
+                    if msg.get("cmd") == "disarm" and motors:
+                        motors.disarm()
                     await ws.send(json.dumps({"type": "ack", "drone": drone.command(msg.get("cmd"), msg.get("value"))}))
+                elif t == "motors":
+                    if motors and (drone.m is None):          # есть полётный контроллер -> управляем через MAVLink
+                        motors.set(msg.get("pwm", [1000] * 4), msg.get("armed", False))
+                    if msg.get("ack"):
+                        await ws.send(json.dumps({"type": "ack", "motors": {"driver": motors.backend if motors else "none",
+                                                                            "pwm": motors.pwm if motors else [1000] * 4}}))
                 elif t == "rc":
                     drone.rc(float(msg.get("roll", 0)), float(msg.get("pitch", 0)),
                              float(msg.get("yaw", 0)), float(msg.get("throttle", 0)))
@@ -493,6 +599,8 @@ async def main_ws(cfg, vision, car, robot, drone):
         finally:
             task.cancel()
             car.stop()
+            if motors:
+                motors.disarm()
 
     async with websockets.serve(handler, "0.0.0.0", cfg["agent"]["port"], max_size=2 ** 22):
         log(f"WebSocket-управление: ws://0.0.0.0:{cfg['agent']['port']}")
@@ -514,10 +622,12 @@ def main():
     threading.Thread(target=discovery_responder, args=(cfg,), daemon=True).start()
 
     car, robot, drone = Car(cfg), Robot(cfg), Drone(cfg)
+    want = cfg["drone"].get("driver", "auto")
+    motors = MotorDriver(cfg) if want in ("auto", "esc", "sim") else None
     if websockets is None:
         log("Нет библиотеки websockets: pip install websockets")
         return
-    asyncio.run(main_ws(cfg, vision, car, robot, drone))
+    asyncio.run(main_ws(cfg, vision, car, robot, drone, motors))
 
 
 if __name__ == "__main__":

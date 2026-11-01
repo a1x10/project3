@@ -53,8 +53,18 @@ export class Vision extends EventTarget {
     return { ok: true };
   }
 
+  startCanvas(cv, label = 'Холст') {
+    this.stop();
+    this.canvasSrc = cv;
+    this.source = { kind: 'canvas', label };
+    this._run();
+    this.dispatchEvent(new Event('started'));
+    return { ok: true };
+  }
+
   stop() {
     this.running = false;
+    this.canvasSrc = null;
     if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; }
     if (this.img) { this.img.src = ''; this.img = null; }
     this.source = null; this.prev = null; this.detections = []; this.target = null;
@@ -62,6 +72,7 @@ export class Vision extends EventTarget {
   }
 
   frameSource() {
+    if (this.canvasSrc) return this.canvasSrc;
     if (this.img) return this.img.naturalWidth ? this.img : null;
     return this.video.readyState >= 2 ? this.video : null;
   }
@@ -169,7 +180,7 @@ export class Vision extends EventTarget {
       const ctx = cv.getContext('2d');
       const r = cv.getBoundingClientRect();
       if (cv.width !== Math.round(r.width) || cv.height !== Math.round(r.height)) { cv.width = Math.round(r.width) || 640; cv.height = Math.round(r.height) || 400; }
-      const sw = src.videoWidth || src.naturalWidth || 640, sh = src.videoHeight || src.naturalHeight || 480;
+      const sw = src.videoWidth || src.naturalWidth || src.width || 640, sh = src.videoHeight || src.naturalHeight || src.height || 480;
       const s = Math.min(cv.width / sw, cv.height / sh), dw = sw * s, dh = sh * s, ox = (cv.width - dw) / 2, oy = (cv.height - dh) / 2;
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
       ctx.drawImage(src, ox, oy, dw, dh);
