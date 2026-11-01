@@ -13,6 +13,13 @@ if command -v apt-get >/dev/null; then
   apt-get install -y python3 python3-venv python3-pip python3-opencv libatlas-base-dev || \
   apt-get install -y python3 python3-venv python3-pip
 fi
+# Драйвер регуляторов ESC: Pi 5 -> lgpio, Pi 4/3/Zero -> pigpio
+if grep -q "Raspberry Pi 5" /proc/device-tree/model 2>/dev/null; then
+  apt-get install -y python3-lgpio || true
+elif command -v apt-get >/dev/null; then
+  apt-get install -y pigpio python3-pigpio || true
+  systemctl enable --now pigpiod 2>/dev/null || true
+fi
 
 mkdir -p "$TARGET/models"
 cp -r "$DIR"/* "$TARGET/"
@@ -50,4 +57,5 @@ echo "== Готово! Агент запущен и будет стартова�
 echo "   Адрес для приложения STELLS: $IP  (порт 8765)"
 echo "   Видео: http://$IP:8766/stream"
 echo "   Логи:  journalctl -u stells-agent -f"
+echo "   Самодиагностика (без пропеллеров!): $TARGET/venv/bin/python $TARGET/self_check.py"
 echo "   Если что-то не получается — служба поддержки: WhatsApp +7 702 538 97 49, Telegram @Stells_help"

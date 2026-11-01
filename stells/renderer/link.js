@@ -111,20 +111,27 @@ export class Link extends EventTarget {
   // ---- встроенный симулятор (для обучения и проверки пульта без железа)
   startSim() {
     this.disconnect().then(() => {
-      const s = { alt: 0, battery: 100, armed: false, mode: 'STABILIZE', roll: 0, pitch: 0, yaw: 0, speed: 0, climb: 0, sats: 14, lat: 43.2389, lon: 76.8897, rc: { roll: 0, pitch: 0, yaw: 0, throttle: 0 }, target: null };
+      const s = { x: 0, y: 0, alt: 0, battery: 100, armed: false, mode: 'STABILIZE', roll: 0, pitch: 0, yaw: 0, speed: 0, climb: 0, sats: 14, lat: 43.2389, lon: 76.8897, rc: { roll: 0, pitch: 0, yaw: 0, throttle: 0 }, target: null };
       this.sim = { s, timer: setInterval(() => {
         const rc = s.rc;
         s.roll += (rc.roll * 30 - s.roll) * 0.2;
         s.pitch += (rc.pitch * 30 - s.pitch) * 0.2;
         s.yaw = (s.yaw + rc.yaw * 6 + 360) % 360;
         if (s.armed) {
-          if (s.target != null) { s.climb = Math.max(-2, Math.min(2, s.target - s.alt)); if (Math.abs(s.target - s.alt) < 0.05) s.target = null; }
+          if (s.target != null) { const d = s.target - s.alt; s.climb = Math.sign(d) * Math.max(0.6, Math.min(2, Math.abs(d))); if (Math.abs(d) < 0.08) { s.alt = s.target; s.target = null; s.climb = 0; } }
           else s.climb = (rc.throttle - 0.5) * 4;
-          if (s.mode === 'LAND' || s.mode === 'RTL') s.climb = -1;
+          if (s.mode === 'LAND') s.climb = -1;
+          if (s.mode === 'RTL') {
+            const d = Math.hypot(s.x, s.y);
+            if (d > 0.3) { s.x -= s.x / d * Math.min(d, 0.25); s.y -= s.y / d * Math.min(d, 0.25); s.climb = Math.max(0, 3 - s.alt); }
+            else s.climb = -1;
+          }
           s.alt = Math.max(0, s.alt + s.climb * 0.1);
           if (s.alt === 0 && (s.mode === 'LAND' || s.mode === 'RTL')) { s.armed = false; s.mode = 'STABILIZE'; }
           s.battery = Math.max(0, s.battery - 0.01);
           s.speed = Math.hypot(s.roll, s.pitch) / 4;
+          const yr = s.yaw * Math.PI / 180, vf = s.pitch / 30 * 3 * 0.1, vr = s.roll / 30 * 3 * 0.1;
+          s.x += Math.sin(yr) * vf + Math.cos(yr) * vr; s.y += -Math.cos(yr) * vf + Math.sin(yr) * vr;
           s.lat += Math.cos(s.yaw * Math.PI / 180) * -s.pitch * 1e-7;
           s.lon += Math.sin(s.yaw * Math.PI / 180) * s.roll * 1e-7;
         } else { s.climb = 0; s.speed = 0; }
