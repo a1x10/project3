@@ -1,0 +1,73 @@
+{
+  "name": "stells",
+  "productName": "STELLS",
+  "version": "1.0.0",
+  "description": "STELLS — управление ИИ-моделями и машинным зрением на одноплатных компьютерах. Проект Алексея (@l3xn0).",
+  "main": "main.js",
+  "author": "Алексей (@l3xn0) — проект STELLS",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "keygen": "node tools/keygen.js",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "kz.stells.app",
+    "productName": "STELLS",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "firmware/**",
+      "vision/**",
+      "models.json",
+      "key-secret.json",
+      "node_modules/**",
+      "!node_modules/electron*/**"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "syncDesktopName": true
+    }
+  },
+  "repository": "github:a1x10/project3",
+  "desktopName": "stells.desktop"
+}

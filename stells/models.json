@@ -1,0 +1,11 @@
+{
+  "_comment": "Каталог моделей STELLS. Заполните url (GitHub Releases, свой сервер, Hugging Face) — приложение скачает файл в папку моделей. Пустой url = модель ещё не подключена разработчиком.",
+  "models": [
+    { "id": "stells-llm",    "type": "LLM",  "name": "STELLS LLM",         "file": "stells-llm.gguf",     "url": "", "minRam": 16, "desc": "Большая языковая модель: диалог, код, рассуждения." },
+    { "id": "stells-lm",     "type": "LM",   "name": "STELLS LM",          "file": "stells-lm.gguf",      "url": "", "minRam": 8,  "desc": "Языковая модель: текст, команды, автоматизация." },
+    { "id": "stells-vision", "type": "CV",   "name": "STELLS Vision",      "file": "stells-vision.onnx",  "url": "", "minRam": 2,  "desc": "Машинное зрение: объекты, люди, движение, трекинг." },
+    { "id": "stells-vlm",    "type": "VLM",  "name": "STELLS VLM",         "file": "stells-vlm.gguf",     "url": "", "minRam": 16, "desc": "Зрение + язык: описывает, что видит камера, отвечает на вопросы по картинке." },
+    { "id": "stells-slm",    "type": "SLM",  "name": "STELLS SLM",         "file": "stells-slm.gguf",     "url": "", "minRam": 4,  "desc": "Малая языковая модель: работает прямо на плате." },
+    { "id": "stells-lmm",    "type": "LMM",  "name": "STELLS LMM",         "file": "stells-lmm.gguf",     "url": "", "minRam": 24, "desc": "Мультимодальная модель: текст, изображения, звук." }
+  ]
+}
