@@ -12,6 +12,7 @@ import {
   getUsers,
   saveUsers,
   logoutUser,
+  changePassword,
   checkUserLimit,
   recordUsage,
   getProjects,
@@ -339,6 +340,22 @@ export default function App() {
     }
   };
 
+  const handleChangePassword = () => {
+    if (!currentUser) return;
+    const oldPass = window.prompt("Текущий пароль:");
+    if (oldPass === null) return;
+    const newPass = window.prompt("Новый пароль (не короче 8 символов):");
+    if (newPass === null) return;
+    try {
+      const updated = changePassword(currentUser.id, oldPass, newPass);
+      setCurrentUser(updated);
+      setAllUsers(getUsers());
+      alert("Пароль изменён");
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   const currentProject = projects.find((p) => p.id === activeProjectId) || projects[0];
   const currentChat = currentProject?.chats?.find((c) => c.id === activeChatId) || currentProject?.chats?.[0];
   const userPlanInfo = PLANS[currentUser?.plan || "free"];
@@ -396,10 +413,10 @@ export default function App() {
           <button
             className="topbtn"
             onClick={() => setProviderModalOpen(true)}
-            title="Выбор AI-провайдера (ChatGPT, Claude, Gemini, Kimi, Qwen, Local)"
+            title="Выбор AI-провайдера (FreeLLMAPI, ChatGPT, Claude, Gemini, Kimi, Qwen, Local)"
           >
             <Icon name="sparkles" size={15} />
-            <span>AI: {PRESET_PROVIDERS.find((p) => p.id === providerConfig.activeProviderId)?.name?.split(" ")[0] || "Local"}</span>
+            <span>AI: {(() => { const p = PRESET_PROVIDERS.find((x) => x.id === providerConfig.activeProviderId); return p ? p.shortName || p.name.split(" ")[0] : "FreeLLMAPI"; })()}</span>
           </button>
           <div className="topbar-sep" />
           <button
@@ -450,6 +467,9 @@ export default function App() {
 
               <div className="user-info-card">
                 <span className="user-name-label">{currentUser.username}</span>
+                <button className="user-logout-btn" onClick={handleChangePassword} title="Сменить пароль">
+                  Пароль
+                </button>
                 <button
                   className="user-logout-btn"
                   onClick={() => {
@@ -481,6 +501,13 @@ export default function App() {
         </div>
       </header>
 
+      {currentUser?.mustChangePassword && (
+        <div className="security-banner">
+          Пароль этой учётной записи был опубликован в исходном коде старой версии. Смените его прямо сейчас.
+          <button onClick={handleChangePassword}>Сменить пароль</button>
+        </div>
+      )}
+
       <div className="builder-main">
         <ProjectSidebar
           projects={projects}
@@ -508,6 +535,7 @@ export default function App() {
             onSaveMessages={handleSaveMessages}
             onOpenAuth={() => setAuthModalOpen(true)}
             onOpenPlans={() => setPlansModalOpen(true)}
+            providerConfig={providerConfig}
           />
         </aside>
 

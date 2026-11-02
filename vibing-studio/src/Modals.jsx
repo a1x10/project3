@@ -3,6 +3,7 @@ import Icon from "./Icons.jsx";
 import {
   loginUser,
   registerUser,
+  hasAdmin,
   PLANS,
   getActivationKeys,
   createActivationKey,
@@ -60,6 +61,9 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess }) {
 
         <form onSubmit={handleSubmit} className="modal-form">
           {error && <div className="form-alert error">{error}</div>}
+          {isRegister && !hasAdmin() && (
+            <div className="form-alert success">Это первая учётная запись — она станет владельцем и администратором студии.</div>
+          )}
 
           <div className="form-group">
             <label>{isRegister ? "Логин (никнейм)" : "Логин или Email"}</label>
@@ -68,7 +72,7 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess }) {
               className="modal-input"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder={isRegister ? "alex_vibes" : "admin или ваш email"}
+              placeholder={isRegister ? "alex_vibes" : "логин или email"}
               autoFocus
               required
             />
@@ -95,7 +99,8 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess }) {
               className="modal-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder={isRegister ? "не короче 8 символов" : "••••••••"}
+              minLength={isRegister ? 8 : undefined}
               required
             />
           </div>
@@ -165,16 +170,32 @@ export function SubscriptionModal({ isOpen, onClose, currentUser, onPlanChange }
                   <li>{p.id === "free" ? "Базовая скорость" : "Приоритетная очередь"}</li>
                   <li>Поддержка всех моделей</li>
                 </ul>
-                <button
-                  className={`plan-select-btn ${isCurrent ? "active" : ""}`}
-                  disabled={isCurrent}
-                  onClick={() => {
-                    onPlanChange(p.id);
-                    onClose();
-                  }}
-                >
-                  {isCurrent ? "Активен" : "Выбрать план"}
-                </button>
+                {(() => {
+                  const isAdmin = currentUser?.role === "admin";
+                  const paid = p.id !== "free";
+                  if (isCurrent) return <button className="plan-select-btn active" disabled>Активен</button>;
+                  if (paid && !isAdmin)
+                    return (
+                      <button
+                        className="plan-select-btn"
+                        onClick={() => document.querySelector('.redeem-form input[name="promoKey"]')?.focus()}
+                        title="Платные тарифы подключаются ключом активации от администратора"
+                      >
+                        По ключу активации
+                      </button>
+                    );
+                  return (
+                    <button
+                      className="plan-select-btn"
+                      onClick={() => {
+                        onPlanChange(p.id);
+                        onClose();
+                      }}
+                    >
+                      {paid ? "Выбрать план" : "Перейти на Free"}
+                    </button>
+                  );
+                })()}
               </div>
             );
           })}
@@ -192,6 +213,10 @@ export function SubscriptionModal({ isOpen, onClose, currentUser, onPlanChange }
               const input = e.target.elements.promoKey;
               const val = input.value.trim();
               if (!val) return;
+              if (!currentUser) {
+                alert("Сначала войдите в аккаунт");
+                return;
+              }
               try {
                 const res = redeemActivationKey(currentUser.id, val);
                 onPlanChange(res.plan);
@@ -365,7 +390,7 @@ export function AdminModal({ isOpen, onClose, users, onUpdateUsers }) {
                       >
                         Сбросить
                       </button>
-                      {u.role !== "admin" && u.username !== "taranka" && (
+                      {u.role !== "admin" && (
                         <button
                           className="admin-mini-btn danger"
                           onClick={() => handleDeleteUser(u.id)}
