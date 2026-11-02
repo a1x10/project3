@@ -187,13 +187,55 @@ export function installedMode(cfg = routerConfig()) {
 
 // ---------------------------------------------------------------- install / start / stop
 
-export async function install(cfg = routerConfig(), { mode = "auto", log = noop } = {}) {
-  if (mode === "auto") {
+/** Node versions the router supports when built from source (its package.json engines). */
+export function nodeSupportsSource(version = process.versions.node) {
+  const [major, minor] = version.split(".").map(Number);
+  return !(major < 20 || (major === 20 && minor < 18) || major >= 25);
+}
+
+/** Launch Docker Desktop (Windows/macOS) and wait until the daemon answers. */
+export async function startDockerDesktop({ log = noop, timeoutMs = 180_000 } = {}) {
+  let launched = false;
+  if (IS_WIN) {
+    const candidates = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA]
+      .filter(Boolean)
+      .map((d) => path.join(d, "Docker", "Docker", "Docker Desktop.exe"));
+    const exe = candidates.find((p) => fs.existsSync(p));
+    if (exe) {
+      spawn(exe, [], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      launched = true;
+    }
+  } else if (process.platform === "darwin") {
+    launched = run("open", ["-a", "Docker"], { quiet: true }).ok;
+  }
+  if (!launched) return false;
+  log("Запускаю Docker Desktop и жду, пока он будет готов (до 3 минут)…");
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
     const eng = detectEngine();
-    if (eng?.running) mode = "docker";
-    else {
-      if (eng && !eng.running) log(`${eng.engine} установлен, но не запущен — ставлю роутер из исходников (запустите ${eng.engine} и выполните 'install --mode docker', если нужен контейнер).`);
-      mode = "source";
+    if (eng?.running) return true;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return false;
+}
+
+export async function install(cfg = routerConfig(), { mode = "auto", log = noop } = {}) {
+  if (mode === "auto" || mode === "docker") {
+    let eng = detectEngine();
+    if (eng && !eng.running && (await startDockerDesktop({ log }))) eng = detectEngine();
+    if (mode === "auto") {
+      if (eng?.running) mode = "docker";
+      else if (nodeSupportsSource()) {
+        if (eng) log(`${eng.engine} установлен, но не запущен — ставлю роутер из исходников.`);
+        mode = "source";
+      } else {
+        throw new Error(
+          `Для сборки роутера из исходников нужен Node.js 20.18–24 (сейчас ${process.versions.node}), а Docker ${eng ? "не запущен" : "не установлен"}. ` +
+            (eng
+              ? "Запустите Docker Desktop и повторите: node install.mjs --router-mode docker"
+              : "Установите Docker Desktop (winget install Docker.DockerDesktop) или Node.js 22 LTS (winget install OpenJS.NodeJS.LTS) и повторите установку.")
+        );
+      }
     }
   }
   fs.mkdirSync(cfg.dir, { recursive: true });
@@ -201,16 +243,14 @@ export async function install(cfg = routerConfig(), { mode = "auto", log = noop 
   if (mode === "docker") {
     const eng = detectEngine();
     if (!eng) throw new Error("Docker или Podman не найдены.");
-    if (!eng.running) throw new Error(`${eng.engine} не запущен. Запустите Docker Desktop / службу docker и повторите.`);
+    if (!eng.running) throw new Error(`${eng.engine} не запущен. Запустите Docker Desktop (дождитесь «Engine running») и повторите: node install.mjs --router-mode docker`);
     writeComposeFile(cfg);
     log(`Скачиваю образ ${IMAGE}…`);
     if (!compose(eng, ["pull"], cfg).ok) throw new Error("Не удалось скачать образ роутера.");
     log("Запускаю контейнер…");
     if (!compose(eng, ["up", "-d"], cfg).ok) throw new Error("Не удалось запустить контейнер роутера.");
   } else if (mode === "source") {
-    const major = Number(process.versions.node.split(".")[0]);
-    const minor = Number(process.versions.node.split(".")[1]);
-    if (major < 20 || (major === 20 && minor < 18) || major >= 25) throw new Error(`Для роутера нужен Node.js от 20.18 до 24 (сейчас ${process.versions.node}).`);
+    if (!nodeSupportsSource()) throw new Error(`Для сборки роутера из исходников нужен Node.js 20.18–24 (сейчас ${process.versions.node}). Используйте Docker: node install.mjs --router-mode docker, или поставьте Node.js 22 LTS.`);
     await fetchSource(cfg, log);
     const npm = which("npm");
     if (!npm) throw new Error("npm не найден.");
@@ -265,8 +305,9 @@ export async function start(cfg = routerConfig(), { log = noop, mode = installed
   if (await ping(cfg)) return { started: false, running: true, mode };
   if (!mode) throw new Error("Роутер FreeLLMAPI не установлен. Запустите установщик (install.sh / install.ps1) или: node tools/freellmapi-router.mjs install");
   if (mode === "docker") {
-    const eng = detectEngine();
+    let eng = detectEngine();
     if (!eng) throw new Error("Docker/Podman не найдены, а роутер установлен как контейнер.");
+    if (!eng.running && (await startDockerDesktop({ log }))) eng = detectEngine();
     if (!eng.running) throw new Error(`${eng.engine} не запущен — запустите Docker Desktop / службу docker.`);
     log("Запускаю контейнер FreeLLMAPI…");
     if (!compose(eng, ["up", "-d"], cfg, { quiet: true }).ok) throw new Error("docker compose up не удался.");

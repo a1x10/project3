@@ -99,14 +99,15 @@ async function setupRouter() {
   }
   if (!running) {
     const eng = router.detectEngine();
-    console.log(dim(`    Docker/Podman: ${eng ? `${eng.engine}${eng.running ? " (запущен)" : " (не запущен)"}` : "нет"} → режим ${mode === "auto" ? (eng?.running ? "docker" : "из исходников") : mode}`));
+    console.log(dim(`    Docker/Podman: ${eng ? `${eng.engine}${eng.running ? " (запущен)" : " (не запущен)"}` : "нет"} · Node.js ${process.versions.node}${router.nodeSupportsSource() ? "" : " (для сборки роутера из исходников нужен 20.18–24 — будет использован Docker)"}`));
     try {
       const used = await router.install(cfg, { mode, log: (m) => console.log(dim(`    ${m}`)) });
       running = true;
       ok(`Роутер установлен и запущен (${used === "docker" ? "контейнер Docker/Podman" : "из исходников, фоновый процесс"}).`);
     } catch (e) {
       fail(`Роутер не установлен: ${e.message}`);
-      warn("Можно поставить его вручную: curl -fsSL https://freellmapi.co/install.sh | bash (или .exe для Windows: https://github.com/tashfeenahmed/freellmapi/releases/latest), затем запустить установщик снова.");
+      warn("После исправления просто запустите установщик ещё раз — собранное повторно не пересобирается с нуля, а роутер доустановится.");
+      warn("Альтернатива для Windows — приложение FreeLLMAPI (.exe): https://github.com/tashfeenahmed/freellmapi/releases/latest, затем: node install.mjs --router-mode skip");
       return { cfg, running: false };
     }
   }
