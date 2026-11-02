@@ -2618,3 +2618,91 @@ html.theming *, html.theming *::before, html.theming *::after {
   padding: 4px 10px;
   cursor: pointer;
 }
+
+/* ---------- Stella Cloud sign-in & account ---------- */
+.cloud-muted {
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.cloud-muted.small,
+.cloud-muted .small {
+  font-size: 12.5px;
+}
+.cloud-server-line {
+  font-size: 13px;
+  color: var(--muted);
+}
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.cloud-code {
+  font: 700 32px/1 ui-monospace, "Cascadia Code", Consolas, monospace;
+  letter-spacing: 4px;
+  text-align: center;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px dashed var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
+  user-select: all;
+}
+.cloud-pulse {
+  animation: cloudPulse 1.6s ease-in-out infinite;
+}
+@keyframes cloudPulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+.cloud-meter-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.cloud-bar {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.cloud-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #22d3ee);
+}
+.cloud-fill.hot {
+  background: #f87171;
+}
+.cloud-actions {
+  display: flex;
+  gap: 10px;
+}
+.cloud-actions .submit-btn {
+  flex: 1;
+}
+.submit-btn.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.user-logout-btn.wide {
+  width: 100%;
+  padding: 9px;
+}
+.apirow-select {
+  margin-left: auto;
+  max-width: 60%;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+}

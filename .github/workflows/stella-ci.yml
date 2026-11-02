@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    paths: ['stella-coder/**', 'vibing-studio/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', 'cloud/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
   pull_request:
-    paths: ['stella-coder/**', 'vibing-studio/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', 'cloud/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
 
 permissions:
   contents: read
@@ -49,8 +49,35 @@ jobs:
         working-directory: .
         run: ./install.sh --help-check
 
+  cloud:
+    name: stella-cloud (server, bot, site, docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm run typecheck && npm run build
+        working-directory: cloud/server
+      - run: npm ci && npm run build
+        working-directory: cloud/web
+      - run: npm i --no-save playwright && npx playwright install --with-deps chromium
+        working-directory: cloud/server
+      - run: npm test
+        working-directory: cloud/server
+      - run: docker build -t stella-cloud:ci cloud
+      - run: docker compose --env-file .env.example config -q
+        working-directory: cloud
+      - run: bash -n deploy.sh
+        working-directory: cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stella-cloud-screenshots
+          path: cloud/web/test-results/
+
   vibing-studio:
-    name: vibing-studio (build, unit, e2e)
+    name: vibing-studio (unit, e2e in Chromium and Electron)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,15 +87,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: vibing-studio/package-lock.json
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: npm ci
+        working-directory: cloud/server
       - run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - run: npm run e2e
+      - run: E2E_ELECTRON=1 xvfb-run -a npm run e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: vibing-studio-screenshots
           path: vibing-studio/test-results/
+
+  studio-windows:
+    name: Vibing AI Studio — Windows installer (.exe)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: vibing-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - name: Build NSIS installer
+        run: npm run dist:win
+        env:
+          VITE_CLOUD_URL: ${{ vars.STELLA_CLOUD_URL }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VibingAIStudio-Setup
+          path: vibing-studio/release/*.exe

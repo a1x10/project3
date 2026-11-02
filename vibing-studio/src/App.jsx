@@ -3,22 +3,10 @@ import Chat from "./Chat.jsx";
 import Preview from "./Preview.jsx";
 import Icon from "./Icons.jsx";
 import { ProjectSidebar } from "./ProjectSidebar.jsx";
-import { AuthModal, SubscriptionModal, AdminModal } from "./Modals.jsx";
+import { CloudLoginModal, AccountModal } from "./CloudModals.jsx";
 import { TemplatesModal, HistoryModal } from "./ExtraModals.jsx";
-import { ProviderSettingsModal } from "./ProviderModal.jsx";
-import { getProviderConfig, PRESET_PROVIDERS } from "./providerStore.js";
-import {
-  getCurrentUser,
-  getUsers,
-  saveUsers,
-  logoutUser,
-  changePassword,
-  checkUserLimit,
-  recordUsage,
-  getProjects,
-  saveProjects,
-  PLANS,
-} from "./authStore.js";
+import { getProjects, saveProjects } from "./projectStore.js";
+import { fetchMe, loadCredentials, logout as cloudLogout, saveCredentials } from "./cloud.js";
 
 const THEME_KEY = "vc-theme";
 const THEME_COLOR = { dark: "#13121a", light: "#f7f6fc" };
@@ -41,16 +29,46 @@ export default function App() {
   const [selectedHtml, setSelectedHtml] = useState("");
   const [, setTick] = useState(0);
 
-  // User and Auth State
-  const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
-  const [allUsers, setAllUsers] = useState(() => getUsers());
+  // Account (Stella Cloud, sign-in through the Telegram bot)
+  const [creds, setCreds] = useState(null);
+  const [credsLoaded, setCredsLoaded] = useState(false);
+  const currentUser = creds?.user || null;
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [plansModalOpen, setPlansModalOpen] = useState(false);
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [providerModalOpen, setProviderModalOpen] = useState(false);
-  const [providerConfig, setProviderConfig] = useState(() => getProviderConfig());
+
+  const refreshMe = useCallback(async (c) => {
+    const cur = c || creds;
+    if (!cur?.apiKey) return;
+    try {
+      const r = await fetchMe(cur.apiKey);
+      const next = { ...cur, user: r.user };
+      setCreds(next);
+      saveCredentials(next);
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) {
+        // key revoked, account banned or deleted
+        await saveCredentials(null);
+        setCreds(null);
+      }
+    }
+  }, [creds]);
+
+  useEffect(() => {
+    loadCredentials().then((c) => {
+      setCreds(c);
+      setCredsLoaded(true);
+      if (c) refreshMe(c);
+      else setAuthModalOpen(true);
+    });
+  }, []);
+
+  const handleLogout = async () => {
+    await cloudLogout(creds?.apiKey);
+    setCreds(null);
+    setAccountModalOpen(false);
+  };
 
 
 
@@ -73,14 +91,17 @@ export default function App() {
   const siteRef = useRef({ html: "", edited: null });
   const histRef = useRef({ stack: [], idx: -1, lastManualAt: 0 });
 
-  // Sync projects with storage
+  // Sync projects with storage — always into the account they were loaded for
+  // (the account arrives asynchronously, so never write one user's projects under another id).
+  const projectsOwnerRef = useRef("guest");
   useEffect(() => {
-    saveProjects(currentUser?.id || "guest", projects);
-  }, [projects, currentUser?.id]);
+    saveProjects(projectsOwnerRef.current, projects);
+  }, [projects]);
 
   // When user changes, reload their projects
   useEffect(() => {
-    const userProjs = getProjects(currentUser?.id || "guest");
+    projectsOwnerRef.current = currentUser?.id || "guest";
+    const userProjs = getProjects(projectsOwnerRef.current);
     setProjects(userProjs);
     if (userProjs.length > 0) {
       setActiveProjectId(userProjs[0].id);
@@ -305,60 +326,20 @@ export default function App() {
     );
   };
 
-  const handleRecordUsage = (tokens) => {
-    if (!currentUser) return { ok: false, reason: "Необходимо войти в аккаунт" };
-    const check = checkUserLimit(currentUser);
-    if (!check.ok) return check;
-    if (tokens > 0) {
-      recordUsage(currentUser.id, tokens);
-      const updated = getCurrentUser();
-      setCurrentUser(updated);
-      setAllUsers(getUsers());
-    }
-    return { ok: true };
+  // Limits are enforced by the server; after each answer refresh the counters.
+  const handleAfterRequest = () => {
+    refreshMe();
   };
-
-  const handlePlanChange = (newPlan) => {
-    if (!currentUser) return;
-    const users = getUsers().map((u) => (u.id === currentUser.id ? { ...u, plan: newPlan } : u));
-    saveUsers(users);
-    setAllUsers(users);
-    const updated = users.find((u) => u.id === currentUser.id);
-    setCurrentUser(updated);
-  };
-
-  const handleUpdateUsers = (updated) => {
-    saveUsers(updated);
-    setAllUsers(updated);
-    if (currentUser) {
-      const currentFresh = updated.find((u) => u.id === currentUser.id);
-      if (currentFresh) setCurrentUser(currentFresh);
-      else {
-        logoutUser();
-        setCurrentUser(null);
-      }
-    }
-  };
-
-  const handleChangePassword = () => {
-    if (!currentUser) return;
-    const oldPass = window.prompt("Текущий пароль:");
-    if (oldPass === null) return;
-    const newPass = window.prompt("Новый пароль (не короче 8 символов):");
-    if (newPass === null) return;
-    try {
-      const updated = changePassword(currentUser.id, oldPass, newPass);
-      setCurrentUser(updated);
-      setAllUsers(getUsers());
-      alert("Пароль изменён");
-    } catch (e) {
-      alert(e.message);
-    }
+  const handleAuthLost = async () => {
+    await saveCredentials(null);
+    setCreds(null);
+    setAuthModalOpen(true);
   };
 
   const currentProject = projects.find((p) => p.id === activeProjectId) || projects[0];
   const currentChat = currentProject?.chats?.find((c) => c.id === activeChatId) || currentProject?.chats?.[0];
-  const userPlanInfo = PLANS[currentUser?.plan || "free"];
+  const planInfo = currentUser?.planInfo;
+  const left = planInfo && planInfo.dailyRequests !== null && planInfo.dailyRequests !== undefined ? Math.max(0, planInfo.dailyRequests - (currentUser.usageToday?.requests || 0)) : null;
 
   return (
     <div className="app builder">
@@ -410,14 +391,7 @@ export default function App() {
             <Icon name="sparkles" size={15} />
             <span>Шаблоны (40+)</span>
           </button>
-          <button
-            className="topbtn"
-            onClick={() => setProviderModalOpen(true)}
-            title="Выбор AI-провайдера (FreeLLMAPI, ChatGPT, Claude, Gemini, Kimi, Qwen, Local)"
-          >
-            <Icon name="sparkles" size={15} />
-            <span>AI: {(() => { const p = PRESET_PROVIDERS.find((x) => x.id === providerConfig.activeProviderId); return p ? p.shortName || p.name.split(" ")[0] : "FreeLLMAPI"; })()}</span>
-          </button>
+
           <div className="topbar-sep" />
           <button
             className="topbtn"
@@ -439,53 +413,27 @@ export default function App() {
             </span>
           </label>
 
-          {/* User Account / Auth & Plans */}
+          {/* Account (Stella Cloud) */}
           {currentUser ? (
             <div className="user-profile-menu">
-              <button className="user-plan-pill" onClick={() => setPlansModalOpen(true)} title="Нажмите для управления тарифом">
+              <button className="user-plan-pill" onClick={() => setAccountModalOpen(true)} title="Аккаунт и лимиты">
                 <span className="plan-badge-icon">
                   <Icon name="crown" size={14} />
                 </span>
-                <span>{userPlanInfo.badge}</span>
-                {currentUser.plan !== "unlimited" && currentUser.role !== "admin" && (
-                  <small className="plan-limit-counter">
-                    ({userPlanInfo.dailyRequests - (currentUser.requestsToday || 0)} ост.)
-                  </small>
-                )}
+                <span>{planInfo?.name || currentUser.plan}</span>
+                {left !== null && currentUser.role !== "admin" && <small className="plan-limit-counter">({left} ост.)</small>}
               </button>
-
-              {currentUser.role === "admin" && (
-                <button
-                  className="admin-badge-btn"
-                  onClick={() => setAdminModalOpen(true)}
-                  title="Панель администратора"
-                >
-                  <Icon name="shield" size={14} />
-                  <span>Админка</span>
-                </button>
-              )}
-
               <div className="user-info-card">
-                <span className="user-name-label">{currentUser.username}</span>
-                <button className="user-logout-btn" onClick={handleChangePassword} title="Сменить пароль">
-                  Пароль
-                </button>
-                <button
-                  className="user-logout-btn"
-                  onClick={() => {
-                    logoutUser();
-                    setCurrentUser(null);
-                  }}
-                  title="Выйти из аккаунта"
-                >
+                <span className="user-name-label">{currentUser.name}</span>
+                <button className="user-logout-btn" onClick={handleLogout} title="Выйти из аккаунта">
                   Выйти
                 </button>
               </div>
             </div>
           ) : (
             <div className="auth-actions-group">
-              <button className="auth-btn-login" onClick={() => setAuthModalOpen(true)}>
-                Вход / Регистрация
+              <button className="auth-btn-login" onClick={() => setAuthModalOpen(true)} disabled={!credsLoaded}>
+                Войти через Telegram
               </button>
             </div>
           )}
@@ -501,12 +449,6 @@ export default function App() {
         </div>
       </header>
 
-      {currentUser?.mustChangePassword && (
-        <div className="security-banner">
-          Пароль этой учётной записи был опубликован в исходном коде старой версии. Смените его прямо сейчас.
-          <button onClick={handleChangePassword}>Сменить пароль</button>
-        </div>
-      )}
 
       <div className="builder-main">
         <ProjectSidebar
@@ -530,12 +472,13 @@ export default function App() {
             onNewSite={onNewSite}
             selectedHtml={selectedHtml}
             currentUser={currentUser}
-            onRecordUsage={handleRecordUsage}
+            apiKey={creds?.apiKey || ""}
+            onAfterRequest={handleAfterRequest}
+            onAuthLost={handleAuthLost}
             chatData={currentChat}
             onSaveMessages={handleSaveMessages}
             onOpenAuth={() => setAuthModalOpen(true)}
-            onOpenPlans={() => setPlansModalOpen(true)}
-            providerConfig={providerConfig}
+            onOpenPlans={() => setAccountModalOpen(true)}
           />
         </aside>
 
@@ -552,27 +495,21 @@ export default function App() {
       </div>
 
       {/* Modals */}
-      <AuthModal
+      <CloudLoginModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
-        onAuthSuccess={(user) => {
-          setCurrentUser(user);
-          setAllUsers(getUsers());
+        onLoggedIn={(c) => {
+          setCreds(c);
+          refreshMe(c);
         }}
       />
 
-      <SubscriptionModal
-        isOpen={plansModalOpen}
-        onClose={() => setPlansModalOpen(false)}
-        currentUser={currentUser}
-        onPlanChange={handlePlanChange}
-      />
-
-      <AdminModal
-        isOpen={adminModalOpen}
-        onClose={() => setAdminModalOpen(false)}
-        users={allUsers}
-        onUpdateUsers={handleUpdateUsers}
+      <AccountModal
+        isOpen={accountModalOpen}
+        onClose={() => setAccountModalOpen(false)}
+        user={currentUser}
+        onLogout={handleLogout}
+        onRefresh={() => refreshMe()}
       />
 
       <TemplatesModal
@@ -598,11 +535,7 @@ export default function App() {
         onSelectHistory={(to) => jump(to)}
       />
 
-      <ProviderSettingsModal
-        isOpen={providerModalOpen}
-        onClose={() => setProviderModalOpen(false)}
-        onConfigChange={(updated) => setProviderConfig(updated)}
-      />
+
     </div>
   );
 }

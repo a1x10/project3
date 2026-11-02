@@ -1,18 +1,22 @@
-// End-to-end check in a real browser: built app + `vite preview` (with the /llm proxy) against a
-// local server speaking the FreeLLMAPI/OpenAI streaming protocol.
-// Usage: npm run build && npm run e2e   (needs Playwright with Chromium installed)
+// End-to-end: the real Stella Cloud server (../cloud/server) + a fake Telegram Bot API + a fake
+// model server, driven through the built Studio UI — in Chromium (default) or in the Electron
+// desktop app (E2E_ELECTRON=1; on Linux run under xvfb-run).
+// Usage: npm run build && npm run e2e
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { chromium } = require("playwright");
+const pw = require(process.env.PLAYWRIGHT_PATH || "playwright");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const serverDir = path.resolve(root, "../cloud/server");
 const shots = path.join(root, "test-results");
-mkdirSync(shots, { recursive: true });
+fs.mkdirSync(shots, { recursive: true });
+const ELECTRON = process.env.E2E_ELECTRON === "1";
 
 const SITE = `Вот сайт:
 \`\`\`html
@@ -25,7 +29,6 @@ const SITE = `Вот сайт:
 </body></html>
 \`\`\`
 Тёплый лендинг кофейни.`;
-
 const EDIT = `Меняю заголовок.
 <<<<<<< SEARCH
 <h1 id="title">Кофейня Тест</h1>
@@ -34,22 +37,26 @@ const EDIT = `Меняю заголовок.
 >>>>>>> REPLACE
 Готово: заголовок обновлён.`;
 
-const requests = [];
-const mock = http.createServer(async (req, res) => {
+const readBody = async (req) => {
   let b = "";
   for await (const c of req) b += c;
-  requests.push({ url: req.url, auth: req.headers.authorization, body: b ? JSON.parse(b) : null });
-  if (req.headers.authorization !== "Bearer freellmapi-e2e") {
-    res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "bad key" } }));
-    return;
+  try {
+    return b ? JSON.parse(b) : {};
+  } catch {
+    return {};
   }
-  if (req.url === "/v1/models") {
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: "auto:smart" }, { id: "glm-5.3:free" }] }));
-    return;
-  }
-  const body = JSON.parse(b);
-  const sys = body.messages.find((m) => m.role === "system")?.content || "";
-  const text = body.max_tokens <= 16 ? "ок" : sys.includes("ТЕКУЩИЙ КОД САЙТА") ? EDIT : SITE;
+};
+const listen = (srv) => new Promise((r) => srv.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${srv.address().port}`)));
+
+// ---- fake model server (stands in for FreeLLMAPI)
+const upstreamRequests = [];
+const upstream = http.createServer(async (req, res) => {
+  const body = await readBody(req);
+  if (req.headers.authorization !== "Bearer router-key") return res.writeHead(401).end("{}");
+  if (req.url === "/v1/models") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: "auto" }, { id: "auto:smart" }] }));
+  upstreamRequests.push(body);
+  const sys = body.messages.map((m) => (m.role === "system" ? m.content : "")).join("\n");
+  const text = sys.includes("ТЕКУЩИЙ КОД САЙТА") ? EDIT : SITE;
   res.writeHead(200, { "content-type": "text/event-stream", "x-routed-via": "groq/llama-3.3-70b-versatile" });
   for (let i = 0; i < text.length; i += 40) {
     res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text.slice(i, i + 40) } }] })}\n\n`);
@@ -58,105 +65,205 @@ const mock = http.createServer(async (req, res) => {
   res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 900, completion_tokens: 300 } })}\n\n`);
   res.end("data: [DONE]\n\n");
 });
-await new Promise((r) => mock.listen(0, "127.0.0.1", r));
-const mockUrl = `http://127.0.0.1:${mock.address().port}`;
 
-const port = 3417;
-const preview = spawn(process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), "preview", "--port", String(port), "--strictPort"], {
-  cwd: root,
-  env: { ...process.env, FREELLMAPI_URL: mockUrl },
+// ---- fake Telegram Bot API
+const tgSent = [];
+const tgQueue = [];
+let tgWaiter = null;
+let updateId = 1;
+const telegram = http.createServer(async (req, res) => {
+  const method = req.url.split("/").pop();
+  const params = await readBody(req);
+  const reply = (result) => !res.headersSent && res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, result }));
+  if (method === "getMe") return reply({ id: 1, is_bot: true, username: "stella_e2e_bot" });
+  if (method === "getUpdates") {
+    const take = () => {
+      tgWaiter = null;
+      reply(tgQueue.splice(0));
+    };
+    if (tgQueue.length) return take();
+    const t = setTimeout(take, 300);
+    tgWaiter = () => (clearTimeout(t), take());
+    return;
+  }
+  tgSent.push({ method, params });
+  reply(method === "sendMessage" ? { message_id: tgSent.length } : true);
+});
+const tgPush = (u) => {
+  tgQueue.push({ update_id: updateId++, ...u });
+  tgWaiter?.();
+};
+const from = { id: 5150, first_name: "Анна", username: "anna", is_bot: false };
+const say = (text) => tgPush({ message: { message_id: updateId, from, chat: { id: from.id, type: "private" }, text } });
+const press = (data) => tgPush({ callback_query: { id: `cb${updateId}`, from, data, message: { message_id: 1, chat: { id: from.id, type: "private" } } } });
+async function waitTg(pred, ms = 8000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const m = tgSent.find(pred);
+    if (m) return m;
+    if (Date.now() > end) throw new Error("telegram: timeout; sent=" + JSON.stringify(tgSent.map((s) => s.params.text)));
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+const upstreamUrl = await listen(upstream);
+const tgUrl = await listen(telegram);
+
+// ---- the real Stella Cloud server
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "studio-e2e-"));
+const cloudPort = 18000 + Math.floor(Math.random() * 1000);
+const cloudUrl = `http://127.0.0.1:${cloudPort}`;
+const cloud = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "src/main.ts"], {
+  cwd: serverDir,
+  env: {
+    ...process.env,
+    PORT: String(cloudPort),
+    HOST: "127.0.0.1",
+    PUBLIC_URL: cloudUrl,
+    DATABASE_PATH: path.join(tmp, "cloud.db"),
+    TELEGRAM_BOT_TOKEN: "E2E",
+    TELEGRAM_API_URL: tgUrl,
+    ADMIN_TELEGRAM_IDS: "1",
+    UPSTREAM_BASE_URL: `${upstreamUrl}/v1`,
+    UPSTREAM_API_KEY: "router-key",
+    SYSTEM_PROMPT: "OWNER-PROMPT: ты ассистент Stella.",
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
-await new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(new Error("vite preview did not start")), 20000);
-  preview.stdout.on("data", (d) => /Local/.test(String(d)) && (clearTimeout(t), resolve()));
-  preview.on("exit", (c) => reject(new Error("vite preview exited " + c)));
-});
+let cloudLog = "";
+cloud.stdout.on("data", (d) => (cloudLog += d));
+cloud.stderr.on("data", (d) => (cloudLog += d));
+for (let i = 0; ; i++) {
+  try {
+    const r = await fetch(`${cloudUrl}/api/health`);
+    if ((await r.json()).botUsername) break;
+  } catch {
+    /* starting */
+  }
+  if (i > 100) throw new Error("cloud server did not start:\n" + cloudLog);
+  await new Promise((r) => setTimeout(r, 200));
+}
 
-const browser = await chromium.launch();
-let failed = false;
-const step = (name) => console.log("✓ " + name);
-try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  const errors = [];
+// ---- the app: Electron, or the same build in Chromium served by vite preview
+let browser;
+let electronApp;
+let preview;
+let page;
+const userData = path.join(tmp, "electron-user-data");
+async function openApp() {
+  if (ELECTRON) {
+    electronApp = await pw._electron.launch({
+      executablePath: require("electron"),
+      args: [root, ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+      env: { ...process.env, STELLA_CLOUD_URL: cloudUrl, STUDIO_USER_DATA: userData, STUDIO_E2E: "1" },
+    });
+    page = await electronApp.firstWindow();
+    await page.setViewportSize({ width: 1440, height: 900 }).catch(() => undefined);
+  } else {
+    if (!preview) {
+      const port = 3417;
+      preview = spawn(process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), "preview", "--port", String(port), "--strictPort"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("vite preview did not start")), 20000);
+        preview.stdout.on("data", (d) => /Local/.test(String(d)) && (clearTimeout(t), resolve()));
+        preview.on("exit", (c) => reject(new Error("vite preview exited " + c)));
+      });
+      browser = await pw.chromium.launch();
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await ctx.addInitScript((u) => {
+        if (window.top !== window) return; // the sandboxed site preview iframe
+        if (!localStorage.getItem("stella-cloud-url")) localStorage.setItem("stella-cloud-url", u);
+        window.open = (url) => ((window.__opened = [...(window.__opened || []), url]), null);
+      }, cloudUrl);
+      page = await ctx.newPage();
+      page.__port = port;
+    }
+    await page.goto(`http://127.0.0.1:3417/`);
+  }
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("dialog", (d) => d.accept());
-  await page.goto(`http://127.0.0.1:${port}/`);
+}
+async function closeApp() {
+  if (electronApp) await electronApp.close();
+  electronApp = null;
+}
+
+const errors = [];
+let failed = false;
+const step = (name) => console.log(`✓ ${name}${ELECTRON ? " [electron]" : ""}`);
+try {
+  await openApp();
   await page.getByText("Vibing AI Studio").first().waitFor();
-  step("app loads");
+  const code = (await page.getByTestId("login-code").textContent({ timeout: 15000 })).trim();
+  step("app starts with the Telegram sign-in dialog and a code");
 
-  await page.getByRole("button", { name: "Вход / Регистрация" }).click();
-  await page.getByRole("button", { name: "Зарегистрироваться" }).click();
-  await page.getByText("станет владельцем").waitFor();
-  const inputs = page.locator(".auth-modal input");
-  await inputs.nth(0).fill("owner");
-  await inputs.nth(1).fill("owner@example.com");
-  await inputs.nth(2).fill("super-secret-1");
-  await page.getByRole("button", { name: "Создать аккаунт" }).click();
-  await page.getByText("Админка").waitFor();
-  const stored = await page.evaluate(() => localStorage.getItem("vibing_users"));
-  if (stored.includes("super-secret-1")) throw new Error("password stored in plain text");
-  step("first account is the owner/admin, password hashed");
-
-  await page.getByRole("button", { name: /AI: FreeLLMAPI/ }).click();
-  await page.locator(".provider-modal input[type=password]").fill("freellmapi-e2e");
-  await page.getByRole("button", { name: "Загрузить модели" }).click();
-  await page.getByText("Загружено моделей: 2").waitFor();
-  await page.getByRole("button", { name: "Проверить подключение" }).click();
-  await page.getByText(/Работает: ответ «ок»/).waitFor();
-  await page.getByText(/groq\/llama-3.3-70b-versatile/).first().waitFor();
-  step("provider modal: key, model list and connection test via /llm proxy");
-  await page.screenshot({ path: path.join(shots, "1-provider.png") });
-  await page.locator(".provider-modal .modal-close").click();
+  say(`/login ${code}`);
+  const offer = await waitTg((m) => m.method === "sendMessage" && JSON.stringify(m.params.reply_markup || "").includes("approve:"));
+  if (!offer.params.text.includes(code)) throw new Error("bot did not show the code");
+  press(offer.params.reply_markup.inline_keyboard[0][0].callback_data);
+  await page.locator(".user-name-label").filter({ hasText: "Анна" }).waitFor({ timeout: 15000 });
+  await page.locator(".user-plan-pill").filter({ hasText: "Free" }).waitFor();
+  step("approved in Telegram → signed in, plan from the server shown");
+  await page.screenshot({ path: path.join(shots, `1-signed-in${ELECTRON ? "-electron" : ""}.png`) });
 
   const box = page.locator(".composer textarea");
   await box.fill("Сделай лендинг кофейни");
   await box.press("Enter");
   const frame = page.frameLocator("iframe.pv-frame");
   await frame.locator("#title").filter({ hasText: "Кофейня Тест" }).waitFor({ timeout: 20000 });
-  await page.getByText("auto:smart → groq/llama-3.3-70b-versatile").waitFor();
-  step("site generated, streamed into the preview, routed model shown");
-  await page.screenshot({ path: path.join(shots, "2-site.png") });
+  await page.getByText("→ groq/llama-3.3-70b-versatile").first().waitFor();
+  const first = upstreamRequests.at(-1);
+  if (!first.messages[0].content.startsWith("OWNER-PROMPT")) throw new Error("owner prompt was not injected: " + first.messages[0].content.slice(0, 80));
+  step("site generated through Stella Cloud with the owner's system prompt");
+  await page.screenshot({ path: path.join(shots, `2-site${ELECTRON ? "-electron" : ""}.png`) });
 
-  await page.getByText("Правлю текущий сайт").waitFor();
   await box.fill("Поменяй заголовок");
   await box.press("Enter");
   await frame.locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor({ timeout: 20000 });
   await page.getByText("Применено правок: 1 из 1").waitFor();
-  step("edit mode applies SEARCH/REPLACE to the live site");
-  await page.screenshot({ path: path.join(shots, "3-edit.png") });
+  await page.locator(".plan-limit-counter").filter({ hasText: "48 ост." }).waitFor({ timeout: 10000 });
+  step("edit mode works; server-side usage counter updates (48 left)");
 
-  const chat = requests.filter((r) => r.url === "/v1/chat/completions" && r.body.max_tokens > 16);
-  if (chat.length !== 2 || chat.some((r) => r.body.model !== "auto:smart" || !r.body.stream)) throw new Error("unexpected requests: " + JSON.stringify(chat.map((c) => c.body.model)));
-  if (!chat[1].body.messages[0].content.includes("Кофейня Тест")) throw new Error("edit request did not include current site");
-  step("requests: model auto:smart, streaming, current site sent for edits");
+  // restart: still signed in, project kept
+  if (ELECTRON) {
+    await closeApp();
+    await openApp();
+  } else await page.reload();
+  await page.locator(".user-name-label").filter({ hasText: "Анна" }).waitFor({ timeout: 15000 });
+  await page.frameLocator("iframe.pv-frame").locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor();
+  if (ELECTRON) {
+    const vault = fs.readFileSync(path.join(userData, "credentials.bin"));
+    if (vault.length < 10) throw new Error("credential vault empty");
+  }
+  step("after restart: still signed in, project restored");
 
-  await page.reload();
-  await frame.locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor();
-  await page.getByText("Поменяй заголовок").waitFor();
-  step("project, chat and site persist across reload");
-
-  // plan self-upgrade is blocked for a regular user
-  await page.getByRole("button", { name: "Выйти" }).click();
-  await page.getByRole("button", { name: "Вход / Регистрация" }).click();
-  await page.getByRole("button", { name: "Зарегистрироваться" }).click();
-  await inputs.nth(0).fill("guest_user");
-  await inputs.nth(1).fill("guest@example.com");
-  await inputs.nth(2).fill("guest-pass-1");
-  await page.getByRole("button", { name: "Создать аккаунт" }).click();
-  await page.locator(".user-plan-pill").click();
-  if ((await page.getByRole("button", { name: "Выбрать план" }).count()) !== 0) throw new Error("regular user can self-select a paid plan");
-  await page.getByRole("button", { name: "По ключу активации" }).first().waitFor();
-  step("regular users cannot self-upgrade to paid plans");
+  // the owner bans the user in Telegram → the app drops the session
+  say("/start"); // nothing: user 5150 is not admin; admin is tg id 1
+  const adminFrom = { id: 1, first_name: "Owner", username: "owner", is_bot: false };
+  tgPush({ message: { message_id: updateId, from: adminFrom, chat: { id: 1, type: "private" }, text: "/start" } });
+  await waitTg((m) => m.params.chat_id === 1);
+  tgPush({ message: { message_id: updateId, from: adminFrom, chat: { id: 1, type: "private" }, text: "/ban @anna" } });
+  await waitTg((m) => m.params.chat_id === 1 && /Заблокирован/.test(m.params.text || ""));
+  const box2 = page.locator(".composer textarea");
+  await box2.fill("Ещё правку");
+  await box2.press("Enter");
+  await page.getByTestId("login-code").waitFor({ timeout: 15000 });
+  step("account banned by the admin in Telegram → app returns to sign-in");
 
   if (errors.length) throw new Error("page errors: " + errors.join(" | "));
   step("no uncaught page errors");
 } catch (e) {
   failed = true;
   console.error("✗ " + e.message);
+  await page?.screenshot({ path: path.join(shots, `failure${ELECTRON ? "-electron" : ""}.png`) }).catch(() => undefined);
 } finally {
-  await browser.close();
-  preview.kill();
-  mock.close();
+  await closeApp().catch(() => undefined);
+  await browser?.close();
+  preview?.kill();
+  cloud.kill();
+  upstream.close();
+  telegram.close();
+  upstream.closeAllConnections?.();
+  telegram.closeAllConnections?.();
 }
 process.exit(failed ? 1 : 0);

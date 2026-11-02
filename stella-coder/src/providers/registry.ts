@@ -1,5 +1,5 @@
 import type { Settings } from '../config/settings.js';
-import { getCredential } from '../config/settings.js';
+import { credentialsFile, getCredential } from '../config/settings.js';
 import { AnthropicProvider } from './anthropic.js';
 import { BUILTIN_MODELS, BUILTIN_PROVIDERS, DEFAULT_ALIASES, DEFAULT_MODEL } from './catalog.js';
 import { GeminiProvider } from './gemini.js';
@@ -24,6 +24,25 @@ export function freellmapiBaseUrl(env: NodeJS.ProcessEnv = process.env): string 
   return `http://localhost:${port || 3001}/v1`;
 }
 
+function readCredentialsSync(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(credentialsFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** Stella Cloud gateway base URL: STELLA_CLOUD_URL, else the server saved by `stella-coder login`. */
+export function cloudBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const u = env.STELLA_CLOUD_URL || readCredentialsSync()['cloud.url'] || '';
+  return u ? `${u.replace(/\/+$/, '').replace(/\/v1$/, '')}/v1` : '';
+}
+
+/** True when the user signed in to Stella Cloud (then it is the default provider). */
+export function cloudConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!cloudBaseUrl(env) && !!(env.STELLA_CLOUD_API_KEY || readCredentialsSync()['cloud.apiKey']);
+}
+
 export interface ProviderDef {
   name: string;
   type: ProviderType;
@@ -46,6 +65,9 @@ export class ModelRegistry {
   constructor(private readonly settings: Settings) {
     for (const [name, p] of Object.entries(BUILTIN_PROVIDERS)) this.providers.set(name, { name, ...p });
     if (!settings.providers?.freellmapi?.baseUrl) this.providers.get('freellmapi')!.baseUrl = freellmapiBaseUrl();
+    const cloud = this.providers.get('cloud')!;
+    if (!settings.providers?.cloud?.baseUrl) cloud.baseUrl = cloudBaseUrl();
+    cloud.headers = { 'x-stella-client': 'stella' };
     for (const [name, p] of Object.entries(settings.providers ?? {})) {
       const base = this.providers.get(name);
       this.providers.set(name, {
@@ -84,7 +106,7 @@ export class ModelRegistry {
   }
 
   defaultModelRef(): string {
-    return this.settings.model ?? process.env.STELLA_MODEL ?? DEFAULT_MODEL;
+    return this.settings.model ?? process.env.STELLA_MODEL ?? (cloudConfigured() ? 'cloud:auto' : DEFAULT_MODEL);
   }
 
   resolve(ref?: string): ModelInfo {
@@ -135,6 +157,7 @@ export class ModelRegistry {
         p = new GeminiProvider({ name, baseUrl: def.baseUrl, apiKey, headers: def.headers });
         break;
       default:
+        if (name === 'cloud' && (!def.baseUrl || !apiKey)) throw new Error('Не выполнен вход в Stella Cloud. Выполните: stella-coder login https://ваш-сервер');
         if (!apiKey && !/localhost|127\.0\.0\.1/.test(def.baseUrl)) throw new Error(`No API key for provider "${name}". Set ${def.apiKeyEnv ?? 'an API key'} or run: stella auth set ${name}`);
         p = new OpenAICompatProvider({ name, baseUrl: def.baseUrl, apiKey, headers: def.headers });
     }
