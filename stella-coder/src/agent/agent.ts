@@ -299,7 +299,7 @@ export class Agent {
           const promptTokens = ev.usage.inputTokens + (ev.usage.cacheReadTokens ?? 0) + (ev.usage.cacheWriteTokens ?? 0);
           this.lastContext = { tokens: (promptTokens || estimateTokens(system) + estimateMessagesTokens(this.messages)) + ev.usage.outputTokens, atMessage: this.messages.length + 1 };
           await this.opts.onRecord?.({ type: 'usage', model: this.model.id, usage: ev.usage, costUsd: cost });
-          this.emit({ type: 'usage', model: this.model.id, usage: ev.usage, costUsd: cost, contextTokens: this.lastContext.tokens, contextWindow: this.model.contextWindow } as any);
+          this.emit({ type: 'usage', model: this.model.id, usage: ev.usage, costUsd: cost, contextTokens: this.lastContext.tokens, contextWindow: this.model.contextWindow, servedModel: ev.servedModel } as any);
           return { message: ev.message, stopReason: ev.stopReason };
         }
       }

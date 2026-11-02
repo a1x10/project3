@@ -13,7 +13,7 @@
 
 - **Agent loop**: запрос → сбор контекста → план → инструменты (параллельно, где безопасно) → анализ результата → следующий шаг → проверка → отчёт. Ретраи при 429/5xx, прерывание по `Esc`, сообщения «на ходу», авто-компрессия контекста.
 - **40+ инструментов**: файлы (Read/Write/Edit/MultiEdit/Delete/Move/Copy/FileInfo/DirectoryTree), поиск (Glob/Grep/SymbolSearch/ReferenceSearch/SemanticSearch/DependencySearch), терминал (Bash/PowerShell/Cmd/RunCommand/RunScript/StartProcess/ProcessStatus/StopProcess), Git, WebFetch/WebSearch, TestRunner/Linter/Formatter/Diagnostics/PackageManager, Task (субагенты), TodoWrite, Skill, Memory, Plan Mode, AskUserQuestion, плюс любые MCP-инструменты.
-- **Любые модели**: Anthropic (официальный SDK, prompt caching, effort, server-side fallbacks), OpenAI, OpenRouter, Groq, Ollama, LM Studio/vLLM и любой OpenAI-совместимый endpoint, Google Gemini (нативный API). Переключение модели посреди сессии.
+- **Любые модели**: FreeLLMAPI (по умолчанию, бесплатные модели через один роутер), Anthropic (официальный SDK, prompt caching, effort, server-side fallbacks), OpenAI, OpenRouter, Groq, Ollama, LM Studio/vLLM и любой OpenAI-совместимый endpoint, Google Gemini (нативный API). Переключение модели посреди сессии.
 - **Безопасность по умолчанию**: 5 режимов разрешений, allow/ask/deny-правила, анализ shell-команд (цепочки, подстановки, вложенные интерпретаторы), защита от path traversal и symlink-escape, конфиденциальные файлы, блокировка катастрофических команд даже в bypass-режиме, доверие к папке для проектных хуков/MCP, аудит-лог с маскировкой секретов.
 - **Сессии, чекпоинты, память**: JSONL-сессии с возобновлением, `/rewind` откатывает файлы к состоянию до любого шага (с проверкой конфликтов), долговременная память пяти типов, иерархия `STELLA.md`.
 - **Расширяемость**: Skills (`SKILL.md`), пользовательские slash-команды, субагенты (`.stella/agents/*.md`), хуки на 12 событий, MCP (stdio / Streamable HTTP / SSE), плагины.
@@ -29,7 +29,29 @@ npm run build
 npm link            # команда `stella` станет доступна глобально
 ```
 
-Укажите ключ хотя бы одного провайдера:
+### Модель по умолчанию: FreeLLMAPI
+
+STELLA по умолчанию работает через [FreeLLMAPI](https://freellmapi.co) — самохостящийся OpenAI-совместимый роутер, который распределяет запросы по бесплатным моделям десятков провайдеров (с автоматическим фолбэком при 429/5xx).
+
+```bash
+curl -fsSL https://freellmapi.co/install.sh | bash      # поднимет роутер на http://localhost:3001
+# в дашборде роутера добавьте ключи провайдеров, скопируйте единый ключ freellmapi-…
+export FREELLMAPI_API_KEY=freellmapi-...
+stella                                                  # модель freellmapi:auto:smart
+```
+
+| Модель | Что делает |
+|---|---|
+| `free` = `freellmapi:auto:smart` | роутер выбирает самую сильную доступную модель (по умолчанию) |
+| `free-fast` = `freellmapi:auto:fast` | самую быструю |
+| `freellmapi:auto` | стратегия роутера по умолчанию |
+| `freellmapi:<id>` | конкретная модель из каталога, например `freellmapi:qwen/qwen3.8-max:free` |
+
+Адрес роутера меняется переменной `FREELLMAPI_BASE_URL` (по умолчанию `http://localhost:3001/v1`). Какую модель роутер реально выбрал, видно в статус-строке (`FreeLLMAPI auto:smart → groq/llama-3.3-70b`). Для агентной работы выбирайте модели с поддержкой tools.
+
+### Другие провайдеры
+
+Укажите ключ нужного провайдера:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...        # или OPENAI_API_KEY / OPENROUTER_API_KEY / GROQ_API_KEY / GEMINI_API_KEY

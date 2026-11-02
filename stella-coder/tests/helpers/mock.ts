@@ -27,6 +27,7 @@ export interface MockRequest {
   toolResults: Array<{ id: string; content: string; isError: boolean }>;
   system: string;
   toolNames: string[];
+  headers?: http.IncomingHttpHeaders;
 }
 
 export type Script = (req: MockRequest) => Reply | Promise<Reply>;
@@ -62,7 +63,7 @@ function chunks(s: string, n = 3): string[] {
 let callSeq = 0;
 
 // ---------------- OpenAI-compatible ----------------
-export async function mockOpenAI(script: Script): Promise<MockServer> {
+export async function mockOpenAI(script: Script, opts: { replyHeaders?: Record<string, string> } = {}): Promise<MockServer> {
   const requests: MockRequest[] = [];
   const { server, url } = await listen(async (req, res) => {
     if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
@@ -81,6 +82,7 @@ export async function mockOpenAI(script: Script): Promise<MockServer> {
       toolResults: trailingTools.map((t) => ({ id: t.tool_call_id, content: String(t.content).replace(/^ERROR: /, ''), isError: String(t.content).startsWith('ERROR: ') })),
       system: msgs.find((m) => m.role === 'system')?.content ?? '',
       toolNames: (body.tools ?? []).map((t: any) => t.function.name),
+      headers: req.headers,
     };
     requests.push(mr);
     const reply = await script(mr);
@@ -88,7 +90,7 @@ export async function mockOpenAI(script: Script): Promise<MockServer> {
       res.writeHead(reply.status, { 'content-type': 'application/json', ...(reply.headers ?? {}) }).end(JSON.stringify({ error: { message: reply.error } }));
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.writeHead(200, { 'content-type': 'text/event-stream', ...(opts.replyHeaders ?? {}) });
     const send = (o: unknown) => res.write(`data: ${JSON.stringify(o)}\n\n`);
     for (const piece of chunks(reply.text ?? '')) send({ choices: [{ index: 0, delta: { content: piece } }] });
     (reply.tools ?? []).forEach((t, idx) => {

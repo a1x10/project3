@@ -9,6 +9,8 @@ describe('model registry', () => {
   it('resolves aliases, provider prefixes and catalog models', () => {
     const r = new ModelRegistry({});
     expect(r.resolve('opus').id).toBe('claude-opus-5-5');
+    expect(r.resolve()).toMatchObject({ provider: 'freellmapi', id: 'auto:smart' });
+    expect(r.resolve('freellmapi:qwen/qwen3.8-max:free')).toMatchObject({ provider: 'freellmapi', id: 'qwen/qwen3.8-max:free' });
     expect(r.resolve('sonnet').provider).toBe('anthropic');
     expect(r.resolve('gemini').provider).toBe('gemini');
     expect(r.resolve('ollama:qwen2.5-coder:14b')).toMatchObject({ provider: 'ollama', id: 'qwen2.5-coder:14b' });

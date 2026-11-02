@@ -64,6 +64,7 @@ export function App({ rt, initialPrompt, version }: { rt: Runtime; initialPrompt
   const [history, setHistory] = useState<string[]>([]);
   const [frame, setFrame] = useState(0);
   const [modelName, setModelName] = useState(rt.main.model.name);
+  const [routed, setRouted] = useState('');
   const startedAt = useRef(0);
   const streamRef = useRef('');
 
@@ -183,7 +184,10 @@ export function App({ rt, initialPrompt, version }: { rt: Runtime; initialPrompt
           if (isMain) flushStreaming();
           break;
         case 'usage':
-          if (isMain) setCtxInfo({ tokens: ev.contextTokens, window: ev.contextWindow });
+          if (isMain) {
+            setCtxInfo({ tokens: ev.contextTokens, window: ev.contextWindow });
+            setRouted(ev.servedModel ?? '');
+          }
           setCost(rt.session.costUsd);
           break;
         case 'compact':
@@ -447,7 +451,7 @@ export function App({ rt, initialPrompt, version }: { rt: Runtime; initialPrompt
       />
       <Text>
         {'  '}
-        {c.brand('✦')} {c.dim(modelName)} {c.faint('·')} {bar(frac, 10)} {c.faint(`${Math.round(frac * 100)}% ctx`)} {c.faint('·')} {c.dim('$' + cost.toFixed(cost < 1 ? 3 : 2))} {c.faint('·')} {c.faint(truncateTitle(rt.session.title, 30))}
+        {c.brand('✦')} {c.dim(modelName)}{routed ? c.faint(` → ${routed}`) : ''} {c.faint('·')} {bar(frac, 10)} {c.faint(`${Math.round(frac * 100)}% ctx`)} {c.faint('·')} {c.dim('$' + cost.toFixed(cost < 1 ? 3 : 2))} {c.faint('·')} {c.faint(truncateTitle(rt.session.title, 30))}
         {rt.mcp.list().some((s) => s.status === 'connected') ? c.faint(` · mcp ${rt.mcp.list().filter((s) => s.status === 'connected').length}`) : ''}
       </Text>
     </Box>

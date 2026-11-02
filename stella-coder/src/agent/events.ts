@@ -14,7 +14,7 @@ export type AgentEvent =
   | { type: 'tool_result'; agentId: string; id: string; name: string; content: string; isError: boolean; display?: ToolDisplay; durationMs: number; filesChanged?: string[]; filesRead?: string[] }
   | { type: 'permission'; agentId: string; tool: string; summary: string; decision: string; reason: string }
   | { type: 'assistant_message'; agentId: string; message: ChatMessage }
-  | { type: 'usage'; agentId: string; model: string; usage: Usage; costUsd: number; contextTokens: number; contextWindow: number }
+  | { type: 'usage'; agentId: string; model: string; usage: Usage; costUsd: number; contextTokens: number; contextWindow: number; servedModel?: string }
   | { type: 'compact'; agentId: string; beforeTokens: number; afterTokens: number; auto: boolean }
   | { type: 'notification'; agentId: string; level: 'info' | 'warn' | 'error'; text: string }
   | { type: 'subagent'; agentId: string; runId: string; name: string; description: string; status: string; toolCalls?: number }
