@@ -15,7 +15,7 @@
 
 | Ключ | Тип | По умолчанию | Описание |
 |---|---|---|---|
-| `model` | string | `anthropic:claude-opus-5-5` | Модель: алиас, `provider:model` или id из каталога. Также `STELLA_MODEL` |
+| `model` | string | `freellmapi:auto:smart` | Модель: алиас, `provider:model` или id из каталога. Также `STELLA_MODEL` |
 | `effort` | `low…max` | `high` | Глубина рассуждений для моделей, которые это поддерживают |
 | `maxOutputTokens` | number | 64000 | Потолок вывода за ход (ограничивается возможностями модели) |
 | `anthropicFallbacks` | bool | `true` | Server-side fallbacks (`fallbacks: "default"`) для поддерживающих моделей Anthropic |
@@ -39,9 +39,9 @@
 
 ## Модели и провайдеры
 
-Встроенные провайдеры: `anthropic` (`ANTHROPIC_API_KEY`, также `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`), `openai` (`OPENAI_API_KEY`), `openrouter` (`OPENROUTER_API_KEY`), `groq` (`GROQ_API_KEY`), `gemini` (`GEMINI_API_KEY`), `ollama` (`http://localhost:11434/v1`, без ключа).
+Встроенные провайдеры: `freellmapi` (`FREELLMAPI_API_KEY`, `FREELLMAPI_BASE_URL`, по умолчанию `http://localhost:3001/v1`), `anthropic` (`ANTHROPIC_API_KEY`, также `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`), `openai` (`OPENAI_API_KEY`), `openrouter` (`OPENROUTER_API_KEY`), `groq` (`GROQ_API_KEY`), `gemini` (`GEMINI_API_KEY`), `ollama` (`http://localhost:11434/v1`, без ключа).
 
-Алиасы: `opus`, `sonnet`, `haiku`, `fable`, `gpt`, `gpt-mini`, `gemini`, `flash`, `groq`. Любая модель провайдера доступна как `provider:model-id`, например `openrouter:anthropic/claude-sonnet-4.5`, `ollama:qwen2.5-coder:14b`. Для моделей вне каталога лимиты и цены берутся по умолчанию — задайте их в `providers.<name>.models`:
+Алиасы: `free` (`freellmapi:auto:smart`), `free-fast` (`freellmapi:auto:fast`), `opus`, `sonnet`, `haiku`, `fable`, `gpt`, `gpt-mini`, `gemini`, `flash`, `groq`. Любая модель провайдера доступна как `provider:model-id`, например `openrouter:anthropic/claude-sonnet-4.5`, `ollama:qwen2.5-coder:14b`. Для моделей вне каталога лимиты и цены берутся по умолчанию — задайте их в `providers.<name>.models`:
 
 ```json
 {

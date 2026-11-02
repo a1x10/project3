@@ -27,6 +27,11 @@ export const BUILTIN_MODELS: ModelInfo[] = [
   A('claude-sonnet-4-6', 'Claude Sonnet 4.6', 1_000_000, 3, 15, { explicitAdaptive: true, maxOutput: 64_000 }),
   A('claude-haiku-4-5', 'Claude Haiku 4.5', 200_000, 1, 5, { supportsEffort: false, maxOutput: 64_000 }),
 
+  // FreeLLMAPI router (self-hosted, OpenAI-compatible): virtual models pick a free upstream per request.
+  { id: 'auto:smart', provider: 'freellmapi', name: 'FreeLLMAPI auto:smart', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true, notes: 'Router picks the strongest available free model; limits depend on the routed model.' },
+  { id: 'auto', provider: 'freellmapi', name: 'FreeLLMAPI auto', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
+  { id: 'auto:fast', provider: 'freellmapi', name: 'FreeLLMAPI auto:fast', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
+
   { id: 'gpt-5', provider: 'openai', name: 'GPT-5', contextWindow: 400_000, maxOutput: 128_000, inputPrice: 1.25, outputPrice: 10, toolCalling: true, streaming: true },
   { id: 'gpt-5-mini', provider: 'openai', name: 'GPT-5 mini', contextWindow: 400_000, maxOutput: 128_000, inputPrice: 0.25, outputPrice: 2, toolCalling: true, streaming: true },
   { id: 'gpt-4.1', provider: 'openai', name: 'GPT-4.1', contextWindow: 1_000_000, maxOutput: 32_768, inputPrice: 2, outputPrice: 8, toolCalling: true, streaming: true },
@@ -40,6 +45,8 @@ export const BUILTIN_MODELS: ModelInfo[] = [
 ];
 
 export const DEFAULT_ALIASES: Record<string, string> = {
+  free: 'freellmapi:auto:smart',
+  'free-fast': 'freellmapi:auto:fast',
   opus: 'anthropic:claude-opus-5-5',
   sonnet: 'anthropic:claude-sonnet-5-5',
   haiku: 'anthropic:claude-haiku-5-5',
@@ -51,7 +58,7 @@ export const DEFAULT_ALIASES: Record<string, string> = {
   groq: 'groq:llama-3.3-70b-versatile',
 };
 
-export const DEFAULT_MODEL = 'anthropic:claude-opus-5-5';
+export const DEFAULT_MODEL = 'freellmapi:auto:smart';
 
 /** Built-in provider endpoints; all OpenAI-compatible except anthropic and gemini. */
 export const BUILTIN_PROVIDERS: Record<string, { type: 'anthropic' | 'openai' | 'gemini'; baseUrl: string; apiKeyEnv?: string }> = {
@@ -61,4 +68,5 @@ export const BUILTIN_PROVIDERS: Record<string, { type: 'anthropic' | 'openai' | 
   groq: { type: 'openai', baseUrl: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' },
   gemini: { type: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', apiKeyEnv: 'GEMINI_API_KEY' },
   ollama: { type: 'openai', baseUrl: 'http://localhost:11434/v1' },
+  freellmapi: { type: 'openai', baseUrl: process.env.FREELLMAPI_BASE_URL ?? 'http://localhost:3001/v1', apiKeyEnv: 'FREELLMAPI_API_KEY' },
 };

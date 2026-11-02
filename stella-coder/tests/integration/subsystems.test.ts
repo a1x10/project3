@@ -581,6 +581,32 @@ describe('multiple providers', () => {
     await rt.shutdown();
   });
 
+  it('FreeLLMAPI is the default provider: auto:smart, bearer key, routed model reported', async () => {
+    const proj = await makeProject({ 'r.txt': 'routed' });
+    const s = track(
+      await mockOpenAI((req) => {
+        expect(req.body.model).toBe('auto:smart');
+        expect(req.headers!.authorization).toBe('Bearer freellmapi-test-key');
+        return req.index === 0 ? call('Read', { file_path: 'r.txt' }) : text('via router');
+      }, { replyHeaders: { 'X-Routed-Via': 'groq/llama-3.3-70b-versatile' } }),
+    );
+    process.env.FREELLMAPI_BASE_URL = s.url;
+    process.env.FREELLMAPI_API_KEY = 'freellmapi-test-key';
+    try {
+      const rt = await runtimeFor(proj, {});
+      expect(rt.main.model).toMatchObject({ provider: 'freellmapi', id: 'auto:smart' });
+      const served: string[] = [];
+      rt.events.on('event', (e: AgentEvent) => e.type === 'usage' && e.servedModel && served.push(e.servedModel));
+      expect((await rt.submit('read r.txt'))!.text).toBe('via router');
+      expect(served[0]).toBe('groq/llama-3.3-70b-versatile');
+      expect(rt.registry.resolve('free-fast').id).toBe('auto:fast');
+      await rt.shutdown();
+    } finally {
+      delete process.env.FREELLMAPI_BASE_URL;
+      delete process.env.FREELLMAPI_API_KEY;
+    }
+  });
+
   it('switches models mid-session and keeps the conversation', async () => {
     const proj = await makeProject({});
     const a = track(await mockOpenAI(() => text('from A')));

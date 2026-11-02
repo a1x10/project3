@@ -27,6 +27,7 @@ export class ModelRegistry {
 
   constructor(private readonly settings: Settings) {
     for (const [name, p] of Object.entries(BUILTIN_PROVIDERS)) this.providers.set(name, { name, ...p });
+    if (process.env.FREELLMAPI_BASE_URL) this.providers.get('freellmapi')!.baseUrl = process.env.FREELLMAPI_BASE_URL;
     for (const [name, p] of Object.entries(settings.providers ?? {})) {
       const base = this.providers.get(name);
       this.providers.set(name, {

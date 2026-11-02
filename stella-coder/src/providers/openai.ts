@@ -88,6 +88,7 @@ export class OpenAICompatProvider implements LLMProvider {
       throw new ProviderError(`${this.name} API ${res.status}: ${text.slice(0, 500)}`, classifyStatus(res.status, text), res.status, parseRetryAfter(res.headers.get('retry-after')));
     }
 
+    let servedModel = res.headers.get('x-routed-via') ?? undefined;
     let text = '';
     const calls = new Map<number, { id: string; name: string; args: string }>();
     let finish: string | null = null;
@@ -102,6 +103,7 @@ export class OpenAICompatProvider implements LLMProvider {
         continue;
       }
       if (chunk.error) throw new ProviderError(`${this.name}: ${chunk.error.message ?? JSON.stringify(chunk.error)}`, 'server');
+      if (!servedModel && typeof chunk.model === 'string' && chunk.model !== req.model.id) servedModel = chunk.model;
       if (chunk.usage) {
         usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
         usage.outputTokens = chunk.usage.completion_tokens ?? usage.outputTokens;
@@ -147,6 +149,6 @@ export class OpenAICompatProvider implements LLMProvider {
       content.push({ type: 'tool_use', id: c.id, name: c.name, input });
     }
     const stop: StopReason = calls.size ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';
-    yield { type: 'done', message: { role: 'assistant', content }, usage, stopReason: stop };
+    yield { type: 'done', message: { role: 'assistant', content }, usage, stopReason: stop, servedModel };
   }
 }
