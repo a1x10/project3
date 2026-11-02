@@ -427,6 +427,7 @@ export const COMMANDS: SlashCommand[] = [
         return ctx.print(list.length ? list.map((s) => `${s.status === 'connected' ? c.ok('●') : s.status === 'failed' ? c.err('●') : c.faint('○')} ${s.name} (${s.source}, ${s.config.type ?? (s.config.url ? 'http' : 'stdio')}) ${s.status} · ${s.tools.length} tools${s.error ? `\n    ${c.err(s.error.split('\n')[0]!)}` : ''}`).join('\n') : 'No MCP servers. Add one: /mcp add <name> <command> [args] or /mcp add <name> --url <url>');
       }
       if (sub === 'add' && name) {
+        if (rest[0] === '--') rest.shift();
         const urlIdx = rest.indexOf('--url');
         const cfg: any = urlIdx >= 0 ? { type: rest.includes('--sse') ? 'sse' : 'http', url: rest[urlIdx + 1] } : { type: 'stdio', command: rest[0], args: rest.slice(1) };
         const hdr = rest.indexOf('--header');

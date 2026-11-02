@@ -231,7 +231,8 @@ async function runSub(args: Args) {
   const rt = await Runtime.create({ cwd: args.cwd, connectMcp: cmd === 'mcp' || cmd === 'doctor', trust: args.trust });
   if (cmd === 'mcp' || cmd === 'doctor') await rt.mcp.connectAll().catch(() => {});
   const map: Record<string, string> = { mcp: '/mcp', sessions: '/sessions', doctor: '/doctor', config: '/config' };
-  await runSlash(`${map[cmd!]} ${rest.join(' ')}`, plainCtx(rt));
+  const quoted = rest.map((r) => (/[\s"']/.test(r) ? JSON.stringify(r) : r)).join(' ');
+  await runSlash(`${map[cmd!]} ${quoted}`, plainCtx(rt));
   await rt.shutdown();
 }
 

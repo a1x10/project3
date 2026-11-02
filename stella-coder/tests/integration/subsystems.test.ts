@@ -363,6 +363,22 @@ describe('hooks', () => {
     await rt.shutdown();
   });
 
+  it('fires Notification hooks when permission is needed and when idle', async () => {
+    const proj = await makeProject({});
+    const log = path.join(proj, 'notify.log');
+    const node = process.execPath.replace(/\\/g, '/');
+    const s = track(await mockOpenAI((req) => (req.index === 0 ? call('Write', { file_path: 'n.txt', content: 'n' }) : text('ok'))));
+    const settings = openaiSettings(s.url, { hooks: { Notification: [{ hooks: [{ type: 'command', command: `"${node}" -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>require('fs').appendFileSync(${JSON.stringify(log).replace(/"/g, "'")},JSON.parse(d).kind+'\\n'))"` }] }] } });
+    const rt = await runtimeFor(proj, settings, { interactive: true });
+    rt.handlers.permission = async () => ({ decision: 'allow_once' });
+    await rt.submit('write');
+    await new Promise((r) => setTimeout(r, 500));
+    const kinds = (await fs.readFile(log, 'utf8')).trim().split('\n');
+    expect(kinds).toContain('permission');
+    expect(kinds).toContain('idle');
+    await rt.shutdown();
+  });
+
   it('ignores project hooks in untrusted folders', async () => {
     const proj = await makeProject({ '.stella/settings.json': JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'echo INJECTED' }] }] } }) });
     let saw = false;
