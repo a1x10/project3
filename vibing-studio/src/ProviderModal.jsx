@@ -123,7 +123,7 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
               <div>
                 <h4>{currentPreset.name}</h4>
                 <p className="provider-desc-text">
-                  {currentPreset.requiresKey ? "Требуется API-ключ провайдера" : "Локальный запуск без ключа"}
+                  {currentPreset.requiresKey ? "Требуется API-ключ провайдера" : currentPreset.optionalKey ? "Ключ подставляет сервер студии, если он сохранён установщиком" : "Локальный запуск без ключа"}
                 </p>
               </div>
               <button
@@ -135,9 +135,9 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
             </div>
 
             <div className="provider-form-fields">
-              {currentPreset.requiresKey && (
+              {(currentPreset.requiresKey || currentPreset.optionalKey) && (
                 <div className="form-group">
-                  <label>API-ключ</label>
+                  <label>{currentPreset.requiresKey ? "API-ключ" : "API-ключ (необязательно)"}</label>
                   <input
                     type="password"
                     className="modal-input"

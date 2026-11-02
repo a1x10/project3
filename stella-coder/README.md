@@ -33,12 +33,7 @@ npm link            # команда `stella` станет доступна гл
 
 STELLA по умолчанию работает через [FreeLLMAPI](https://freellmapi.co) — самохостящийся OpenAI-совместимый роутер, который распределяет запросы по бесплатным моделям десятков провайдеров (с автоматическим фолбэком при 429/5xx).
 
-```bash
-curl -fsSL https://freellmapi.co/install.sh | bash      # поднимет роутер на http://localhost:3001
-# в дашборде роутера добавьте ключи провайдеров, скопируйте единый ключ freellmapi-…
-export FREELLMAPI_API_KEY=freellmapi-...
-stella                                                  # модель freellmapi:auto:smart
-```
+**Проще всего — общий установщик в корне репозитория** (`./install.sh`, на Windows `install.cmd`, подробности в [INSTALL.md](../INSTALL.md)). Он сам установит и запустит роутер, получит единый ключ и соберёт STELLA. После этого роутер стартует автоматически при каждом запуске `stella`; управлять им можно командой `stella router status|start|stop|logs`.
 
 | Модель | Что делает |
 |---|---|
