@@ -84,7 +84,7 @@ function checkNode() {
 // ---------------------------------------------------------------- router
 
 async function setupRouter() {
-  const cfg = router.routerConfig();
+  let cfg = router.routerConfig();
   step(`Роутер FreeLLMAPI (${cfg.url}, данные в ${cfg.dir})`);
   const mode = opt("--router-mode") || "auto";
   if (mode === "skip") {
@@ -94,6 +94,7 @@ async function setupRouter() {
   console.log(dim("    Проверяю, не запущен ли роутер…"));
   let running = await router.ping(cfg);
   if (running) ok("Роутер уже запущен.");
+  else if (await router.portInUse(cfg.port)) warn(`Порт ${cfg.port} занят другой программой (${await router.describePort(cfg.port)}), это не FreeLLMAPI.`);
   else if (router.installedMode(cfg)) {
     const r = await router.ensure(cfg, { log: (m) => console.log(dim(`    ${m}`)) });
     running = r.running;
@@ -106,7 +107,8 @@ async function setupRouter() {
     try {
       const used = await router.install(cfg, { mode, log: (m) => console.log(dim(`    ${m}`)) });
       running = true;
-      ok(`Роутер установлен и запущен (${used === "docker" ? "контейнер Docker/Podman" : "из исходников, фоновый процесс"}).`);
+      cfg = router.routerConfig();
+      ok(`Роутер установлен и запущен (${used.mode === "docker" ? "контейнер Docker/Podman" : "из исходников, фоновый процесс"}) — ${used.url}`);
     } catch (e) {
       fail(`Роутер не установлен: ${e.message}`);
       warn("После исправления просто запустите установщик ещё раз — собранное повторно не пересобирается с нуля, а роутер доустановится.");

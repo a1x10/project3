@@ -21,7 +21,7 @@ http.createServer(async (req, res) => {
   const st = load();
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const url = req.url.split("?")[0];
-  if (url === "/api/ping") return send(res, 200, { ok: true });
+  if (url === "/api/ping") return send(res, 200, { status: "ok", timestamp: new Date().toISOString() });
   if (url === "/api/auth/status") {
     if (process.env.FAKE_HTML_STATUS) return res.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><html><body>dashboard</body></html>");
     return send(res, 200, { needsSetup: st.users.length === 0, authenticated: sessions.has(bearer) });

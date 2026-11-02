@@ -5,6 +5,24 @@ import { BUILTIN_MODELS, BUILTIN_PROVIDERS, DEFAULT_ALIASES, DEFAULT_MODEL } fro
 import { GeminiProvider } from './gemini.js';
 import { OpenAICompatProvider } from './openai.js';
 import type { LLMProvider, ModelInfo, ProviderType } from './types.js';
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/** Base URL of the local FreeLLMAPI router: env, else the port the installer chose, else 3001. */
+export function freellmapiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.FREELLMAPI_BASE_URL) return env.FREELLMAPI_BASE_URL;
+  let port = Number(env.FREELLMAPI_PORT) || 0;
+  if (!port) {
+    try {
+      const dir = env.FREELLMAPI_DIR ? path.resolve(env.FREELLMAPI_DIR) : path.join(os.homedir(), 'freellmapi');
+      port = Number(JSON.parse(readFileSync(path.join(dir, 'stella-router.json'), 'utf8')).port) || 0;
+    } catch {
+      /* not installed by us */
+    }
+  }
+  return `http://localhost:${port || 3001}/v1`;
+}
 
 export interface ProviderDef {
   name: string;
@@ -27,7 +45,7 @@ export class ModelRegistry {
 
   constructor(private readonly settings: Settings) {
     for (const [name, p] of Object.entries(BUILTIN_PROVIDERS)) this.providers.set(name, { name, ...p });
-    if (process.env.FREELLMAPI_BASE_URL) this.providers.get('freellmapi')!.baseUrl = process.env.FREELLMAPI_BASE_URL;
+    if (!settings.providers?.freellmapi?.baseUrl) this.providers.get('freellmapi')!.baseUrl = freellmapiBaseUrl();
     for (const [name, p] of Object.entries(settings.providers ?? {})) {
       const base = this.providers.get(name);
       this.providers.set(name, {

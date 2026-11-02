@@ -48,8 +48,10 @@ function freellmapiRouter(target) {
 
 export default defineConfig(async ({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ""), ...process.env };
-  const target = (env.FREELLMAPI_URL || "http://localhost:3001").replace(/\/$/, "");
   const mod = await loadRouter();
+  // Router address: FREELLMAPI_URL, else the port the installer chose (it moves off 3001 if taken).
+  const savedPort = mod ? mod.routerConfig({ ...process.env, FREELLMAPI_PORT: env.FREELLMAPI_PORT || "" }).port : 3001;
+  const target = (env.FREELLMAPI_URL || `http://localhost:${savedPort}`).replace(/\/$/, "");
   const routerKey = () => env.FREELLMAPI_API_KEY || mod?.readRouterKey?.() || "";
   const proxy = {
     "/llm": {

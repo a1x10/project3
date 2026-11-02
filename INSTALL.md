@@ -96,7 +96,7 @@ stella router status                        # то же самое через ST
 | Переменная | Назначение |
 |---|---|
 | `FREELLMAPI_DIR` | каталог установки роутера (по умолчанию `~/freellmapi`) |
-| `FREELLMAPI_PORT` | порт (по умолчанию 3001) |
+| `FREELLMAPI_PORT` | порт (по умолчанию 3001; если он занят другой программой, установщик выберет свободный и запомнит его) |
 | `FREELLMAPI_API_KEY` | единый ключ (вместо `~/.stella/credentials.json`) |
 | `FREELLMAPI_BASE_URL` | адрес API для STELLA (по умолчанию `http://localhost:3001/v1`) |
 | `FREELLMAPI_URL` | адрес роутера для студии (по умолчанию `http://localhost:3001`) |
@@ -109,6 +109,7 @@ stella router status                        # то же самое через ST
 | «Нужен Node.js 20.18+» | установите Node 22 LTS и запустите установщик снова |
 | Docker установлен, но не запущен | установщик сам запускает Docker Desktop; если не вышло — запустите его вручную, дождитесь «Engine running» и выполните `node install.mjs --router-mode docker` |
 | «нужен Node.js 20.18–24» для роутера | у вас Node 25+: используйте Docker (`--router-mode docker`) или поставьте Node 22 LTS |
+| На порту 3001 уже работает другая программа (Flowise, Open WebUI…) | установщик это определяет и ставит роутер на следующий свободный порт (3002, …); STELLA и студия берут порт из `~/freellmapi/stella-router.json` |
 | `install.ps1` выдаёт ошибки разбора | обновите репозиторий (`git pull`) или запустите напрямую: `node install.mjs` |
 | Роутер не отвечает | `node tools/freellmapi-router.mjs logs` |
 | `stella: command not found` | откройте новый терминал; на Linux добавьте `~/.local/bin` в `PATH` |
