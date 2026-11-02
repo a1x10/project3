@@ -22,7 +22,10 @@ http.createServer(async (req, res) => {
   const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const url = req.url.split("?")[0];
   if (url === "/api/ping") return send(res, 200, { ok: true });
-  if (url === "/api/auth/status") return send(res, 200, { needsSetup: st.users.length === 0, authenticated: sessions.has(bearer) });
+  if (url === "/api/auth/status") {
+    if (process.env.FAKE_HTML_STATUS) return res.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><html><body>dashboard</body></html>");
+    return send(res, 200, { needsSetup: st.users.length === 0, authenticated: sessions.has(bearer) });
+  }
   if (url === "/api/auth/setup" && req.method === "POST") {
     if (st.users.length) return send(res, 409, { error: { message: "Setup already completed. Use login instead." } });
     if (!/@/.test(body.email || "") || (body.password || "").length < 8) return send(res, 400, { error: { message: "bad signup" } });

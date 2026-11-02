@@ -406,11 +406,17 @@ async function api(cfg, method, p, { token, body } = {}) {
     /* not json */
   }
   if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status} ${p}`);
+  if (json === null) {
+    const kind = (res.headers.get("content-type") || "").split(";")[0] || "пустой ответ";
+    throw new Error(`${p} вернул не JSON (${kind}${text ? `: ${text.trim().slice(0, 80)}` : ""}) — похоже, на ${cfg.url} работает другая версия роутера или другая программа`);
+  }
   return json;
 }
 
 export async function dashboardStatus(cfg = routerConfig()) {
-  return api(cfg, "GET", "/api/auth/status");
+  const st = await api(cfg, "GET", "/api/auth/status");
+  if (typeof st?.needsSetup !== "boolean") throw new Error(`неожиданный ответ /api/auth/status: ${JSON.stringify(st).slice(0, 120)}`);
+  return st;
 }
 
 /** First run: create the dashboard account (allowed from this machine without a code). Later: log in. */

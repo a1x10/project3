@@ -146,6 +146,29 @@ describe.skipIf(process.platform === 'win32')('FreeLLMAPI installer and autostar
     spawnSync(node, [cliPath, 'stop'], { env });
   });
 
+  it('falls back to a manual key when the dashboard API answers unexpectedly (no crash)', async () => {
+    const dir = await tempDir('stella-html-');
+    const port = await freePort();
+    const bin = await fakeBin(dir, port, path.join(dir, 'calls.log'), path.join(dir, 'state.json'));
+    const { spawn } = await import('node:child_process');
+    const srv = spawn(node, [fakeRouter], { env: { ...process.env, PORT: String(port), FAKE_HTML_STATUS: '1' }, stdio: 'ignore' });
+    try {
+      for (let i = 0; i < 40; i++) {
+        if (await fetch(`http://127.0.0.1:${port}/api/ping`).then((r) => r.ok, () => false)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, STELLA_HOME: path.join(dir, 'h'), FREELLMAPI_DIR: path.join(dir, 'fl'), FREELLMAPI_PORT: String(port), FREELLMAPI_API_KEY: '' };
+      const r = spawnSync(node, [path.join(repo, 'install.mjs'), '--yes', '--stella', '--router-mode', 'docker'], { env, encoding: 'utf8', timeout: 60_000 });
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(r.stdout).toContain('Роутер уже запущен');
+      expect(r.stdout).toContain('вернул не JSON (text/html');
+      expect(r.stdout).toContain('Ключ не сохранён');
+      expect(r.stdout + r.stderr).not.toContain('TypeError');
+    } finally {
+      srv.kill();
+    }
+  });
+
   it('reports a missing install instead of hanging', async () => {
     const dir = await tempDir('stella-none-');
     const env = { ...process.env, FREELLMAPI_DIR: path.join(dir, 'none'), FREELLMAPI_PORT: String(await freePort()) };
