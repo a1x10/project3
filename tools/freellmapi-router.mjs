@@ -11,6 +11,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,8 +22,10 @@ export const TARBALL = "https://codeload.github.com/tashfeenahmed/freellmapi/tar
 const IS_WIN = process.platform === "win32";
 
 export function routerConfig(env = process.env) {
-  const port = Number(env.FREELLMAPI_PORT || 3001);
   const dir = path.resolve(env.FREELLMAPI_DIR || path.join(os.homedir(), "freellmapi"));
+  // Port: explicit env > the port chosen at install time (stella-router.json) > 3001.
+  const saved = readJson(path.join(dir, "stella-router.json"), {});
+  const port = Number(env.FREELLMAPI_PORT || saved.port || env.FREELLMAPI_DEFAULT_PORT || 3001);
   return {
     dir,
     port,
@@ -81,13 +84,60 @@ function run(cmd, args, opts = {}) {
 
 const noop = () => {};
 
+/** True only if FreeLLMAPI itself answers (its /api/ping returns {"status":"ok","timestamp":…}). */
 export async function ping(cfg = routerConfig(), timeoutMs = 1500) {
   try {
     const r = await fetch(`${cfg.url}/api/ping`, { signal: AbortSignal.timeout(timeoutMs) });
-    return r.ok;
+    if (!r.ok) return false;
+    const j = await r.json().catch(() => null);
+    return j?.status === "ok" && typeof j.timestamp === "string";
   } catch {
     return false;
   }
+}
+
+/** Something (any program) is listening on 127.0.0.1:port. */
+export function portInUse(port, host = "127.0.0.1") {
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host });
+    const done = (v) => {
+      sock.destroy();
+      resolve(v);
+    };
+    sock.setTimeout(1000, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
+/** What occupies the port, for a helpful message (title of an HTML page, if any). */
+export async function describePort(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) });
+    const t = await r.text();
+    const title = /<title>([^<]{1,80})<\/title>/i.exec(t)?.[1]?.trim();
+    return title || r.headers.get("server") || "неизвестная программа";
+  } catch {
+    return "неизвестная программа";
+  }
+}
+
+/** First free port starting at `from` (skips ports used by other programs). */
+export async function findFreePort(from = 3001, to = from + 30) {
+  for (let p = from; p <= to; p++) if (!(await portInUse(p))) return p;
+  throw new Error(`нет свободного порта в диапазоне ${from}–${to}`);
+}
+
+function setEnvPort(cfg) {
+  const file = path.join(cfg.dir, ".env");
+  if (!fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, "utf8");
+  const next = /^PORT=.*$/m.test(text) ? text.replace(/^PORT=.*$/m, `PORT=${cfg.port}`) : text.replace(/\s*$/, `\nPORT=${cfg.port}\n`);
+  if (next !== text) fs.writeFileSync(file, next, { mode: 0o600 });
+}
+
+function withPort(cfg, port) {
+  return { ...cfg, port, url: `http://127.0.0.1:${port}` };
 }
 
 export async function waitReady(cfg = routerConfig(), timeoutMs = 90_000) {
@@ -248,7 +298,14 @@ export async function install(cfg = routerConfig(), { mode = "auto", log = noop 
     }
   }
   fs.mkdirSync(cfg.dir, { recursive: true });
+  if (!(await ping(cfg)) && (await portInUse(cfg.port))) {
+    const who = await describePort(cfg.port);
+    const free = await findFreePort(cfg.port + 1);
+    log(`Порт ${cfg.port} занят другой программой (${who}) — роутер будет на порту ${free}.`);
+    cfg = withPort(cfg, free);
+  }
   ensureEnvFile(cfg);
+  setEnvPort(cfg);
   if (mode === "docker") {
     const eng = detectEngine();
     if (!eng) throw new Error("Docker или Podman не найдены.");
@@ -272,7 +329,7 @@ export async function install(cfg = routerConfig(), { mode = "auto", log = noop 
   if (mode === "source") await start(cfg, { log });
   log("Жду, пока роутер ответит…");
   if (!(await waitReady(cfg))) throw new Error(`Роутер не ответил на ${cfg.url}/api/ping. Логи: node tools/freellmapi-router.mjs logs`);
-  return mode;
+  return { mode, port: cfg.port, url: cfg.url };
 }
 
 async function fetchSource(cfg, log) {
@@ -490,7 +547,10 @@ export async function cli(argv) {
   const log = (m) => console.log(`==> ${m}`);
   switch (cmd) {
     case "install":
-      console.log(`FreeLLMAPI установлен (${await install(cfg, { mode: flag("mode") || "auto", log })}), ${cfg.url}`);
+      {
+        const r = await install(cfg, { mode: flag("mode") || "auto", log });
+        console.log(`FreeLLMAPI установлен (${r.mode}), ${r.url}`);
+      }
       break;
     case "start":
     case "ensure": {

@@ -31,7 +31,8 @@ if [ "$1" = "compose" ] && [ "$2" = "version" ]; then exit 0; fi
 if [ "$1" = "compose" ] && [ "$2" = "up" ]; then
   test -f docker-compose.yml || exit 3
   grep -q "ENCRYPTION_KEY=" .env || exit 4
-  PORT=${port} FAKE_STATE="${state}" nohup "${node}" "${fakeRouter}" >/dev/null 2>&1 &
+  P=$(grep '^PORT=' .env | cut -d= -f2); [ -n "$P" ] || P=${port}
+  PORT=$P FAKE_STATE="${state}" nohup "${node}" "${fakeRouter}" >/dev/null 2>&1 &
   echo $! > "${dir}/fake-router.pid"
   exit 0
 fi
@@ -166,6 +167,45 @@ describe.skipIf(process.platform === 'win32')('FreeLLMAPI installer and autostar
       expect(r.stdout + r.stderr).not.toContain('TypeError');
     } finally {
       srv.kill();
+    }
+  });
+
+  it('moves off a port taken by another program (e.g. Flowise) and STELLA/studio follow the saved port', async () => {
+    const { spawn } = await import('node:child_process');
+    const dir = await tempDir('stella-port-');
+    const busy = await freePort();
+    // A separate process (spawnSync below blocks this one): an HTML app such as Flowise on the router port.
+    const code = `require('http').createServer((q,r)=>r.writeHead(200,{'content-type':'text/html'}).end('<!DOCTYPE html><html><head><title>Flowise - Build AI Agents, Visually</title></head></html>')).listen(${busy},'127.0.0.1')`;
+    const otherProc = spawn(node, ['-e', code], { stdio: 'ignore' });
+    const other = { close: () => otherProc.kill() };
+    for (let i = 0; i < 50; i++) {
+      if (await fetch(`http://127.0.0.1:${busy}/`).then(() => true, () => false)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const bin = await fakeBin(dir, busy, path.join(dir, 'calls.log'), path.join(dir, 'state.json'));
+    const routerDir = path.join(dir, 'fl');
+    pids.push(path.join(dir, 'fake-router.pid'));
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH}`, STELLA_HOME: path.join(dir, 'h'), FREELLMAPI_DIR: routerDir, FREELLMAPI_DEFAULT_PORT: String(busy), FREELLMAPI_API_KEY: '' };
+    delete env.FREELLMAPI_PORT;
+    delete env.FREELLMAPI_BASE_URL;
+    try {
+      const r = spawnSync(node, [path.join(repo, 'install.mjs'), '--yes', '--stella', '--router-mode', 'docker'], { env, encoding: 'utf8', timeout: 90_000 });
+      const out = r.stdout + r.stderr;
+      expect(r.status, out).toBe(0);
+      expect(out).toContain(`Порт ${busy} занят другой программой (Flowise - Build AI Agents, Visually)`);
+      expect(out).not.toContain('Роутер уже запущен');
+      const saved = JSON.parse(await fs.readFile(path.join(routerDir, 'stella-router.json'), 'utf8'));
+      expect(saved.port).not.toBe(busy);
+      expect(await fs.readFile(path.join(routerDir, '.env'), 'utf8')).toContain(`PORT=${saved.port}`);
+      expect(out).toContain(`http://127.0.0.1:${saved.port}`);
+      expect(out).toContain('Единый ключ получен');
+      const { freellmapiBaseUrl } = await import('../../src/providers/registry.js');
+      expect(freellmapiBaseUrl(env)).toBe(`http://localhost:${saved.port}/v1`);
+      const cli = path.join(repo, 'stella-coder', 'dist', 'cli', 'main.js');
+      const res = spawnSync(node, [cli, '-p', 'hello'], { cwd: await tempDir('p-'), env: { ...env, NO_COLOR: '1' }, encoding: 'utf8', timeout: 60_000 });
+      expect(res.stdout.trim(), res.stderr).toBe('router says hi');
+    } finally {
+      other.close();
     }
   });
 
