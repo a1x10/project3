@@ -11,9 +11,32 @@ import { defineTool, ToolError, type ToolContext, type ToolResult } from './type
 const MAX_OUTPUT = 30_000;
 const CWD_MARK = '__STELLA_CWD__';
 
-function shellDesc(cmd: string, label: string): PermissionDescriptor {
+export function shellDesc(cmd: string, label: string, ctx?: ToolContext): PermissionDescriptor {
   const a = analyzeShell(cmd);
-  return { kind: 'execute', risk: a.risk, readOnly: a.readOnly, command: cmd, summary: `${label}: ${cmd.length > 160 ? cmd.slice(0, 160) + '…' : cmd}` };
+  const d: PermissionDescriptor = { kind: 'execute', risk: a.risk, readOnly: a.readOnly, command: cmd, summary: `${label}: ${cmd.length > 160 ? cmd.slice(0, 160) + '…' : cmd}` };
+  if (ctx) {
+    // Commands touching confidential files (cat .env, cp id_rsa …) must not bypass the
+    // confidentiality prompt just because the command itself is read-only.
+    const conf = confidentialRefs(cmd, ctx);
+    if (conf.length) d.paths = conf;
+  }
+  return d;
+}
+
+function confidentialRefs(cmd: string, ctx: ToolContext) {
+  const tokens = cmd.match(/"[^"]*"|'[^']*'|[^\s;&|<>()]+/g) ?? [];
+  const out = [];
+  for (const raw of tokens.slice(0, 200)) {
+    const t = raw.replace(/^["']|["']$/g, '').replace(/^[<>]+/, '');
+    if (!t || t.startsWith('-') || t.length > 400 || !/[./\\]|^~|key|env|secret|credential|id_/i.test(t)) continue;
+    try {
+      const r = rp(ctx, t);
+      if (r.isConfidential) out.push(r);
+    } catch {
+      /* not a path */
+    }
+  }
+  return out;
 }
 
 function timeoutOf(ctx: ToolContext, ms?: number) {
@@ -90,7 +113,7 @@ export const BashTool = defineTool({
   kind: 'execute',
   schema: commandSchema,
   isEnabled: (s) => !!bashShell(s.settings?.shell),
-  describe: (i) => shellDesc(i.command, 'Run'),
+  describe: (i, ctx) => shellDesc(i.command, 'Run', ctx),
   async run(i, ctx) {
     const sh = bashShell(ctx.services.settings?.shell);
     if (!sh) throw new ToolError('No bash-compatible shell found. On Windows install Git for Windows or use the PowerShell tool.');
@@ -104,7 +127,7 @@ export const PowerShellTool = defineTool({
   kind: 'execute',
   schema: commandSchema,
   isEnabled: () => !!powershellShell(),
-  describe: (i) => shellDesc(i.command, 'PowerShell'),
+  describe: (i, ctx) => shellDesc(i.command, 'PowerShell', ctx),
   async run(i, ctx) {
     const sh = powershellShell();
     if (!sh) throw new ToolError('PowerShell is not installed.');
@@ -118,7 +141,7 @@ export const CmdTool = defineTool({
   kind: 'execute',
   schema: commandSchema,
   isEnabled: () => process.platform === 'win32',
-  describe: (i) => shellDesc(i.command, 'cmd'),
+  describe: (i, ctx) => shellDesc(i.command, 'cmd', ctx),
   async run(i, ctx) {
     const sh = cmdShell();
     if (!sh) throw new ToolError('cmd.exe is only available on Windows.');
@@ -131,7 +154,7 @@ export const RunCommandTool = defineTool({
   description: 'Run a program directly with an argument array (no shell, so no globbing/piping/injection). Preferred for commands built from untrusted strings.',
   kind: 'execute',
   schema: z.object({ program: z.string(), args: z.array(z.string()).default([]), cwd: z.string().optional(), timeout: z.number().int().min(1000).max(600_000).optional() }),
-  describe: (i) => shellDesc([i.program, ...(i.args ?? []).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))].join(' '), 'Run'),
+  describe: (i, ctx) => shellDesc([i.program, ...(i.args ?? []).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))].join(' '), 'Run', ctx),
   async run(i, ctx) {
     const cwd = i.cwd ? rp(ctx, i.cwd).real : ctx.cwd;
     const t = timeoutOf(ctx, i.timeout);
@@ -186,7 +209,7 @@ export const StartProcessTool = defineTool({
   description: 'Start a long-running background process (dev server, watcher, tail). Returns an id; use ProcessStatus to read new output and StopProcess to stop it. Processes are stopped when STELLA exits.',
   kind: 'execute',
   schema: z.object({ command: z.string(), shell: z.enum(['bash', 'powershell', 'cmd']).optional(), wait_ms: z.number().int().min(0).max(30_000).optional().describe('Wait this long and return initial output (default 1500)') }),
-  describe: (i) => shellDesc(i.command, 'Start background'),
+  describe: (i, ctx) => shellDesc(i.command, 'Start background', ctx),
   async run(i, ctx) {
     const sh = i.shell === 'powershell' ? powershellShell() : i.shell === 'cmd' ? cmdShell() : bashShell(ctx.services.settings?.shell) ?? powershellShell();
     if (!sh) throw new ToolError('No suitable shell available.');

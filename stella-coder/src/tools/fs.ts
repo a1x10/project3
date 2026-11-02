@@ -293,9 +293,13 @@ async function transfer(ctx: ToolContext, src: string, dst: string, overwrite: b
   if (!sst) throw new ToolError(`Source not found: ${src}`);
   if (sst.isDirectory()) throw new ToolError('Directory move/copy is not supported by this tool; use a shell command.');
   let target = d.real;
+  const wantsDir = /[\\/]$/.test(dst);
+  if (wantsDir) await fs.mkdir(target, { recursive: true });
   const dstSt = await fs.stat(target).catch(() => null);
+  if (wantsDir && dstSt && !dstSt.isDirectory()) throw new ToolError(`Destination ${dst} exists and is not a directory.`);
   if (dstSt?.isDirectory()) target = path.join(target, path.basename(s.real));
   else if (dstSt && !overwrite) throw new ToolError(`Destination exists: ${dst}. Set overwrite=true to replace it.`);
+  if (dstSt?.isDirectory() && !overwrite && (await fs.stat(target).catch(() => null))) throw new ToolError(`Destination exists: ${relDisplay(ctx, target)}. Set overwrite=true to replace it.`);
   for (const f of move ? [s.real, target] : [target]) {
     const c = ctx.services.locks.claim(f, ctx.agentId);
     if (!c.ok) throw new ToolError(`${relDisplay(ctx, f)} is owned by agent "${c.owner}".`);

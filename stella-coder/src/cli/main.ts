@@ -161,11 +161,32 @@ function parseArgs(argv: string[]): Args {
   return a;
 }
 
-async function readStdin(): Promise<string> {
+/**
+ * Read piped stdin. If nothing arrives within a short grace period the pipe is assumed to be an
+ * idle inherited handle (CI runners, IDE task runners) and ignored instead of blocking forever.
+ */
+async function readStdin(graceMs = 250): Promise<string> {
   if (process.stdin.isTTY) return '';
-  const chunks: Buffer[] = [];
-  for await (const ch of process.stdin) chunks.push(ch as Buffer);
-  return Buffer.concat(chunks).toString('utf8');
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let started = false;
+    const done = () => {
+      clearTimeout(timer);
+      process.stdin.off('data', onData);
+      process.stdin.pause();
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    };
+    const onData = (d: Buffer) => {
+      started = true;
+      chunks.push(d);
+    };
+    const timer = setTimeout(() => {
+      if (!started) done();
+    }, graceMs);
+    process.stdin.on('data', onData);
+    process.stdin.once('end', done);
+    process.stdin.once('error', done);
+  });
 }
 
 function plainCtx(rt: Runtime): CommandContext {
