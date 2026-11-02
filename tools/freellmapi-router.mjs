@@ -108,7 +108,7 @@ export function detectEngine() {
     if (run(bin, ["compose", "version"], { quiet: true }).ok) compose = [bin, "compose"];
     else if (which(`${engine}-compose`)) compose = [which(`${engine}-compose`)];
     if (!compose) continue;
-    const running = run(bin, ["info"], { quiet: true, timeoutMs: 20_000 }).ok;
+    const running = run(bin, ["info"], { quiet: true, timeoutMs: 15_000 }).ok;
     return { engine, bin, compose, running };
   }
   return null;
@@ -211,11 +211,20 @@ export async function startDockerDesktop({ log = noop, timeoutMs = 180_000 } = {
   if (!launched) return false;
   log("Запускаю Docker Desktop и жду, пока он будет готов (до 3 минут)…");
   const t0 = Date.now();
+  let lastNote = 0;
   while (Date.now() - t0 < timeoutMs) {
     const eng = detectEngine();
-    if (eng?.running) return true;
+    if (eng?.running) {
+      log("Docker готов.");
+      return true;
+    }
+    if (Date.now() - lastNote > 20_000) {
+      lastNote = Date.now();
+      log(`…жду Docker Desktop (${Math.round((Date.now() - t0) / 1000)} с)`);
+    }
     await new Promise((r) => setTimeout(r, 3000));
   }
+  log("Docker Desktop не стал готов за отведённое время.");
   return false;
 }
 
