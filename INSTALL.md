@@ -4,7 +4,7 @@
 
 | | Что это | Запуск после установки |
 |---|---|---|
-| **1. STELLA CODER** | AI-агент для разработки в терминале | `stella` в папке вашего проекта |
+| **1. STELLA CODER** | AI-агент для разработки в терминале | `stella-coder` (или `stella`) в папке вашего проекта |
 | **2. Vibing AI Studio** | конструктор сайтов с ИИ в браузере | `cd vibing-studio && npm run dev` → http://localhost:3000 |
 
 ## Что нужно заранее
@@ -65,9 +65,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 ```bash
 cd ~/мой-проект
-stella                       # интерактивная сессия
-stella -p "почини тесты"     # одна задача без интерактива
-stella router status         # состояние роутера
+stella-coder                       # интерактивная сессия (то же: stella)
+stella-coder -p "почини тесты"     # одна задача без интерактива
+stella-coder router status         # состояние роутера
 ```
 
 **Vibing AI Studio:**
@@ -112,6 +112,7 @@ stella router status                        # то же самое через ST
 | `install.ps1` выдаёт ошибки разбора | обновите репозиторий (`git pull`) или запустите напрямую: `node install.mjs` |
 | Роутер не отвечает | `node tools/freellmapi-router.mjs logs` |
 | `stella: command not found` | откройте новый терминал; на Linux добавьте `~/.local/bin` в `PATH` |
+| `stella` запускает другую программу (например, Hermes Agent) | используйте команду `stella-coder` — это та же STELLA CODER с уникальным именем |
 | ИИ отвечает ошибкой 401 | ключ устарел: `./install.sh` получит его заново, или `stella auth set freellmapi <ключ>` |
 | Все модели заняты / 429 | добавьте ключи Groq / Gemini / OpenRouter в дашборде роутера |
 

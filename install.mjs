@@ -213,22 +213,58 @@ async function manualKey(cfg) {
 
 // ---------------------------------------------------------------- components
 
+/** All executables named `name` on PATH, in resolution order. */
+function findOnPath(name) {
+  const exts = IS_WIN ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.PS1").split(";") : [""];
+  const out = [];
+  for (const d of (process.env.PATH || "").split(path.delimiter)) {
+    if (!d) continue;
+    for (const ext of exts) {
+      const p = path.join(d, name + ext.toLowerCase());
+      const P = path.join(d, name + ext);
+      for (const cand of new Set([p, P])) if (fs.existsSync(cand) && !out.some((x) => x.toLowerCase() === cand.toLowerCase())) out.push(cand);
+    }
+  }
+  return out;
+}
+
+/** Warn when another program's `stella` command shadows ours (e.g. a Hermes Agent profile alias). */
+function checkStellaCommand(dir) {
+  const hits = findOnPath("stella");
+  if (!hits.length) return;
+  let first = "";
+  try {
+    first = fs.readFileSync(hits[0], "utf8");
+  } catch {
+    /* binary */
+  }
+  const ours = first.includes("stella-coder") || first.includes(path.join(dir, "dist")) || first.includes("dist/cli/main.js") || first.includes("dist\\cli\\main.js");
+  if (!ours) {
+    warn(`Команда stella в PATH принадлежит другой программе: ${hits[0]}`);
+    warn("Запускайте STELLA CODER командой stella-coder (она установлена вместе с stella).");
+  }
+}
+
 function linkStella(dir) {
-  if (npm(["link"], dir)) return "npm link";
+  if (npm(["link"], dir)) {
+    checkStellaCommand(dir);
+    return "npm link — команды stella и stella-coder";
+  }
   // Global prefix not writable (system Node): drop a launcher into a user bin dir.
   const main = path.join(dir, "dist", "cli", "main.js");
   if (IS_WIN) {
     const bin = path.join(process.env.APPDATA || os.homedir(), "npm");
     fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, "stella.cmd"), `@echo off\r\n"${process.execPath}" "${main}" %*\r\n`);
-    return path.join(bin, "stella.cmd");
+    for (const n of ["stella", "stella-coder"]) fs.writeFileSync(path.join(bin, `${n}.cmd`), `@echo off\r\n"${process.execPath}" "${main}" %*\r\n`);
+    checkStellaCommand(dir);
+    return path.join(bin, "stella-coder.cmd");
   }
   const bin = path.join(os.homedir(), ".local", "bin");
   fs.mkdirSync(bin, { recursive: true });
-  const file = path.join(bin, "stella");
-  fs.writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+  for (const n of ["stella", "stella-coder"]) fs.writeFileSync(path.join(bin, n), `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
   if (!(process.env.PATH || "").split(path.delimiter).includes(bin)) warn(`Добавьте ${bin} в PATH (например, в ~/.bashrc: export PATH="$HOME/.local/bin:$PATH").`);
-  return file;
+  checkStellaCommand(dir);
+  return path.join(bin, "stella-coder");
 }
 
 function installStella() {
@@ -282,12 +318,12 @@ async function main() {
   if (results.stella) {
     console.log(`\n  ${violet("STELLA CODER")}`);
     console.log("    cd ваш-проект");
-    console.log("    stella                # интерактивная сессия (модель freellmapi:auto:smart)");
-    console.log('    stella -p "задача"    # неинтерактивно');
+    console.log("    stella-coder          # интерактивная сессия (модель freellmapi:auto:smart); то же: stella");
+    console.log('    stella-coder -p "задача"');
   }
   if (results.studio) {
     console.log(`\n  ${violet("Vibing AI Studio")}`);
-    console.log(`    cd ${path.relative(process.cwd(), path.join(ROOT, "vibing-studio")) || "vibing-studio"}`);
+    console.log(`    cd "${path.join(ROOT, "vibing-studio")}"`);
     console.log("    npm run dev           # http://localhost:3000 (первый зарегистрированный — администратор)");
   }
   if (Object.values(results).some((v) => v === false)) process.exitCode = 1;

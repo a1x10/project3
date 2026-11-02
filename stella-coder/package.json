@@ -4,7 +4,8 @@
   "description": "STELLA CODER \u2014 autonomous AI coding agent for the terminal",
   "type": "module",
   "bin": {
-    "stella": "dist/cli/main.js"
+    "stella": "dist/cli/main.js",
+    "stella-coder": "dist/cli/main.js"
   },
   "main": "dist/index.js",
   "files": [
