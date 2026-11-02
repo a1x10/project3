@@ -10,8 +10,8 @@
     "test": "vitest run",
     "e2e": "node tests/e2e/run.mjs",
     "desktop": "vite build && electron .",
-    "dist:win": "vite build && electron-builder --win nsis --x64",
-    "dist:dir": "vite build && electron-builder --dir"
+    "dist:win": "vite build && electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "vite build && electron-builder --dir --publish never"
   },
   "dependencies": {},
   "devDependencies": {
