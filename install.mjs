@@ -75,7 +75,8 @@ function checkNode() {
   const [maj, min] = process.versions.node.split(".").map(Number);
   if (maj < 20 || (maj === 20 && min < 18)) {
     fail(`Нужен Node.js 20.18 или новее (сейчас ${process.versions.node}). Установите LTS с https://nodejs.org и запустите установщик снова.`);
-    process.exit(1);
+    process.exitCode = 1;
+    throw new Error("unsupported Node.js");
   }
   ok(`Node.js ${process.versions.node}, ${process.platform}/${process.arch}`);
 }
@@ -128,7 +129,7 @@ async function connectRouter(cfg) {
   try {
     st = await router.dashboardStatus(cfg);
   } catch (e) {
-    warn(`Дашборд роутера не ответил (${e.message}).`);
+    warn(`Не удалось получить ключ автоматически: ${e.message}`);
     return manualKey(cfg);
   }
   let email = opt("--email");
@@ -167,7 +168,13 @@ async function connectRouter(cfg) {
     }
     ok(`Аккаунт дашборда создан: ${email}${where}`);
   }
-  const key = await router.getUnifiedKey(cfg, token);
+  let key;
+  try {
+    key = await router.getUnifiedKey(cfg, token);
+  } catch (e) {
+    warn(`Роутер не отдал единый ключ: ${e.message}`);
+    return manualKey(cfg);
+  }
   router.saveRouterKey(key);
   ok(`Единый ключ получен и сохранён в ${path.join(router.stellaHome(), "credentials.json")} (права 600) — его используют STELLA и студия.`);
 
@@ -329,7 +336,12 @@ async function main() {
   if (Object.values(results).some((v) => v === false)) process.exitCode = 1;
 }
 
-main().catch((e) => {
-  fail(e.stack || e.message);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    fail(e.stack || e.message);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    rl?.close();
+    process.stdin.pause();
+  });
