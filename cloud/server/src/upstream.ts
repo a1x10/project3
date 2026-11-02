@@ -9,6 +9,7 @@ export class Upstream {
   private key: string;
   private fetching: Promise<string> | null = null;
   lastError = '';
+  private keylessDone = false;
 
   constructor(private readonly cfg: Config) {
     this.key = cfg.upstreamApiKey;
@@ -40,11 +41,30 @@ export class Upstream {
       const kj: any = await k.json().catch(() => null);
       if (!k.ok || !kj?.apiKey) throw new Error(kj?.error?.message || `api-key HTTP ${k.status}`);
       this.key = kj.apiKey;
+      if (!this.keylessDone) {
+        this.keylessDone = true;
+        await this.enableKeyless(base, lj.token).catch((e) => console.error('[upstream] keyless providers:', (e as Error).message));
+      }
       this.lastError = '';
       return this.key;
     } catch (e) {
       this.lastError = `FreeLLMAPI: ${(e as Error).message}`;
       return this.key;
+    }
+  }
+
+  /** Switch on FreeLLMAPI providers that need no API key, so models answer right after deployment. */
+  private async enableKeyless(base: string, token: string) {
+    if (!this.cfg.routerKeyless.length) return;
+    const h = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const pr = await fetch(`${base}/api/keys/providers`, { headers: h, signal: AbortSignal.timeout(15_000) });
+    const pj: any = await pr.json().catch(() => null);
+    const list: any[] = Array.isArray(pj?.providers) ? pj.providers : [];
+    for (const platform of this.cfg.routerKeyless) {
+      const p = list.find((x) => x.platform === platform);
+      if (!p || !p.keyless || p.configured) continue;
+      const r = await fetch(`${base}/api/keys`, { method: 'POST', headers: h, body: JSON.stringify({ platform }), signal: AbortSignal.timeout(15_000) });
+      if (r.ok) console.log(`[upstream] FreeLLMAPI: включён бесплатный провайдер без ключа «${p.name ?? platform}»`);
     }
   }
 

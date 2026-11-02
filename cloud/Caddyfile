@@ -1,0 +1,7 @@
+# DOMAIN=ai.example.com → automatic HTTPS (Let's Encrypt). DOMAIN=:80 → plain HTTP by IP.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy stella-cloud:8080 {
+		flush_interval -1
+	}
+}
