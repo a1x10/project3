@@ -32,10 +32,11 @@ if [ "$1" = "compose" ] && [ "$2" = "up" ]; then
   test -f docker-compose.yml || exit 3
   grep -q "ENCRYPTION_KEY=" .env || exit 4
   P=$(grep '^PORT=' .env | cut -d= -f2); [ -n "$P" ] || P=${port}
-  PORT=$P FAKE_STATE="${state}" nohup "${node}" "${fakeRouter}" >/dev/null 2>&1 &
+  PORT=$P FAKE_STATE="${state}" nohup "${node}" "${fakeRouter}" > "${dir}/router-stdout.log" 2>&1 &
   echo $! > "${dir}/fake-router.pid"
   exit 0
 fi
+if [ "$1" = "compose" ] && [ "$2" = "logs" ]; then cat "${dir}/router-stdout.log" 2>/dev/null; exit 0; fi
 if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then kill $(cat "${dir}/fake-router.pid") 2>/dev/null; exit 0; fi
 exit 0
 `;
@@ -207,6 +208,21 @@ describe.skipIf(process.platform === 'win32')('FreeLLMAPI installer and autostar
     } finally {
       other.close();
     }
+  });
+
+  it('reads the one-time setup code from the router log when Docker makes the installer "remote"', async () => {
+    const dir = await tempDir('stella-code-');
+    const port = await freePort();
+    const bin = await fakeBin(dir, port, path.join(dir, 'calls.log'), path.join(dir, 'state.json'));
+    pids.push(path.join(dir, 'fake-router.pid'));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, STELLA_HOME: path.join(dir, 'h'), FREELLMAPI_DIR: path.join(dir, 'fl'), FREELLMAPI_PORT: String(port), FREELLMAPI_API_KEY: '', FAKE_REQUIRE_CODE: '1' };
+    const r = spawnSync(node, [path.join(repo, 'install.mjs'), '--yes', '--stella', '--router-mode', 'docker'], { env, encoding: 'utf8', timeout: 90_000 });
+    const out = r.stdout + r.stderr;
+    expect(r.status, out).toBe(0);
+    expect(out).toContain('Одноразовый код настройки взят из журнала роутера');
+    expect(out).toContain('Единый ключ получен');
+    const creds = JSON.parse(await fs.readFile(path.join(dir, 'h', 'credentials.json'), 'utf8'));
+    expect(creds['freellmapi.apiKey']).toBe('freellmapi-fake-unified-key');
   });
 
   it('reports a missing install instead of hanging', async () => {

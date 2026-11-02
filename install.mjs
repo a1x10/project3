@@ -155,7 +155,9 @@ async function connectRouter(cfg) {
   }
   let token;
   try {
-    token = (await router.connect(cfg, { email, password })).token;
+    const c = await router.connect(cfg, { email, password, setupCode: opt("--setup-code") });
+    token = c.token;
+    if (c.usedSetupCode) ok("Одноразовый код настройки взят из журнала роутера.");
   } catch (e) {
     fail(`Вход не удался: ${e.message}`);
     return manualKey(cfg);

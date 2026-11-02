@@ -110,6 +110,7 @@ stella router status                        # то же самое через ST
 | Docker установлен, но не запущен | установщик сам запускает Docker Desktop; если не вышло — запустите его вручную, дождитесь «Engine running» и выполните `node install.mjs --router-mode docker` |
 | «нужен Node.js 20.18–24» для роутера | у вас Node 25+: используйте Docker (`--router-mode docker`) или поставьте Node 22 LTS |
 | На порту 3001 уже работает другая программа (Flowise, Open WebUI…) | установщик это определяет и ставит роутер на следующий свободный порт (3002, …); STELLA и студия берут порт из `~/freellmapi/stella-router.json` |
+| Дашборд просит «код из логов сервера» (setup code) | это нормально для Docker: установщик берёт код из журнала сам; вручную — `cd ~/freellmapi` и `docker compose logs`, строка `First-run setup code: …` |
 | `install.ps1` выдаёт ошибки разбора | обновите репозиторий (`git pull`) или запустите напрямую: `node install.mjs` |
 | Роутер не отвечает | `node tools/freellmapi-router.mjs logs` |
 | `stella: command not found` | откройте новый терминал; на Linux добавьте `~/.local/bin` в `PATH` |

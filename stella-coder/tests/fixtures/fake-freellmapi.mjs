@@ -7,6 +7,8 @@ const load = () => { try { return JSON.parse(fs.readFileSync(stateFile, "utf8"))
 const save = (s) => stateFile && fs.writeFileSync(stateFile, JSON.stringify(s));
 const UNIFIED = "freellmapi-fake-unified-key";
 const sessions = new Set();
+const SETUP_CODE = "ABCD-1234";
+if (process.env.FAKE_REQUIRE_CODE) console.log(`\n  First-run setup code: ${SETUP_CODE}\n`);
 const PROVIDERS = [
   { platform: "kilo", name: "Kilo Gateway", kind: "chat", keyless: true },
   { platform: "ovh", name: "OVH AI Endpoints", kind: "chat", keyless: true },
@@ -28,6 +30,8 @@ http.createServer(async (req, res) => {
   }
   if (url === "/api/auth/setup" && req.method === "POST") {
     if (st.users.length) return send(res, 409, { error: { message: "Setup already completed. Use login instead." } });
+    if (process.env.FAKE_REQUIRE_CODE && body.setupCode !== SETUP_CODE)
+      return send(res, 403, { error: { message: "A setup code is required to create the first account from a remote device. Check the server logs for the code, or open the dashboard from a browser on the machine running FreeLLMAPI.", type: "setup_code_required" } });
     if (!/@/.test(body.email || "") || (body.password || "").length < 8) return send(res, 400, { error: { message: "bad signup" } });
     st.users.push({ email: body.email, password: body.password }); save(st);
     const t = "sess-" + Math.random(); sessions.add(t); return send(res, 201, { token: t, email: body.email });
