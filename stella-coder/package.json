@@ -1,0 +1,47 @@
+{
+  "name": "stella-coder",
+  "version": "0.1.0",
+  "description": "STELLA CODER — autonomous AI coding agent for the terminal",
+  "type": "module",
+  "bin": {
+    "stella": "dist/cli/main.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/postbuild.mjs",
+    "dev": "tsx src/cli/main.ts",
+    "start": "node dist/cli/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "chalk": "^5.6.2",
+    "ignore": "^7.0.14",
+    "ink": "^6.3.0",
+    "picomatch": "^4.0.7",
+    "react": "^19.1.1",
+    "string-width": "^7.2.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "19.1",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
