@@ -14,7 +14,8 @@ import "prismjs/components/prism-rust";
 import "prismjs/components/prism-go";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-markup";
-import { getProviderConfig, PRESET_PROVIDERS } from "./providerStore.js";
+import { getProviderConfig, getPreset } from "./providerStore.js";
+import { resolveTarget, streamChat } from "./llmClient.js";
 
 const DEFAULT_API = "http://localhost:8080";
 const EDIT_MAX_TOKENS = 3072;
@@ -273,8 +274,14 @@ export default function Chat({
 
 
   // Ask the server how much context it has, so we know how big a site fits into edit mode.
+  const providerCfg = getProviderConfig();
+  const activeProvider = providerCfg.activeProviderId;
+  const activePreset = getPreset(activeProvider);
+  const providerLabel = activePreset.shortName || activePreset.name.split(" ")[0];
+  const activeModel = providerCfg.providers?.[activeProvider]?.model || activePreset.defaultModel;
   useEffect(() => {
     let off = false;
+    if (activeProvider !== "local") return undefined;
     fetch(`${apiUrl}/health`)
       .then((r) => r.json())
       .then((j) => {
@@ -284,7 +291,7 @@ export default function Chat({
     return () => {
       off = true;
     };
-  }, [apiUrl]);
+  }, [apiUrl, activeProvider]);
 
   const onScroll = () => {
     const el = feedRef.current;
@@ -366,116 +373,61 @@ export default function Chat({
     const ctl = new AbortController();
     abortRef.current = ctl;
     accRef.current = "";
+    const pConfig = getProviderConfig();
+    const pId = pConfig.activeProviderId;
+    const preset = getPreset(pId);
+    const target = resolveTarget(preset, pConfig.providers?.[pId], apiUrl);
+    let appliedN = 0;
     try {
-      // Resolve provider configuration
-      const pConfig = getProviderConfig();
-      const pId = pConfig.activeProviderId || "local";
-      const pData = pConfig.providers?.[pId] || {};
-      const preset = PRESET_PROVIDERS.find((p) => p.id === pId) || PRESET_PROVIDERS[0];
-
-      const endpoint = pData.customUrl || (pId === "local" ? `${apiUrl}/v1/chat/completions` : preset.url);
-      const targetModel = pData.model || preset.defaultModel;
-
-      const headers = { "Content-Type": "application/json" };
-      if (pData.apiKey) {
-        if (pId === "anthropic") {
-          headers["x-api-key"] = pData.apiKey;
-          headers["anthropic-version"] = "2023-06-01";
-        } else {
-          headers["Authorization"] = `Bearer ${pData.apiKey}`;
-        }
+      if (preset.requiresKey && !target.apiKey) {
+        throw new Error(`не указан API-ключ. Откройте «AI: ${preset.shortName || preset.name}» в верхней панели и вставьте ключ.`);
       }
-
-      const reqBody = {
-        model: targetModel,
+      const r = await streamChat({
+        preset,
+        target,
         messages: apiMessages,
-        max_tokens: editMode ? EDIT_MAX_TOKENS : siteMode ? 4096 : 2048,
+        maxTokens: editMode ? EDIT_MAX_TOKENS : siteMode ? 8192 : 2048,
         temperature: editMode ? 0.3 : 0.7,
-        stream: true,
-      };
-
-      const resp = await fetch(endpoint, {
-        method: "POST",
         signal: ctl.signal,
-        headers,
-        body: JSON.stringify(reqBody),
-      });
-      if (!resp.ok || !resp.body) {
-        const errText = await resp.text().catch(() => "");
-        throw new Error(`API ${resp.status} (${preset.name}): ${errText.slice(0, 150)}`);
-      }
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let acc = "";
-      let finished = false;
-      let appliedN = 0;
-      let serverError = "";
-      while (!finished) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop();
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith("data:")) continue;
-          const payload = t.slice(5).trim();
-          if (payload === "[DONE]") {
-            finished = true;
-            break;
-          }
-          try {
-            const obj = JSON.parse(payload);
-            if (obj.error) serverError = obj.error;
-
-            // Universal token extractor: OpenAI choices[0].delta.content or custom {token} or Anthropic delta.text
-            const chunkToken =
-              obj.token ||
-              obj.choices?.[0]?.delta?.content ||
-              obj.delta?.text ||
-              "";
-
-            if (chunkToken) {
-              acc += chunkToken;
-              accRef.current = acc;
-              const snapshot = acc;
-              setMessages((prev) => {
-                const next = [...prev];
-                next[next.length - 1] = { role: "assistant", content: snapshot, streaming: true, mode };
-                return next;
-              });
-              if (editMode) {
-                // finished edit blocks are applied to the live preview as they arrive
-                const answer = splitThink(snapshot).answer;
-                const { blocks } = parseEdits(answer);
-                if (blocks.length > appliedN) {
-                  appliedN = blocks.length;
-                  onPreview(applyEdits(base, blocks, codes).doc, true, aiIndex, "edit");
-                } else if (!blocks.length && /```html/i.test(answer)) {
-                  onPreview(extractHtml(answer), true, aiIndex, "new");
-                }
-              } else {
-                onPreview(extractHtml(snapshot), true, aiIndex, "new");
-              }
+        onToken: (snapshot) => {
+          accRef.current = snapshot;
+          setMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { role: "assistant", content: snapshot, streaming: true, mode };
+            return next;
+          });
+          if (editMode) {
+            // finished edit blocks are applied to the live preview as they arrive
+            const answer = splitThink(snapshot).answer;
+            const { blocks } = parseEdits(answer);
+            if (blocks.length > appliedN) {
+              appliedN = blocks.length;
+              onPreview(applyEdits(base, blocks, codes).doc, true, aiIndex, "edit");
+            } else if (!blocks.length && /```html/i.test(answer)) {
+              onPreview(extractHtml(answer), true, aiIndex, "new");
             }
-          } catch {
-            /* partial JSON — wait for more bytes */
+          } else {
+            onPreview(extractHtml(snapshot), true, aiIndex, "new");
           }
-        }
-      }
-
-
-      if (serverError && !acc) throw new Error(`сервер: ${serverError}`);
-      const final = { role: "assistant", content: acc, streaming: false, mode, timestamp: new Date().toISOString() };
+        },
+      });
+      const acc = r.text;
+      const final = {
+        role: "assistant",
+        content: acc,
+        streaming: false,
+        mode,
+        timestamp: new Date().toISOString(),
+        model: r.routedVia ? `${target.model} → ${r.routedVia}` : target.model,
+        provider: preset.shortName || preset.name,
+      };
       if (editMode) {
         const answer = splitThink(acc).answer;
         const parsed = parseEdits(answer);
         if (parsed.blocks.length) {
           const { doc, results } = applyEdits(base, parsed.blocks, codes);
           final.results = results;
-          onPreview(results.some((r) => r.ok) ? doc : base, false, aiIndex, "edit");
+          onPreview(results.some((x) => x.ok) ? doc : base, false, aiIndex, "edit");
         } else if (/```html/i.test(answer) && extractHtml(answer)) {
           onPreview(extractHtml(answer), false, aiIndex, "new");
         } else {
@@ -490,7 +442,8 @@ export default function Chat({
         if (onSaveMessages) onSaveMessages(next);
         return next;
       });
-      if (onRecordUsage) onRecordUsage(Math.max(1, Math.round(acc.length / 4)));
+      const spent = r.usage.input + r.usage.output || Math.round((JSON.stringify(apiMessages).length + acc.length) / 4);
+      if (onRecordUsage) onRecordUsage(Math.max(1, spent));
     } catch (e) {
       if (e.name === "AbortError") {
         // user pressed stop: keep what has been generated so far
@@ -498,18 +451,22 @@ export default function Chat({
         setMessages((prev) => {
           const next = [...prev];
           next[next.length - 1] = { role: "assistant", content: part, streaming: false, mode };
+          if (onSaveMessages) onSaveMessages(next);
           return next;
         });
         if (editMode) {
           const parsed = parseEdits(splitThink(part).answer);
           const res = parsed.blocks.length ? applyEdits(base, parsed.blocks, codes) : null;
-          onPreview(res && res.results.some((r) => r.ok) ? res.doc : base, false, aiIndex, "edit");
+          onPreview(res && res.results.some((x) => x.ok) ? res.doc : base, false, aiIndex, "edit");
         } else onPreview(extractHtml(part), false, aiIndex, "new");
         return;
       }
       setMessages((prev) => prev.slice(0, -1));
+      setInput(content);
       if (pId === "local") {
-        setError(`Не удалось получить ответ: ${e.message}. Проверьте, что локальный server.py запущен (${apiUrl}).`);
+        setError(`Не удалось получить ответ: ${e.message} Проверьте, что локальный сервер запущен (${apiUrl}).`);
+      } else if (pId === "freellmapi") {
+        setError(`FreeLLMAPI: ${e.message} Убедитесь, что роутер запущен (по умолчанию http://localhost:3001) и ключ freellmapi-… указан верно.`);
       } else {
         setError(`Ошибка провайдера ${preset.name}: ${e.message}`);
       }
@@ -521,14 +478,14 @@ export default function Chat({
 
   return (
     <div className="chat">
-      <div className="apirow" title="Адрес API инференса">
+      <div className="apirow" title={activeProvider === "local" ? "Адрес локального сервера инференса" : "Активный AI-провайдер (меняется кнопкой «AI» в верхней панели)"}>
         <span className="pulse-dot" />
-        <span className="apirow-name">Vibecode v1</span>
-        <input
-          value={apiUrl}
-          onChange={(e) => setApiUrl(e.target.value.replace(/\/$/, ""))}
-          spellCheck={false}
-        />
+        <span className="apirow-name">{providerLabel}</span>
+        {activeProvider === "local" ? (
+          <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value.replace(/\/$/, ""))} spellCheck={false} />
+        ) : (
+          <span className="apirow-model">{activeModel}</span>
+        )}
       </div>
 
       <div className="feed" ref={feedRef} onScroll={onScroll}>
@@ -537,7 +494,7 @@ export default function Chat({
             <div className="hero">
               <div className="hero-logo"><Icon name="logo" size={34} /></div>
               <h1>Vibecode v1</h1>
-              <p>{siteMode ? "Опиши сайт — соберу его справа вживую." : "Локальная модель. Спроси что-нибудь."}</p>
+              <p>{siteMode ? "Опиши сайт — соберу его справа вживую." : `${providerLabel} · ${activeModel}. Спроси что-нибудь.`}</p>
             </div>
           )}
           {messages.map((m, i) =>
@@ -558,6 +515,7 @@ export default function Chat({
                       {m.timestamp && (
                         <div className="assistant-time-tag">
                           <span>Ответил: {formatTimeAgo(m.timestamp)}</span>
+                          {m.model && <span className="assistant-model-tag" title={m.provider}>· {m.model}</span>}
                         </div>
                       )}
                     </>

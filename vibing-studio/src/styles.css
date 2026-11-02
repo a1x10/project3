@@ -2372,11 +2372,14 @@ html.theming *, html.theming *::before, html.theming *::after {
 
 .provider-modal {
   width: 890px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
 }
 
 .provider-layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 20px;
   min-height: 440px;
 }
@@ -2449,6 +2452,21 @@ html.theming *, html.theming *::before, html.theming *::after {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+}
+.provider-config-panel .modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.instructions-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@media (max-width: 760px) {
+  .provider-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .provider-header-row {
@@ -2555,4 +2573,48 @@ html.theming *, html.theming *::before, html.theming *::after {
   top: 8px;
   right: 8px;
   z-index: 2;
+}
+/* ---- provider status / FreeLLMAPI additions ---- */
+.form-alert.success {
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  color: #34d399;
+}
+.provider-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.apirow-model {
+  margin-left: auto;
+  font: 500 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--text-muted, #94a3b8);
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-model-tag {
+  margin-left: 6px;
+  opacity: 0.75;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.security-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--danger-bg, rgba(248, 113, 113, 0.12));
+  border-bottom: 1px solid var(--danger-line, rgba(248, 113, 113, 0.4));
+  color: #ff768f;
+}
+.security-banner button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
 }

@@ -1,10 +1,10 @@
-name: stella-coder CI
+name: CI
 
 on:
   push:
-    paths: ['stella-coder/**', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', '.github/workflows/stella-ci.yml']
   pull_request:
-    paths: ['stella-coder/**', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', '.github/workflows/stella-ci.yml']
 
 permissions:
   contents: read
@@ -34,3 +34,27 @@ jobs:
       - run: npm test
       - name: Smoke test the CLI binary
         run: node dist/cli/main.js --version && node dist/cli/main.js --help
+
+  vibing-studio:
+    name: vibing-studio (build, unit, e2e)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vibing-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vibing-studio/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm i --no-save playwright && npx playwright install --with-deps chromium
+      - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vibing-studio-screenshots
+          path: vibing-studio/test-results/

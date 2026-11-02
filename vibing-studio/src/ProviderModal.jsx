@@ -1,10 +1,14 @@
 import React, { useState } from "react";
 import Icon from "./Icons.jsx";
 import { PRESET_PROVIDERS, getProviderConfig, saveProviderConfig } from "./providerStore.js";
+import { listModels, resolveTarget, testConnection } from "./llmClient.js";
 
 export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
   const [config, setConfig] = useState(() => getProviderConfig());
-  const [selectedProviderId, setSelectedProviderId] = useState(() => config.activeProviderId || "local");
+  const [selectedProviderId, setSelectedProviderId] = useState(() => config.activeProviderId || "freellmapi");
+  const [remoteModels, setRemoteModels] = useState({});
+  const [status, setStatus] = useState({ kind: "", text: "" });
+  const [working, setWorking] = useState("");
 
   if (!isOpen) return null;
 
@@ -27,6 +31,36 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
     if (onConfigChange) onConfigChange(updated);
   };
 
+  const target = resolveTarget(currentPreset, providerData);
+  const modelOptions = [...new Set([...(currentPreset.models || []), ...(remoteModels[selectedProviderId] || [])])];
+
+  const handleLoadModels = async () => {
+    setWorking("models");
+    setStatus({ kind: "", text: "" });
+    try {
+      const ids = await listModels(currentPreset, target);
+      setRemoteModels((m) => ({ ...m, [selectedProviderId]: ids }));
+      setStatus({ kind: "ok", text: `Загружено моделей: ${ids.length}. Выберите в списке или впишите id.` });
+    } catch (e) {
+      setStatus({ kind: "err", text: `Не удалось получить список моделей: ${e.message}` });
+    } finally {
+      setWorking("");
+    }
+  };
+
+  const handleTest = async () => {
+    setWorking("test");
+    setStatus({ kind: "", text: "" });
+    try {
+      const r = await testConnection(currentPreset, target);
+      setStatus({ kind: r.ok ? "ok" : "err", text: r.ok ? `Работает: ответ «${r.text.slice(0, 40)}» за ${r.ms} мс${r.routedVia ? ` · модель ${r.routedVia}` : ""}` : "Сервер ответил пустым сообщением" });
+    } catch (e) {
+      setStatus({ kind: "err", text: `Ошибка: ${e.message}` });
+    } finally {
+      setWorking("");
+    }
+  };
+
   const handleActivateProvider = (pId) => {
     const updated = {
       ...config,
@@ -47,7 +81,7 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
             </span>
             <div>
               <h3>Провайдеры нейросетей &amp; API</h3>
-              <p className="modal-subtitle">Подключайте ChatGPT, Claude, Gemini, Qwen, Kimi или локальный GPT-OSS</p>
+              <p className="modal-subtitle">FreeLLMAPI (бесплатно), ChatGPT, Claude, Gemini, Qwen, Kimi или локальная модель</p>
             </div>
           </div>
           <button className="modal-close" onClick={onClose}>
@@ -61,12 +95,15 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
             {PRESET_PROVIDERS.map((p) => {
               const isActive = config.activeProviderId === p.id;
               const isSelected = selectedProviderId === p.id;
-              const hasKey = config.providers?.[p.id]?.apiKey || p.id === "local";
+              const hasKey = config.providers?.[p.id]?.apiKey || !p.requiresKey;
               return (
                 <div
                   key={p.id}
                   className={`provider-tab-item ${isSelected ? "selected" : ""} ${isActive ? "active" : ""}`}
-                  onClick={() => setSelectedProviderId(p.id)}
+                  onClick={() => {
+                    setSelectedProviderId(p.id);
+                    setStatus({ kind: "", text: "" });
+                  }}
                 >
                   <div className="provider-tab-info">
                     <span className="provider-tab-name">{p.name}</span>
@@ -127,7 +164,7 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
                 <div className="provider-model-selector" style={{ display: "flex", gap: "8px" }}>
                   <select
                     className="modal-input"
-                    value={currentPreset.models.includes(providerData.model) ? providerData.model : "custom"}
+                    value={modelOptions.includes(providerData.model) ? providerData.model : "custom"}
                     onChange={(e) => {
                       if (e.target.value !== "custom") {
                         handleUpdateCurrent("model", e.target.value);
@@ -135,7 +172,7 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
                     }}
                     style={{ flex: 1 }}
                   >
-                    {currentPreset.models.map((m) => (
+                    {modelOptions.map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -152,9 +189,21 @@ export function ProviderSettingsModal({ isOpen, onClose, onConfigChange }) {
                   />
                 </div>
                 <span style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginTop: "4px", display: "block" }}>
-                  Выберите из списка или введите точный идентификатор (например: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash)
+                  Выберите из списка или введите точный идентификатор модели (например: {currentPreset.models.slice(0, 3).join(", ")})
                 </span>
               </div>
+
+              <div className="provider-test-row">
+                {currentPreset.canListModels && (
+                  <button type="button" className="provider-switch-btn" onClick={handleLoadModels} disabled={!!working}>
+                    {working === "models" ? "Загружаю…" : "Загрузить модели"}
+                  </button>
+                )}
+                <button type="button" className="provider-switch-btn" onClick={handleTest} disabled={!!working}>
+                  {working === "test" ? "Проверяю…" : "Проверить подключение"}
+                </button>
+              </div>
+              {status.text && <div className={`form-alert ${status.kind === "ok" ? "success" : "error"}`}>{status.text}</div>}
 
               <div className="provider-instructions-box">
                 <div className="provider-instructions-title">
