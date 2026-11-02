@@ -326,7 +326,7 @@ describe('interactive permission flow', () => {
 describe('hooks', () => {
   it('runs PreToolUse (block via exit 2), PostToolUse context, UserPromptSubmit and Stop hooks', async () => {
     const proj = await makeProject({ 'ok.txt': 'fine' });
-    const log = path.join(proj, 'hook.log');
+    const log = path.join(proj, 'hook.log').replace(/\\/g, '/');
     const node = process.execPath.replace(/\\/g, '/');
     const script = (code: string) => `"${node}" -e "${code.replace(/"/g, '\\"')}"`;
     const settings = openaiSettings('', {
@@ -365,7 +365,7 @@ describe('hooks', () => {
 
   it('fires Notification hooks when permission is needed and when idle', async () => {
     const proj = await makeProject({});
-    const log = path.join(proj, 'notify.log');
+    const log = path.join(proj, 'notify.log').replace(/\\/g, '/');
     const node = process.execPath.replace(/\\/g, '/');
     const s = track(await mockOpenAI((req) => (req.index === 0 ? call('Write', { file_path: 'n.txt', content: 'n' }) : text('ok'))));
     const settings = openaiSettings(s.url, { hooks: { Notification: [{ hooks: [{ type: 'command', command: `"${node}" -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>require('fs').appendFileSync(${JSON.stringify(log).replace(/"/g, "'")},JSON.parse(d).kind+'\\n'))"` }] }] } });

@@ -78,7 +78,9 @@ function escapeRe(s: string) {
 function pathMatches(pattern: string, p: ResolvedPath): boolean {
   const pat = expandHome(pattern).replace(/\\/g, '/');
   const absPosix = p.real.replace(/\\/g, '/');
-  if (pat.startsWith('//')) return picomatch(pat.slice(1), { dot: true })(absPosix);
+  const nocase = process.platform === 'win32';
+  if (/^\/\/[A-Za-z]:\//.test(pat)) return picomatch(pat.slice(2), { dot: true, nocase })(absPosix); // //C:/path
+  if (pat.startsWith('//')) return picomatch(pat.slice(1), { dot: true, nocase })(absPosix);
   if (pat.startsWith('/') || /^[A-Za-z]:\//.test(pat)) return picomatch(pat, { dot: true, nocase: process.platform === 'win32' })(absPosix);
   if (p.relToRoot === null) return false;
   const rel = pat.startsWith('./') ? pat.slice(2) : pat;
