@@ -102,7 +102,7 @@ describe('permission engine', () => {
   });
   it('path rules with globs and absolute patterns', () => {
     const abs = path.resolve('/opt/shared/hostname');
-    const e = engine('default', ['Edit(src/**)', `Read(/${abs.replace(/\\/g, '/')})`]);
+    const e = engine('default', ['Edit(src/**)', `Read(//${abs.replace(/\\/g, '/').replace(/^\//, '')})`]);
     expect(e.check('Edit', edit('src/deep/x.ts')).behavior).toBe('allow');
     expect(e.check('Edit', edit('test/x.ts')).behavior).toBe('ask');
     expect(e.check('Read', read(abs)).behavior).toBe('allow');
