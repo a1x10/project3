@@ -90,6 +90,7 @@ async function setupRouter() {
     warn("Пропускаю установку роутера (--router-mode skip).");
     return { cfg, running: await router.ping(cfg) };
   }
+  console.log(dim("    Проверяю, не запущен ли роутер…"));
   let running = await router.ping(cfg);
   if (running) ok("Роутер уже запущен.");
   else if (router.installedMode(cfg)) {
@@ -98,6 +99,7 @@ async function setupRouter() {
     running ? ok(`Роутер запущен (${router.installedMode(cfg)}).`) : warn(`Не удалось запустить установленный роутер: ${r.reason}`);
   }
   if (!running) {
+    console.log(dim("    Проверяю Docker/Podman (если Docker Desktop только запускается, это может занять до минуты)…"));
     const eng = router.detectEngine();
     console.log(dim(`    Docker/Podman: ${eng ? `${eng.engine}${eng.running ? " (запущен)" : " (не запущен)"}` : "нет"} · Node.js ${process.versions.node}${router.nodeSupportsSource() ? "" : " (для сборки роутера из исходников нужен 20.18–24 — будет использован Docker)"}`));
     try {
