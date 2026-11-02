@@ -476,11 +476,34 @@ export async function dashboardStatus(cfg = routerConfig()) {
   return st;
 }
 
-/** First run: create the dashboard account (allowed from this machine without a code). Later: log in. */
-export async function connect(cfg, { email, password }) {
+/** The one-time first-run code FreeLLMAPI prints at boot ("First-run setup code: XXXX"). */
+export function findSetupCode(cfg = routerConfig()) {
+  const text = logs(cfg, 2000) || "";
+  const all = [...text.matchAll(/First-run setup code:\s*([A-Za-z0-9_-]+)/g)];
+  return all.length ? all[all.length - 1][1] : null;
+}
+
+/**
+ * First run: create the dashboard account, later: log in.
+ * Inside Docker the request reaches the router through the container gateway, so it is not
+ * "loopback" for FreeLLMAPI and needs the setup code from the router log — read it automatically.
+ */
+export async function connect(cfg, { email, password, setupCode }) {
   const st = await dashboardStatus(cfg);
-  const r = st.needsSetup ? await api(cfg, "POST", "/api/auth/setup", { body: { email, password } }) : await api(cfg, "POST", "/api/auth/login", { body: { email, password } });
-  return { token: r.token, created: !!st.needsSetup };
+  if (!st.needsSetup) {
+    const r = await api(cfg, "POST", "/api/auth/login", { body: { email, password } });
+    return { token: r.token, created: false };
+  }
+  try {
+    const r = await api(cfg, "POST", "/api/auth/setup", { body: setupCode ? { email, password, setupCode } : { email, password } });
+    return { token: r.token, created: true };
+  } catch (e) {
+    if (!/setup code/i.test(e.message)) throw e;
+    const code = setupCode || findSetupCode(cfg);
+    if (!code) throw new Error(`${e.message} (код не найден в журнале роутера: node tools/freellmapi-router.mjs logs)`);
+    const r = await api(cfg, "POST", "/api/auth/setup", { body: { email, password, setupCode: code } });
+    return { token: r.token, created: true, usedSetupCode: true };
+  }
 }
 
 export async function getUnifiedKey(cfg, token) {
