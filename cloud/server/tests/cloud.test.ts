@@ -76,6 +76,10 @@ describe('Stella Cloud', () => {
 
     const app = await login(ALICE, 'stella', true);
     expect(app.apiKey).toMatch(/^sk-stella-/);
+    expect((await api(base, '/api/me', { token: app.apiKey })).json.user.name).toBe('Alice');
+    const tmp = await login(ALICE, 'studio');
+    await api(base, '/api/auth/logout', { method: 'POST', token: tmp.apiKey });
+    expect((await api(base, '/api/me', { token: tmp.apiKey })).status).toBe(401); // app logout revokes its key
     const keys = await api(base, '/api/me/keys', { token: web.token });
     expect(keys.json.keys[0].name).toContain('STELLA CODER');
 

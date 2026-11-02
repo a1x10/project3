@@ -10,6 +10,7 @@ import { maskKey } from '../utils/redact.js';
 import { runSlash, type CommandContext } from './commands.js';
 import { renderMarkdown } from './markdown.js';
 import { c } from './theme.js';
+import { cloudLogin, cloudLogout, cloudWhoami } from '../cloud/login.js';
 
 const VERSION = (() => {
   try {
@@ -64,6 +65,8 @@ ${c.bold('Options')}
   -v, --version · -h, --help
 
 ${c.bold('Commands')}
+  stella login [https://server]        sign in to Stella Cloud via Telegram (then model cloud:auto)
+  stella logout · stella whoami        sign out (revokes the key) · show account and limits
   stella mcp list|add|remove|test …    manage MCP servers (same as /mcp)
   stella auth set <provider> <key>     store an API key (also: status, remove)
   stella sessions [search <q>]         list or search sessions
@@ -72,7 +75,7 @@ ${c.bold('Commands')}
   stella config [get|set|path] …       settings
 
 ${c.bold('Environment')}
-  ANTHROPIC_API_KEY · OPENAI_API_KEY · OPENROUTER_API_KEY · GROQ_API_KEY · GEMINI_API_KEY
+  STELLA_CLOUD_URL · STELLA_CLOUD_API_KEY · ANTHROPIC_API_KEY · OPENAI_API_KEY · OPENROUTER_API_KEY · GROQ_API_KEY · GEMINI_API_KEY
   STELLA_MODEL (default model) · STELLA_HOME (data dir, default ~/.stella)
 `;
 
@@ -157,7 +160,7 @@ function parseArgs(argv: string[]): Args {
         rest.push(x);
     }
   }
-  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config', 'router'].includes(rest[0]!) && !a.print) a.sub = rest;
+  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config', 'router', 'login', 'logout', 'whoami'].includes(rest[0]!) && !a.print) a.sub = rest;
   else if (rest.length) a.prompt = rest.join(' ');
   return a;
 }
@@ -238,6 +241,23 @@ async function runSub(args: Args) {
     if (!mod) throw new Error('Модуль роутера не найден (пересоберите: npm run build)');
     await mod.cli(rest);
     return;
+  }
+  if (cmd === 'login') {
+    const { url, user } = await cloudLogin(rest[0], { print: (t) => console.log(t) });
+    const plan = user?.planInfo;
+    console.log(c.ok(`✓ Вход выполнен: ${user?.name ?? ''} · ${url}`));
+    if (plan) console.log(c.dim(`  Тариф ${plan.name}: ${plan.dailyRequests ?? '∞'} запросов в день. Модель по умолчанию теперь cloud:auto.`));
+    return;
+  }
+  if (cmd === 'logout') {
+    const had = await cloudLogout();
+    return console.log(had ? 'Вы вышли из Stella Cloud (ключ отозван).' : 'Вход в Stella Cloud не был выполнен.');
+  }
+  if (cmd === 'whoami') {
+    const r = await cloudWhoami();
+    if (r.error) return console.log(`Stella Cloud${r.url ? ` (${r.url})` : ''}: ${r.error}`);
+    const u = r.user;
+    return console.log(`${u.name}${u.username ? ` @${u.username}` : ''} · ${u.role} · тариф ${u.planInfo?.name} · сегодня ${u.usageToday?.requests} запросов · ${r.url}`);
   }
   if (cmd === 'auth') {
     const [op, provider, key] = rest;

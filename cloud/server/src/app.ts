@@ -105,6 +105,11 @@ export function createApp(cfg: Config, opts: { store?: Store } = {}): App {
   router.post('/api/auth/logout', async (req, res) => {
     const t = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (t.startsWith('sess_')) auth.deleteSession(t);
+    else {
+      // apps sign out by revoking the API key they received at login
+      const r = auth.resolve(t);
+      if (r?.keyId) auth.revokeKey(r.user.id, r.keyId);
+    }
     sendJson(res, 200, { ok: true });
   });
 

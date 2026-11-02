@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// Installer for STELLA CODER and/or Vibing AI Studio, including the FreeLLMAPI router.
+// Installer for STELLA CODER and/or Vibing AI Studio.
+// With a Stella Cloud server (--cloud https://ai.example.com) both apps sign in through the
+// Telegram bot and use the models of that server; without it STELLA uses a local FreeLLMAPI router.
 //
-//   node install.mjs                 interactive: choose components, set up the router
-//   node install.mjs --stella        only STELLA CODER (+ router)
-//   node install.mjs --studio        only Vibing AI Studio (+ router)
+//   node install.mjs                 interactive: choose components, server or local router
+//   node install.mjs --stella        only STELLA CODER
+//   node install.mjs --studio        only Vibing AI Studio (Windows/desktop app)
+//   node install.mjs --cloud <url>   use your Stella Cloud server (no local router needed)
 //   node install.mjs --yes           non-interactive, sensible defaults
 //   options: --router-mode auto|docker|source|skip  --no-keyless  --email <e> --password <p>
 import { spawnSync } from "node:child_process";
@@ -290,14 +293,36 @@ function installStella() {
 }
 
 function installStudio() {
-  step("Vibing AI Studio — конструктор сайтов");
+  step("Vibing AI Studio — приложение-конструктор сайтов");
   const dir = path.join(ROOT, "vibing-studio");
   if (!npm(["ci", "--no-audit", "--no-fund"], dir) || !npm(["run", "build"], dir)) {
     fail("Не удалось собрать студию (см. вывод npm выше).");
     return false;
   }
-  ok("Студия собрана.");
+  ok("Приложение собрано.");
   return true;
+}
+
+/** Stella Cloud server: --cloud, STELLA_CLOUD_URL, a saved one, or ask. Empty = local router only. */
+async function setupCloud(needed) {
+  let url = opt("--cloud") || router.readCloudUrl();
+  if (!url && !YES) {
+    step("Сервер Stella Cloud");
+    console.log(dim("  Ваш сервер с ботом-регистрацией и моделями (cloud/deploy.sh). Студии он нужен обязательно, STELLA может работать и с локальным роутером."));
+    url = await ask(needed ? "Адрес сервера, например https://ai.example.com" : "Адрес сервера (Enter — без него, локальный роутер)", "");
+  }
+  if (!url) return "";
+  url = url.trim().replace(/\/+$/, "").replace(/\/v1$/, "");
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try {
+    const r = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(10_000) });
+    const j = await r.json();
+    ok(`Сервер ${url} отвечает${j.botUsername ? ` · бот @${j.botUsername}` : " · бот не настроен"}`);
+  } catch (e) {
+    warn(`Сервер ${url} сейчас не отвечает (${e.message}) — адрес всё равно сохранён.`);
+  }
+  router.saveCloudUrl(url);
+  return url;
 }
 
 // ---------------------------------------------------------------- main
@@ -317,25 +342,33 @@ async function main() {
     stella = choice === "1" || choice === "3";
     studio = choice === "2" || choice === "3";
   }
-  const { cfg, running } = await setupRouter();
+  const cloud = await setupCloud(studio && !stella);
+  // the local router is only needed when STELLA works without a server
+  const local = !cloud || has("--with-router") ? await setupRouter() : null;
   const results = {};
   if (stella) results.stella = installStella();
   if (studio) results.studio = installStudio();
   rl?.close();
 
   step("Готово");
-  console.log(`  Роутер FreeLLMAPI: ${running ? green("работает") : red("не запущен")} — ${cfg.url} (дашборд)`);
-  console.log(dim("  Роутер запускается автоматически при старте stella и студии; вручную: node tools/freellmapi-router.mjs start|stop|status|logs"));
+  if (cloud) console.log(`  Stella Cloud: ${cloud} — вход через Telegram-бота`);
+  if (local) {
+    console.log(`  Роутер FreeLLMAPI: ${local.running ? green("работает") : red("не запущен")} — ${local.cfg.url} (дашборд)`);
+    console.log(dim("  Роутер запускается автоматически при старте stella; вручную: node tools/freellmapi-router.mjs start|stop|status|logs"));
+  }
   if (results.stella) {
     console.log(`\n  ${violet("STELLA CODER")}`);
+    if (cloud) console.log(`    stella-coder login    # один раз: подтвердите вход в Telegram — дальше модель cloud:auto`);
     console.log("    cd ваш-проект");
-    console.log("    stella-coder          # интерактивная сессия (модель freellmapi:auto:smart); то же: stella");
+    console.log(`    stella-coder          # интерактивная сессия${cloud ? "" : " (модель freellmapi:auto:smart)"}; то же: stella`);
     console.log('    stella-coder -p "задача"');
   }
   if (results.studio) {
-    console.log(`\n  ${violet("Vibing AI Studio")}`);
+    console.log(`\n  ${violet("Vibing AI Studio")} — приложение`);
     console.log(`    cd "${path.join(ROOT, "vibing-studio")}"`);
-    console.log("    npm run dev           # http://localhost:3000 (первый зарегистрированный — администратор)");
+    console.log("    npm run desktop       # открыть приложение; вход — кнопкой «Войти через Telegram»");
+    if (IS_WIN) console.log("    npm run dist:win      # собрать установщик VibingAIStudio-Setup.exe (папка release)");
+    if (!cloud) warn("Студии нужен сервер Stella Cloud — адрес можно ввести в окне входа приложения.");
   }
   if (Object.values(results).some((v) => v === false)) process.exitCode = 1;
 }

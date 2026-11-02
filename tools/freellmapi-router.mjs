@@ -558,6 +558,16 @@ export function saveRouterKey(key) {
   writeJson(credFile(), creds, 0o600);
 }
 
+/** Stella Cloud server address shared by STELLA CODER (`stella-coder login`) and the Studio app. */
+export function readCloudUrl() {
+  return process.env.STELLA_CLOUD_URL || readJson(credFile(), {})["cloud.url"] || "";
+}
+export function saveCloudUrl(url) {
+  const creds = readJson(credFile(), {});
+  creds["cloud.url"] = url;
+  writeJson(credFile(), creds, 0o600);
+}
+
 // ---------------------------------------------------------------- CLI
 
 export async function cli(argv) {

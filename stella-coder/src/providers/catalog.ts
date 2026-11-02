@@ -32,6 +32,11 @@ export const BUILTIN_MODELS: ModelInfo[] = [
   { id: 'auto', provider: 'freellmapi', name: 'FreeLLMAPI auto', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
   { id: 'auto:fast', provider: 'freellmapi', name: 'FreeLLMAPI auto:fast', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
 
+  // Stella Cloud (your own server: accounts via Telegram, owner's prompt and limits, FreeLLMAPI behind it).
+  { id: 'auto', provider: 'cloud', name: 'Stella Cloud auto', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true, notes: 'Routed by the Stella Cloud server; sign in with: stella-coder login <url>' },
+  { id: 'auto:smart', provider: 'cloud', name: 'Stella Cloud auto:smart', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
+  { id: 'auto:fast', provider: 'cloud', name: 'Stella Cloud auto:fast', contextWindow: 128_000, maxOutput: 16_384, inputPrice: 0, outputPrice: 0, toolCalling: true, streaming: true },
+
   { id: 'gpt-5', provider: 'openai', name: 'GPT-5', contextWindow: 400_000, maxOutput: 128_000, inputPrice: 1.25, outputPrice: 10, toolCalling: true, streaming: true },
   { id: 'gpt-5-mini', provider: 'openai', name: 'GPT-5 mini', contextWindow: 400_000, maxOutput: 128_000, inputPrice: 0.25, outputPrice: 2, toolCalling: true, streaming: true },
   { id: 'gpt-4.1', provider: 'openai', name: 'GPT-4.1', contextWindow: 1_000_000, maxOutput: 32_768, inputPrice: 2, outputPrice: 8, toolCalling: true, streaming: true },
@@ -45,6 +50,7 @@ export const BUILTIN_MODELS: ModelInfo[] = [
 ];
 
 export const DEFAULT_ALIASES: Record<string, string> = {
+  cloud: 'cloud:auto',
   free: 'freellmapi:auto:smart',
   'free-fast': 'freellmapi:auto:fast',
   opus: 'anthropic:claude-opus-5-5',
@@ -68,5 +74,6 @@ export const BUILTIN_PROVIDERS: Record<string, { type: 'anthropic' | 'openai' | 
   groq: { type: 'openai', baseUrl: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' },
   gemini: { type: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', apiKeyEnv: 'GEMINI_API_KEY' },
   ollama: { type: 'openai', baseUrl: 'http://localhost:11434/v1' },
+  cloud: { type: 'openai', baseUrl: '', apiKeyEnv: 'STELLA_CLOUD_API_KEY' },
   freellmapi: { type: 'openai', baseUrl: process.env.FREELLMAPI_BASE_URL ?? 'http://localhost:3001/v1', apiKeyEnv: 'FREELLMAPI_API_KEY' },
 };

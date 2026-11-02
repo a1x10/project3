@@ -14,10 +14,9 @@ import "prismjs/components/prism-rust";
 import "prismjs/components/prism-go";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-markup";
-import { getProviderConfig, getPreset } from "./providerStore.js";
-import { resolveTarget, streamChat } from "./llmClient.js";
+import { streamChat } from "./llmClient.js";
+import { cloudTarget, listModels, saveModel, savedModel } from "./cloud.js";
 
-const DEFAULT_API = "http://localhost:8080";
 const EDIT_MAX_TOKENS = 3072;
 
 const SMART_PROMPTS = [
@@ -244,7 +243,9 @@ export default function Chat({
   onNewSite,
   selectedHtml = "",
   currentUser,
-  onRecordUsage,
+  apiKey = "",
+  onAfterRequest,
+  onAuthLost,
   chatData,
   onSaveMessages,
   onOpenAuth,
@@ -253,13 +254,13 @@ export default function Chat({
   const [messages, setMessages] = useState(chatData?.messages || []);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [apiUrl, setApiUrl] = useState(DEFAULT_API);
   const [error, setError] = useState("");
   const feedRef = useRef(null);
   const stickRef = useRef(true);
   const abortRef = useRef(null);
   const accRef = useRef("");
-  const ctxRef = useRef(8192);
+  // Context the routed cloud models offer (decides how big a site fits into edit mode).
+  const ctxRef = useRef(16384);
   const hasSite = siteMode && !!(getSite && getSite());
   const [images, setImages] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -273,25 +274,25 @@ export default function Chat({
   }, [chatData?.id]);
 
 
-  // Ask the server how much context it has, so we know how big a site fits into edit mode.
-  const providerCfg = getProviderConfig();
-  const activeProvider = providerCfg.activeProviderId;
-  const activePreset = getPreset(activeProvider);
-  const providerLabel = activePreset.shortName || activePreset.name.split(" ")[0];
-  const activeModel = providerCfg.providers?.[activeProvider]?.model || activePreset.defaultModel;
+  // Models offered by the Stella Cloud server (the owner can restrict the list).
+  const [models, setModels] = useState([]);
+  const [model, setModel] = useState(() => savedModel());
   useEffect(() => {
+    if (!apiKey) return undefined;
     let off = false;
-    if (activeProvider !== "local") return undefined;
-    fetch(`${apiUrl}/health`)
-      .then((r) => r.json())
-      .then((j) => {
-        if (!off && j && j.n_ctx) ctxRef.current = j.n_ctx;
+    listModels(apiKey)
+      .then((ids) => {
+        if (off) return;
+        setModels(ids);
+        setModel((m) => (m && ids.includes(m) ? m : ids[0] || "auto"));
       })
       .catch(() => {});
     return () => {
       off = true;
     };
-  }, [apiUrl, activeProvider]);
+  }, [apiKey]);
+  const activeModel = model || "auto";
+  const providerLabel = "Stella Cloud";
 
   const onScroll = () => {
     const el = feedRef.current;
@@ -309,19 +310,10 @@ export default function Chat({
     if (!content || busy) return;
     setError("");
 
-    if (!currentUser) {
-      setError("Пожалуйста, войдите в аккаунт или зарегистрируйтесь, чтобы отправлять запросы.");
+    if (!currentUser || !apiKey) {
+      setError("Войдите через Telegram, чтобы отправлять запросы.");
       if (onOpenAuth) onOpenAuth();
       return;
-    }
-
-    if (onRecordUsage) {
-      const check = onRecordUsage(0); // dry check
-      if (!check.ok) {
-        setError(check.reason);
-        if (onOpenPlans) onOpenPlans();
-        return;
-      }
     }
 
 
@@ -373,17 +365,10 @@ export default function Chat({
     const ctl = new AbortController();
     abortRef.current = ctl;
     accRef.current = "";
-    const pConfig = getProviderConfig();
-    const pId = pConfig.activeProviderId;
-    const preset = getPreset(pId);
-    const target = resolveTarget(preset, pConfig.providers?.[pId], apiUrl);
+    const target = cloudTarget(apiKey, activeModel);
     let appliedN = 0;
     try {
-      if (preset.requiresKey && !target.apiKey) {
-        throw new Error(`не указан API-ключ. Откройте «AI: ${preset.shortName || preset.name}» в верхней панели и вставьте ключ.`);
-      }
       const r = await streamChat({
-        preset,
         target,
         messages: apiMessages,
         maxTokens: editMode ? EDIT_MAX_TOKENS : siteMode ? 8192 : 2048,
@@ -419,7 +404,7 @@ export default function Chat({
         mode,
         timestamp: new Date().toISOString(),
         model: r.routedVia ? `${target.model} → ${r.routedVia}` : target.model,
-        provider: preset.shortName || preset.name,
+        provider: "Stella Cloud",
       };
       if (editMode) {
         const answer = splitThink(acc).answer;
@@ -442,8 +427,7 @@ export default function Chat({
         if (onSaveMessages) onSaveMessages(next);
         return next;
       });
-      const spent = r.usage.input + r.usage.output || Math.round((JSON.stringify(apiMessages).length + acc.length) / 4);
-      if (onRecordUsage) onRecordUsage(Math.max(1, spent));
+      if (onAfterRequest) onAfterRequest();
     } catch (e) {
       if (e.name === "AbortError") {
         // user pressed stop: keep what has been generated so far
@@ -463,12 +447,15 @@ export default function Chat({
       }
       setMessages((prev) => prev.slice(0, -1));
       setInput(content);
-      if (pId === "local") {
-        setError(`Не удалось получить ответ: ${e.message} Проверьте, что локальный сервер запущен (${apiUrl}).`);
-      } else if (pId === "freellmapi") {
-        setError(`FreeLLMAPI: ${e.message} Роутер запускается вместе со студией (npm run dev), если он установлен через install.sh / install.cmd. Проверьте его: node ../tools/freellmapi-router.mjs status. Ключ сохраняет установщик; можно вписать его вручную в «AI: FreeLLMAPI».`);
+      if (e.status === 401 || e.status === 403) {
+        setError(`${e.detail || e.message} Войдите через Telegram ещё раз.`);
+        if (onAuthLost) onAuthLost();
+      } else if (e.status === 429) {
+        setError(`${e.detail || e.message} Лимит обновится завтра; тариф меняет администратор.`);
+        if (onOpenPlans) onOpenPlans();
+        if (onAfterRequest) onAfterRequest();
       } else {
-        setError(`Ошибка провайдера ${preset.name}: ${e.message}`);
+        setError(`Stella Cloud: ${e.detail || e.message}`);
       }
       onPreview(editMode ? base : "", false, aiIndex, mode);
     } finally {
@@ -478,11 +465,25 @@ export default function Chat({
 
   return (
     <div className="chat">
-      <div className="apirow" title={activeProvider === "local" ? "Адрес локального сервера инференса" : "Активный AI-провайдер (меняется кнопкой «AI» в верхней панели)"}>
+      <div className="apirow" title="Модели работают на сервере Stella Cloud">
         <span className="pulse-dot" />
         <span className="apirow-name">{providerLabel}</span>
-        {activeProvider === "local" ? (
-          <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value.replace(/\/$/, ""))} spellCheck={false} />
+        {models.length > 1 ? (
+          <select
+            className="apirow-select"
+            value={activeModel}
+            onChange={(e) => {
+              setModel(e.target.value);
+              saveModel(e.target.value);
+            }}
+            aria-label="Модель"
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         ) : (
           <span className="apirow-model">{activeModel}</span>
         )}

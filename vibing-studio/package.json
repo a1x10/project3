@@ -8,17 +8,70 @@
     "build": "vite build",
     "preview": "vite preview --port 3000 --strictPort",
     "test": "vitest run",
-    "e2e": "node tests/e2e/run.mjs"
+    "e2e": "node tests/e2e/run.mjs",
+    "desktop": "vite build && electron .",
+    "dist:win": "vite build && electron-builder --win nsis --x64",
+    "dist:dir": "vite build && electron-builder --dir"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
     "marked": "^15.0.0",
     "prismjs": "^1.29.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "react-dom": "^18.3.1",
     "vite": "^6.0.0",
     "vitest": "^3.2.7"
+  },
+  "productName": "Vibing AI Studio",
+  "description": "Vibing AI Studio — конструктор сайтов с ИИ (Stella Cloud)",
+  "author": "Stella",
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.stella.vibingstudio",
+    "productName": "Vibing AI Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/icon.png",
+      "artifactName": "VibingAIStudio-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vibing AI Studio"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "electron/icon.png"
+    },
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a1x10/project3.git"
   }
 }
