@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { analyzeShell } from '../permissions/shell.js';
+import { shellQuote } from '../security/quote.js';
 import { bashShell, cmdShell, execProgram, powershellShell } from './process.js';
 import { formatExec } from './shell.js';
 import { rp, relDisplay } from './fs.js';
@@ -108,7 +109,10 @@ export const DiagnosticsTool = defineTool({
         '.php': ['php', ['-l', f]],
         '.sh': ['bash', ['-n', f]],
       };
-      if (ext === '.ts' || ext === '.tsx') return runCmd(`npx --no-install tsc --noEmit --skipLibCheck --allowJs --jsx preserve ${JSON.stringify(f)}`, ctx, 120_000);
+      if (ext === '.ts' || ext === '.tsx') {
+        const sh = bashShell(ctx.services.settings?.shell) ?? powershellShell() ?? cmdShell();
+        return runCmd(`npx --no-install tsc --noEmit --skipLibCheck --allowJs --jsx preserve ${shellQuote(f, sh?.kind)}`, ctx, 120_000);
+      }
       const m = map[ext];
       if (!m) throw new ToolError(`No syntax checker for ${ext}; use typecheck/build.`);
       const r = await execProgram(m[0], m[1], { cwd: ctx.cwd, timeoutMs: t, signal: ctx.signal });

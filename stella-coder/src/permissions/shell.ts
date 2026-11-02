@@ -116,7 +116,6 @@ const HIGH: Array<[RegExp, string]> = [
   [/\b(rmdir|unlink|shred)\b/, 'file deletion'],
   [/\b(del|erase|Remove-Item|ri)\s/i, 'file deletion'],
   [/\bsudo\b|\bdoas\b|\brunas\b/, 'privilege escalation'],
-  [/\b(curl|wget|iwr|Invoke-WebRequest)\b.*\|\s*(sh|bash|zsh|python3?|node|iex|Invoke-Expression)\b/i, 'piping download into interpreter'],
   [/\b(npm|pnpm|yarn|bun)\s+(i|install|add|uninstall|remove|rm|update|upgrade|publish|link)\b/, 'package installation/publish'],
   [/\b(pip3?|pipx|uv)\s+(install|uninstall)\b|\bpoetry\s+(add|remove)\b|\bcargo\s+(install|add)\b|\bgo\s+install\b|\bgem\s+install\b|\bapt(-get)?\s|\bbrew\s+(install|uninstall)\b|\bchoco\s|\bwinget\s/, 'package installation'],
   [/\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s|restore\s|rebase|branch\s+-[dD]|filter-branch|reflog\s+expire|stash\s+(drop|clear))/, 'destructive or remote git operation'],
@@ -142,6 +141,7 @@ export function analyzeShell(cmd: string): ShellAnalysis {
   };
   const nestedInterpreter = segments.some((s) => NESTED.test(baseCommand(s)));
   for (const [re, why] of CRITICAL) if (re.test(cmd)) bump('critical', why);
+  if (/\b(curl|wget|iwr|Invoke-WebRequest|irm)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|node|iex|Invoke-Expression)\b/i.test(cmd)) bump('high', 'piping a download into an interpreter');
   for (const seg of segments) {
     const b = baseCommand(seg);
     for (const [re, why] of HIGH) if (re.test(b)) bump('high', why);

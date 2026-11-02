@@ -7,6 +7,7 @@ import { walk } from '../context/walk.js';
 import { isBinaryBuffer } from '../utils/fsutil.js';
 import { which } from '../utils/which.js';
 import { relDisplay, rp } from './fs.js';
+import { DEFAULT_CONFIDENTIAL, matchesAny } from '../security/paths.js';
 import { defineTool, ToolError, type ToolContext } from './types.js';
 
 const readDesc = (ctx: ToolContext, p: string | undefined, what: string) => {
@@ -72,6 +73,10 @@ export const GrepTool = defineTool({
   },
 });
 
+function confidentialPatterns(ctx: ToolContext): string[] {
+  return [...DEFAULT_CONFIDENTIAL, ...(ctx.services.settings?.permissions?.confidential ?? [])];
+}
+
 function relativize(line: string, ctx: ToolContext): string {
   const root = ctx.root + path.sep;
   return line.startsWith(root) ? line.slice(root.length).split(path.sep).join('/') : line;
@@ -88,6 +93,8 @@ function ripgrep(rg: string, i: GrepInput, target: string, ctx: ToolContext): Pr
   if (i.context && mode === 'content') args.push('-C', String(i.context));
   if (i.glob) args.push('--glob', i.glob);
   for (const g of ['!node_modules', '!.git', '!dist', '!build', '!.venv', '!venv', '!__pycache__', '!coverage', '!.next']) args.push('--glob', g);
+  // never surface confidential file contents through search
+  for (const pat of confidentialPatterns(ctx)) args.push('--glob', '!' + pat.replace(/^\*\*\//, ''));
   args.push('--', i.pattern, target);
   return new Promise((resolve, reject) => {
     const p = spawn(rg, args, { cwd: ctx.cwd, signal: ctx.signal, windowsHide: true });
@@ -119,7 +126,9 @@ async function jsGrep(i: GrepInput, target: string, ctx: ToolContext): Promise<s
   const files: string[] = [];
   if (st.isFile()) files.push(target);
   else for await (const e of walk(target, { ignore: ctx.services.ignore, signal: ctx.signal })) if (!globM || globM(e.rel)) files.push(e.abs);
+  const conf = confidentialPatterns(ctx);
   for (const f of files) {
+    if (matchesAny(f, null, conf)) continue;
     let buf: Buffer;
     try {
       buf = await fs.readFile(f);

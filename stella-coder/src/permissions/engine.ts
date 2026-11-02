@@ -91,6 +91,8 @@ export function ruleMatches(rule: ParsedRule, toolName: string, d: PermissionDes
   const pat = rule.pattern;
   if (d.command !== undefined && SHELL_TOOLS.has(toolName)) {
     const a = shell ?? analyzeShell(d.command);
+    // An exact, wildcard-free rule equal to the whole command is always safe to honor.
+    if (!pat.includes('*') && pat.trim() === d.command.trim()) return true;
     // A pattern must cover EVERY segment, and never authorizes substitution or nested interpreters.
     if (a.hasSubstitution || a.nestedInterpreter) return false;
     return a.segments.length > 0 && a.segments.every((s) => commandMatches(pat, s));
@@ -187,7 +189,20 @@ export class PermissionEngine {
 
     if (d.paths?.some((p) => p.isSystem) && !d.readOnly) return { behavior: 'deny', reason: 'writes to system directories are blocked' };
 
-    const explicitAllow = [...this.rules.allow, ...this.sessionAllow].find((r) => ruleMatches(r, toolName, d, shell));
+    const allowRules = [...this.rules.allow, ...this.sessionAllow];
+    let explicitAllow: ParsedRule | undefined = allowRules.find((r) => ruleMatches(r, toolName, d, shell));
+    // Chained commands: allowed when EVERY segment is covered by some allow rule or is read-only.
+    if (!explicitAllow && shell && shell.segments.length > 1 && !shell.hasSubstitution && !shell.nestedInterpreter && !shell.hasRedirectWrite) {
+      const covering: string[] = [];
+      const ok = shell.segments.every((seg) => {
+        const sa = analyzeShell(seg);
+        if (sa.readOnly) return true;
+        const r = allowRules.find((rule) => ruleMatches(rule, toolName, { ...d, command: seg }, sa));
+        if (r) covering.push(r.raw);
+        return !!r;
+      });
+      if (ok && covering.length) explicitAllow = { raw: [...new Set(covering)].join(' + '), tool: toolName };
+    }
 
     if (d.risk === 'critical' && !explicitAllow) return { behavior: 'deny', reason: `blocked catastrophic operation (${shell?.reasons.join(', ') || 'critical risk'})` };
 
@@ -228,7 +243,7 @@ export class PermissionEngine {
     if (d.command !== undefined) {
       const a = analyzeShell(d.command);
       const first = baseCommand(a.segments[0] ?? d.command).split(/\s+/).slice(0, 2).join(' ');
-      return a.segments.length === 1 && !a.hasSubstitution ? `${toolName}(${first}:*)` : `${toolName}(${d.command})`;
+      return a.segments.length === 1 && !a.hasSubstitution && !a.nestedInterpreter ? `${toolName}(${first}:*)` : `${toolName}(${d.command.trim()})`;
     }
     if (d.domain) return `${toolName}(domain:${d.domain})`;
     if (d.paths?.length === 1 && d.paths[0]!.relToRoot !== null) {

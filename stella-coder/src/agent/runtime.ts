@@ -284,6 +284,7 @@ export class Runtime {
       }
     } else meta = await this.sessions.create(this.cwd, `${model.provider}:${model.id}`);
     this.session = meta;
+    this.sessions.live = meta;
     this.checkpoints = new CheckpointStore(path.join(this.paths.checkpointsDir, meta.id));
     this.main = this.createMainAgent(model, messages);
   }

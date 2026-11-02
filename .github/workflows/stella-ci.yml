@@ -1,0 +1,36 @@
+name: stella-coder CI
+
+on:
+  push:
+    paths: ['stella-coder/**', '.github/workflows/stella-ci.yml']
+  pull_request:
+    paths: ['stella-coder/**', '.github/workflows/stella-ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    defaults:
+      run:
+        working-directory: stella-coder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: stella-coder/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - name: Smoke test the CLI binary
+        run: node dist/cli/main.js --version && node dist/cli/main.js --help

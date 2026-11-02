@@ -1,5 +1,6 @@
 import { promises as fs, constants as fsc } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export async function exists(p: string): Promise<boolean> {
   try {
@@ -21,7 +22,7 @@ export async function readJson<T>(p: string, fallback: T): Promise<T> {
 /** Atomic write: write to temp then rename (prevents half-written files on crash). */
 export async function writeFileAtomic(p: string, data: string | Buffer, mode?: number): Promise<void> {
   await fs.mkdir(path.dirname(p), { recursive: true });
-  const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${p}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await fs.writeFile(tmp, data, mode !== undefined ? { mode } : undefined);
   try {
     await fs.rename(tmp, p);

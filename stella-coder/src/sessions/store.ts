@@ -35,6 +35,8 @@ export type SessionRecord =
   | { v: 1; type: 'event'; name: string; data?: unknown; ts: number };
 
 export class SessionStore {
+  /** The session currently open in this process (kept in sync by rename). */
+  live: SessionMeta | null = null;
   constructor(private readonly dir: string) {}
 
   private jsonl(id: string) {
@@ -108,7 +110,7 @@ export class SessionStore {
   }
 
   async rename(id: string, title: string): Promise<boolean> {
-    const m = await this.getMeta(id);
+    const m = this.live?.id === id ? this.live : await this.getMeta(id);
     if (!m) return false;
     m.title = title.slice(0, 120);
     await this.saveMeta(m);

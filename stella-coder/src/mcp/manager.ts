@@ -39,6 +39,7 @@ export async function loadMcpJson(root: string): Promise<Record<string, McpServe
 /** Connects to MCP servers (stdio, Streamable HTTP, legacy SSE) and exposes their tools. */
 export class McpManager {
   private servers = new Map<string, McpServerState>();
+  private inflight = new Map<string, Promise<McpServerState>>();
   private onChange?: () => void;
 
   constructor(private readonly cwd: string) {}
@@ -59,11 +60,21 @@ export class McpManager {
     return this.servers.get(name);
   }
 
+  /** Connect every pending server and wait for connections already in progress. */
   async connectAll(timeoutMs = 20_000): Promise<void> {
-    await Promise.all(this.list().filter((s) => s.status === 'pending').map((s) => this.connect(s.name, timeoutMs).catch(() => {})));
+    const pending = this.list().filter((s) => s.status === 'pending').map((s) => this.connect(s.name, timeoutMs).catch(() => undefined));
+    await Promise.all([...pending, ...[...this.inflight.values()].map((p) => p.catch(() => undefined))]);
   }
 
-  async connect(name: string, timeoutMs = 20_000): Promise<McpServerState> {
+  connect(name: string, timeoutMs = 20_000): Promise<McpServerState> {
+    const existing = this.inflight.get(name);
+    if (existing) return existing;
+    const p = this.doConnect(name, timeoutMs).finally(() => this.inflight.delete(name));
+    this.inflight.set(name, p);
+    return p;
+  }
+
+  private async doConnect(name: string, timeoutMs: number): Promise<McpServerState> {
     const s = this.servers.get(name);
     if (!s) throw new Error(`Unknown MCP server ${name}`);
     await this.disconnect(name);

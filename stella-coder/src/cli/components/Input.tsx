@@ -25,13 +25,27 @@ export interface InputProps {
 
 /** Multi-line prompt editor with history, Tab completion and suggestion dropdown. */
 export function PromptInput(props: InputProps) {
-  const [value, setValue] = useState('');
-  const [cursor, setCursor] = useState(0);
+  const [value, setValueState] = useState('');
+  const [cursor, setCursorState] = useState(0);
+  // Refs hold the authoritative editor state so fast typing/pastes (several key events before
+  // React re-renders) never operate on a stale closure.
+  const valueRef = useRef('');
+  const cursorRef = useRef(0);
+  const setValue = (v: string) => {
+    valueRef.current = v;
+    setValueState(v);
+  };
+  const setCursor = (c: number | ((c: number) => number)) => {
+    const next = typeof c === 'function' ? c(cursorRef.current) : c;
+    cursorRef.current = next;
+    setCursorState(next);
+  };
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [sel, setSel] = useState(0);
   const lastCtrlC = useRef(0);
+  const [exitHint, setExitHint] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -57,6 +71,8 @@ export function PromptInput(props: InputProps) {
   };
 
   const applySuggestion = (s: Suggestion) => {
+    const value = valueRef.current;
+    const cursor = cursorRef.current;
     const before = value.slice(0, cursor);
     const after = value.slice(cursor);
     const m = /(\/[\w:-]*|@[^\s]*)$/.exec(before);
@@ -68,12 +84,16 @@ export function PromptInput(props: InputProps) {
 
   useInput(
     (input, key) => {
+      const value = valueRef.current;
+      const cursor = cursorRef.current;
       if (key.ctrl && input === 'c') {
         if (props.busy) return props.onInterrupt();
         if (value) return set('');
         const now = Date.now();
         if (now - lastCtrlC.current < 1500) return props.onExitRequest();
         lastCtrlC.current = now;
+        setExitHint(true);
+        setTimeout(() => setExitHint(false), 1500);
         return;
       }
       if (key.escape) {
@@ -101,7 +121,7 @@ export function PromptInput(props: InputProps) {
         }
         if (!props.history.length) return;
         const idx = histIdx === null ? props.history.length - 1 : Math.max(0, histIdx - 1);
-        if (histIdx === null) setDraft(value);
+        if (histIdx === null) setDraft(valueRef.current);
         setHistIdx(idx);
         return set(props.history[idx] ?? '');
       }
@@ -195,7 +215,7 @@ export function PromptInput(props: InputProps) {
       )}
       <Box paddingX={2} justifyContent="space-between">
         <Text color={props.modeColor}>{props.modeLabel}</Text>
-        <Text color={theme.faint}>{props.busy ? 'esc to interrupt · type to queue a message' : '/ commands · @ files · ! shell · shift+tab mode'}</Text>
+        <Text color={exitHint ? theme.warn : theme.faint}>{exitHint ? 'Press Ctrl+C again to exit' : props.busy ? 'esc to interrupt · type to queue a message' : '/ commands · @ files · ! shell · shift+tab mode'}</Text>
       </Box>
     </Box>
   );

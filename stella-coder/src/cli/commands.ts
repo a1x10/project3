@@ -504,8 +504,7 @@ export const COMMANDS: SlashCommand[] = [
     description: 'Rename the current session',
     async run(a, ctx) {
       if (!a.trim()) return ctx.print('Usage: /rename <title>', 'warn');
-      ctx.rt.session.title = a.trim().slice(0, 120);
-      await ctx.rt.sessions.saveMeta(ctx.rt.session);
+      await ctx.rt.sessions.rename(ctx.rt.session.id, a.trim());
       ctx.print(`Session renamed to "${ctx.rt.session.title}"`);
     },
   },
