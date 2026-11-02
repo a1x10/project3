@@ -23,6 +23,8 @@ export interface Config {
   routerUrl: string;
   routerAdminEmail: string;
   routerAdminPassword: string;
+  /** Keyless FreeLLMAPI providers to switch on automatically (empty = none). */
+  routerKeyless: string[];
   /** Initial values; editable later in the admin panel. */
   defaultSystemPrompt: string;
   defaultModel: string;
@@ -56,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     routerUrl,
     routerAdminEmail: env.ROUTER_ADMIN_EMAIL || '',
     routerAdminPassword: env.ROUTER_ADMIN_PASSWORD || '',
+    routerKeyless: (env.ROUTER_KEYLESS ?? 'kilo,ovh').split(/[\s,]+/).filter(Boolean),
     defaultSystemPrompt: env.SYSTEM_PROMPT || '',
     defaultModel: env.DEFAULT_MODEL || 'auto:smart',
     sessionTtlDays: num(env.SESSION_TTL_DAYS, 30),

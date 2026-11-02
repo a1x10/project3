@@ -97,6 +97,7 @@ describe('Stella Cloud', () => {
     const { apiKey } = await login(ALICE, 'studio');
     const models = await api(base, '/v1/models', { token: apiKey });
     expect(models.json.data.map((m: any) => m.id)).toContain('auto:smart');
+    expect(up.enabled).toEqual(['kilo', 'ovh']); // keyless providers switched on once
 
     const r = await api(base, '/v1/chat/completions', { token: apiKey, body: { messages: [{ role: 'user', content: 'hi' }] }, headers: { 'x-stella-client': 'studio' } });
     expect(r.status).toBe(200);
@@ -127,6 +128,7 @@ describe('Stella Cloud', () => {
     up.rotate('rotated-key');
     const r = await api(base, '/v1/chat/completions', { token: apiKey, body: { messages: [{ role: 'user', content: 'x' }] } });
     expect(r.status).toBe(200);
+    expect(up.enabled).toEqual(['kilo', 'ovh']);
   });
 
   it('rejects unauthenticated requests and enforces daily limits', async () => {

@@ -47,7 +47,12 @@ export async function fakeTelegram() {
     };
     if (method === 'getMe') return reply({ id: 999, is_bot: true, username: 'stella_test_bot' });
     if (method === 'getUpdates') {
-      const take = () => reply(queue.splice(0).filter((u) => u.update_id >= (params.offset ?? 0)));
+      let done = false;
+      const take = () => {
+        if (done) return;
+        done = true;
+        reply(queue.splice(0).filter((u) => u.update_id >= (params.offset ?? 0)));
+      };
       if (queue.length) return take();
       const t = setTimeout(take, 300);
       waiters.push(() => {
@@ -100,6 +105,7 @@ export async function fakeTelegram() {
 export async function fakeUpstream(opts: { key?: string } = {}) {
   let key = opts.key ?? 'freellmapi-unified-key';
   const requests: any[] = [];
+  const enabled: string[] = [];
   const srv = await listen(async (req, res) => {
     const url = req.url ?? '';
     const json = (status: number, j: unknown, headers: Record<string, string> = {}) => {
@@ -111,6 +117,12 @@ export async function fakeUpstream(opts: { key?: string } = {}) {
       return b.email === 'admin@local' && b.password === 'pw' ? json(200, { token: 'dash-session' }) : json(401, { error: { message: 'bad creds' } });
     }
     if (url === '/api/settings/api-key') return req.headers.authorization === 'Bearer dash-session' ? json(200, { apiKey: key }) : json(401, { error: { message: 'no' } });
+    if (url === '/api/keys/providers' && req.headers.authorization === 'Bearer dash-session')
+      return json(200, { providers: ['kilo', 'ovh', 'groq'].map((p) => ({ platform: p, name: p, keyless: p !== 'groq', configured: enabled.includes(p) })) });
+    if (url === '/api/keys' && req.method === 'POST' && req.headers.authorization === 'Bearer dash-session') {
+      enabled.push((await body(req)).platform);
+      return json(201, { ok: true });
+    }
     if (req.headers.authorization !== `Bearer ${key}`) return json(401, { error: { message: 'Invalid API key' } });
     if (url === '/v1/models') return json(200, { object: 'list', data: [{ id: 'auto' }, { id: 'auto:smart' }, { id: 'auto:fast' }] });
     if (url === '/v1/chat/completions') {
@@ -130,6 +142,7 @@ export async function fakeUpstream(opts: { key?: string } = {}) {
   return {
     ...srv,
     requests,
+    enabled,
     rotate(k: string) {
       key = k;
     },

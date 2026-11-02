@@ -1,0 +1,58 @@
+# Stella Cloud on a VPS: FreeLLMAPI (models) → Stella Cloud (accounts, prompt, limits, bot, site) → Caddy (HTTPS).
+# Configure via .env (deploy.sh creates it). Start: docker compose up -d --build
+services:
+  freellmapi:
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    restart: unless-stopped
+    environment:
+      ENCRYPTION_KEY: ${FREELLMAPI_ENCRYPTION_KEY}
+      PORT: "3001"
+      # Creates the dashboard admin on first start (no setup code needed).
+      FREEAPI_CONFIG_JSON: '{"admin":{"email":"${ROUTER_ADMIN_EMAIL}","password":"${ROUTER_ADMIN_PASSWORD}"}}'
+    volumes:
+      - freellmapi-data:/app/server/data
+    # Dashboard only on the server's loopback: open it through an SSH tunnel (see README).
+    ports:
+      - "127.0.0.1:3001:3001"
+
+  stella-cloud:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - freellmapi
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS}
+      ROUTER_URL: http://freellmapi:3001
+      ROUTER_ADMIN_EMAIL: ${ROUTER_ADMIN_EMAIL}
+      ROUTER_ADMIN_PASSWORD: ${ROUTER_ADMIN_PASSWORD}
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-}
+      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-}
+      SYSTEM_PROMPT: ${SYSTEM_PROMPT:-}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-auto:smart}
+    volumes:
+      - stella-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - stella-cloud
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  freellmapi-data:
+  stella-data:
+  caddy-data:
+  caddy-config:

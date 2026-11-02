@@ -152,7 +152,7 @@ export class Store {
     const users = this.db
       .prepare(
         `SELECT u.*,
-          coalesce((SELECT count(*) FROM usage g WHERE g.user_id = u.id AND g.day = ?), 0) AS requests_today,
+          coalesce((SELECT count(*) FROM usage g WHERE g.user_id = u.id AND g.day = ? AND g.status < 400), 0) AS requests_today,
           coalesce((SELECT sum(input_tokens + output_tokens) FROM usage g WHERE g.user_id = u.id AND g.day = ?), 0) AS tokens_today,
           (SELECT count(*) FROM api_keys k WHERE k.user_id = u.id AND k.revoked_at IS NULL) AS keys
          FROM users u ${where} ORDER BY u.id DESC LIMIT ? OFFSET ?`,
@@ -176,7 +176,7 @@ export class Store {
 
   // ---------------- usage
   usageToday(userId: number): { requests: number; tokens: number } {
-    const r = this.db.prepare('SELECT count(*) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens FROM usage WHERE user_id = ? AND day = ?').get(userId, today()) as { requests: number; tokens: number };
+    const r = this.db.prepare('SELECT count(*) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens FROM usage WHERE user_id = ? AND day = ? AND status < 400').get(userId, today()) as { requests: number; tokens: number };
     return { requests: Number(r.requests), tokens: Number(r.tokens) };
   }
   usageDays(userId: number, days = 14): Array<{ day: string; requests: number; tokens: number }> {
