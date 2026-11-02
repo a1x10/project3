@@ -34,6 +34,20 @@ jobs:
       - run: npm test
       - name: Smoke test the CLI binary and router manager
         run: node dist/cli/main.js --version && node dist/cli/main.js --help && node dist/cli/main.js router status && node ../install.mjs --help-check
+      - name: Installer wrapper parses and runs (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: .
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 --help-check
+      - name: Installer wrapper runs (install.cmd)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: .
+        run: install.cmd --help-check
+      - name: Installer wrapper runs (install.sh)
+        if: runner.os != 'Windows'
+        working-directory: .
+        run: ./install.sh --help-check
 
   vibing-studio:
     name: vibing-studio (build, unit, e2e)
