@@ -108,5 +108,13 @@ describe('stella CLI (built binary)', () => {
     expect(st.stdout).toContain('Mode');
     const s = await runCli(['sessions'], { STELLA_HOME: home }, proj);
     expect(s.code).toBe(0);
+    const add = await runCli(['mcp', 'add', 'remote', '--url', 'http://127.0.0.1:9/mcp', '--header', 'Authorization: Bearer ${NOPE}'], { STELLA_HOME: home }, proj);
+    expect(add.stdout).toContain('Added remote');
+    const local = JSON.parse(await fs.readFile(path.join(proj, '.stella/settings.local.json'), 'utf8'));
+    expect(local.mcpServers.remote).toMatchObject({ type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer ${NOPE}' } });
+    const add2 = await runCli(['mcp', 'add', 'calc', '--', process.execPath, 'server.mjs'], { STELLA_HOME: home }, proj);
+    expect(add2.stdout).toContain('Added calc');
+    const local2 = JSON.parse(await fs.readFile(path.join(proj, '.stella/settings.local.json'), 'utf8'));
+    expect(local2.mcpServers.calc).toMatchObject({ type: 'stdio', command: process.execPath, args: ['server.mjs'] });
   });
 });

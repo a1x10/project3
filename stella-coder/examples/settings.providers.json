@@ -1,0 +1,10 @@
+{
+  "model": "local",
+  "modelAliases": { "local": "ollama:qwen2.5-coder:14b", "cloud": "openrouter:anthropic/claude-sonnet-4.5" },
+  "providers": {
+    "ollama": { "type": "openai", "baseUrl": "http://localhost:11434/v1", "models": [{ "id": "qwen2.5-coder:14b", "contextWindow": 32768, "maxOutput": 8192 }] },
+    "lmstudio": { "type": "openai", "baseUrl": "http://localhost:1234/v1", "models": [{ "id": "qwen2.5-coder-32b-instruct", "contextWindow": 32768 }] },
+    "openrouter": { "type": "openai", "apiKeyEnv": "OPENROUTER_API_KEY", "headers": { "X-Title": "STELLA CODER" }, "models": [{ "id": "anthropic/claude-sonnet-4.5", "contextWindow": 200000, "inputPrice": 3, "outputPrice": 15 }] },
+    "corp": { "type": "openai", "baseUrl": "https://llm.corp.example/v1", "apiKeyEnv": "CORP_LLM_KEY", "models": [{ "id": "coder-xl", "contextWindow": 128000, "inputPrice": 1, "outputPrice": 4 }] }
+  }
+}

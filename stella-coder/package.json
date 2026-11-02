@@ -1,7 +1,7 @@
 {
   "name": "stella-coder",
   "version": "0.1.0",
-  "description": "STELLA CODER — autonomous AI coding agent for the terminal",
+  "description": "STELLA CODER \u2014 autonomous AI coding agent for the terminal",
   "type": "module",
   "bin": {
     "stella": "dist/cli/main.js"
@@ -9,8 +9,11 @@
   "main": "dist/index.js",
   "files": [
     "dist",
+    "builtin",
+    "docs",
+    "examples",
     "README.md",
-    "docs"
+    "STELLA.md"
   ],
   "engines": {
     "node": ">=20.10"
@@ -21,7 +24,8 @@
     "start": "node dist/cli/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "npm run build"
   },
   "license": "MIT",
   "dependencies": {
@@ -43,5 +47,23 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "cli",
+    "terminal",
+    "llm",
+    "mcp",
+    "anthropic",
+    "openai",
+    "gemini",
+    "ollama"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a1x10/project3.git",
+    "directory": "stella-coder"
   }
 }

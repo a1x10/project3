@@ -222,10 +222,15 @@ export class Runtime {
         if (agentId === 'main') this.sessions.append(this.session.id, { v: 1, type: 'event', name: 'todos', data: todos, ts: Date.now() }).catch(() => {});
       },
       setPermissionMode: (m: PermissionMode) => this.setMode(m),
-      askPlanApproval: (plan: string) => (this.handlers.planApproval ? this.serialize(() => this.handlers.planApproval!(plan)) : Promise.resolve(null)),
-      askQuestion: (q: string, options: string[]) => (this.handlers.question ? this.serialize(() => this.handlers.question!(q, options)) : Promise.resolve(null)),
+      askPlanApproval: (plan: string) => (this.handlers.planApproval ? this.serialize(() => (this.notify('plan', 'STELLA has a plan ready for your review'), this.handlers.planApproval!(plan))) : Promise.resolve(null)),
+      askQuestion: (q: string, options: string[]) => (this.handlers.question ? this.serialize(() => (this.notify('question', q), this.handlers.question!(q, options))) : Promise.resolve(null)),
       sessionId: () => this.session?.id,
     };
+  }
+
+  /** Fire the Notification hook (desktop alerts, chat pings…) without blocking the agent. */
+  notify(kind: 'permission' | 'plan' | 'question' | 'idle', message: string) {
+    this.hooks.run('Notification', { kind, message }).catch(() => undefined);
   }
 
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -259,7 +264,13 @@ export class Runtime {
       roots: this.roots,
       emit: (ev) => this.emit(ev),
       get askPermission() {
-        return self.handlers.permission ? (req: PermissionRequest) => self.serialize(() => self.handlers.permission!(req)) : undefined;
+        return self.handlers.permission
+          ? (req: PermissionRequest) =>
+              self.serialize(() => {
+                self.notify('permission', `STELLA needs your permission: ${req.descriptor.summary}`);
+                return self.handlers.permission!(req);
+              })
+          : undefined;
       },
       persistRule: (rule) => updateSettings('local', this.root, (s) => ({ ...s, permissions: { ...(s.permissions ?? {}), allow: [...new Set([...(s.permissions?.allow ?? []), rule])] } })),
       checkpoints: { beginTurn: (id, p) => this.checkpoints.beginTurn(id, p) },
@@ -416,7 +427,9 @@ export class Runtime {
     this.session.pendingTask = prompt.slice(0, 200);
     await this.sessions.saveMeta(this.session);
     try {
-      return await this.main.run(input);
+      const r = await this.main.run(input);
+      if (this.opts.interactive) this.notify('idle', 'STELLA finished and is waiting for your input');
+      return r;
     } finally {
       this.session.status = 'idle';
       this.session.pendingTask = undefined;

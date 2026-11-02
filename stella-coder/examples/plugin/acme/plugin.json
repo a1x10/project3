@@ -1,0 +1,7 @@
+{
+  "name": "acme",
+  "version": "1.0.0",
+  "description": "ACME team commands and a secret-scanning hook",
+  "commands": "commands",
+  "hooks": { "PostToolUse": [{ "matcher": "Write|Edit", "hooks": [{ "type": "command", "command": "node ${PLUGIN_DIR}/scan.cjs" }] }] }
+}

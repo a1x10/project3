@@ -1,0 +1,15 @@
+{
+  "model": "sonnet",
+  "permissions": {
+    "defaultMode": "default",
+    "allow": ["Bash(npm test:*)", "Bash(npm run lint:*)", "Bash(npx tsc --noEmit:*)", "Bash(git diff:*)", "Bash(git log:*)", "WebFetch(domain:developer.mozilla.org)"],
+    "ask": ["Bash(git commit:*)"],
+    "deny": ["Bash(git push:*)", "Bash(npm publish:*)", "Edit(.github/workflows/**)"],
+    "confidential": ["config/production/**"]
+  },
+  "hooks": {
+    "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "node .stella/hooks/guard.cjs", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "node .stella/hooks/format.cjs", "timeout": 30 }] }]
+  },
+  "ignore": ["fixtures/large/**", "*.snap"]
+}
