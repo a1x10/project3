@@ -1,0 +1,296 @@
+#!/usr/bin/env node
+// Installer for STELLA CODER and/or Vibing AI Studio, including the FreeLLMAPI router.
+//
+//   node install.mjs                 interactive: choose components, set up the router
+//   node install.mjs --stella        only STELLA CODER (+ router)
+//   node install.mjs --studio        only Vibing AI Studio (+ router)
+//   node install.mjs --yes           non-interactive, sensible defaults
+//   options: --router-mode auto|docker|source|skip  --no-keyless  --email <e> --password <p>
+import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import { fileURLToPath } from "node:url";
+import * as router from "./tools/freellmapi-router.mjs";
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const IS_WIN = process.platform === "win32";
+const args = process.argv.slice(2);
+const has = (f) => args.includes(f);
+const opt = (f) => {
+  const i = args.indexOf(f);
+  return i >= 0 ? args[i + 1] : undefined;
+};
+const YES = has("--yes") || has("-y") || !process.stdin.isTTY;
+
+const color = (c) => (s) => (process.stdout.isTTY ? `\x1b[${c}m${s}\x1b[0m` : s);
+const violet = color("1;35");
+const green = color("1;32");
+const yellow = color("1;33");
+const red = color("1;31");
+const dim = color("2");
+const step = (s) => console.log(`\n${violet("✦")} ${s}`);
+const ok = (s) => console.log(`  ${green("✔")} ${s}`);
+const warn = (s) => console.log(`  ${yellow("!")} ${s}`);
+const fail = (s) => console.log(`  ${red("✘")} ${s}`);
+
+let rl = null;
+function ask(question, def = "") {
+  if (YES) return Promise.resolve(def);
+  rl ??= readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((r) => rl.question(`  ${question}${def ? dim(` [${def}]`) : ""}: `, (a) => r(a.trim() || def)));
+}
+
+function askHidden(question) {
+  if (YES) return Promise.resolve("");
+  rl ??= readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    const out = rl.output;
+    const write = out.write.bind(out);
+    let muted = false;
+    out.write = (s, ...rest) => (muted && s !== "\n" && s !== "\r\n" ? true : write(s, ...rest));
+    rl.question(`  ${question}: `, (a) => {
+      out.write = write;
+      write("\n");
+      resolve(a.trim());
+    });
+    muted = true;
+  });
+}
+
+async function yesNo(q, def = true) {
+  const a = (await ask(`${q} ${def ? "(Y/n)" : "(y/N)"}`, "")).toLowerCase();
+  return a ? a.startsWith("y") || a.startsWith("д") : def;
+}
+
+function npm(argsList, cwd) {
+  const bin = IS_WIN ? "npm.cmd" : "npm";
+  const r = spawnSync(bin, argsList, { cwd, stdio: "inherit", shell: IS_WIN, env: process.env });
+  return r.status === 0;
+}
+
+function checkNode() {
+  const [maj, min] = process.versions.node.split(".").map(Number);
+  if (maj < 20 || (maj === 20 && min < 18)) {
+    fail(`Нужен Node.js 20.18 или новее (сейчас ${process.versions.node}). Установите LTS с https://nodejs.org и запустите установщик снова.`);
+    process.exit(1);
+  }
+  ok(`Node.js ${process.versions.node}, ${process.platform}/${process.arch}`);
+}
+
+// ---------------------------------------------------------------- router
+
+async function setupRouter() {
+  const cfg = router.routerConfig();
+  step(`Роутер FreeLLMAPI (${cfg.url}, данные в ${cfg.dir})`);
+  const mode = opt("--router-mode") || "auto";
+  if (mode === "skip") {
+    warn("Пропускаю установку роутера (--router-mode skip).");
+    return { cfg, running: await router.ping(cfg) };
+  }
+  let running = await router.ping(cfg);
+  if (running) ok("Роутер уже запущен.");
+  else if (router.installedMode(cfg)) {
+    const r = await router.ensure(cfg, { log: (m) => console.log(dim(`    ${m}`)) });
+    running = r.running;
+    running ? ok(`Роутер запущен (${router.installedMode(cfg)}).`) : warn(`Не удалось запустить установленный роутер: ${r.reason}`);
+  }
+  if (!running) {
+    const eng = router.detectEngine();
+    console.log(dim(`    Docker/Podman: ${eng ? `${eng.engine}${eng.running ? " (запущен)" : " (не запущен)"}` : "нет"} → режим ${mode === "auto" ? (eng?.running ? "docker" : "из исходников") : mode}`));
+    try {
+      const used = await router.install(cfg, { mode, log: (m) => console.log(dim(`    ${m}`)) });
+      running = true;
+      ok(`Роутер установлен и запущен (${used === "docker" ? "контейнер Docker/Podman" : "из исходников, фоновый процесс"}).`);
+    } catch (e) {
+      fail(`Роутер не установлен: ${e.message}`);
+      warn("Можно поставить его вручную: curl -fsSL https://freellmapi.co/install.sh | bash (или .exe для Windows: https://github.com/tashfeenahmed/freellmapi/releases/latest), затем запустить установщик снова.");
+      return { cfg, running: false };
+    }
+  }
+  await connectRouter(cfg);
+  return { cfg, running: true };
+}
+
+async function connectRouter(cfg) {
+  step("Подключение к роутеру (единый ключ freellmapi-…)");
+  const existing = router.readRouterKey();
+  if (existing && (await router.validateKey(cfg, existing))) {
+    ok("Сохранённый ключ работает.");
+    return;
+  }
+  let st;
+  try {
+    st = await router.dashboardStatus(cfg);
+  } catch (e) {
+    warn(`Дашборд роутера не ответил (${e.message}).`);
+    return manualKey(cfg);
+  }
+  let email = opt("--email");
+  let password = opt("--password");
+  let generated = false;
+  if (st.needsSetup) {
+    console.log("  Создаю учётную запись дашборда роутера (она нужна, чтобы управлять ключами провайдеров).");
+    email ||= await ask("Email для входа в дашборд", "owner@freellmapi.local");
+    if (!password) {
+      password = await askHidden("Пароль (не короче 8 символов, Enter — сгенерировать)");
+      if (!password) {
+        password = randomBytes(12).toString("base64url");
+        generated = true;
+      }
+    }
+  } else {
+    console.log("  У роутера уже есть учётная запись. Войдите, чтобы получить ключ (Enter — пропустить и вставить ключ вручную).");
+    email ||= await ask("Email дашборда", "");
+    if (email && !password) password = await askHidden("Пароль");
+    if (!email || !password) return manualKey(cfg);
+  }
+  let token;
+  try {
+    token = (await router.connect(cfg, { email, password })).token;
+  } catch (e) {
+    fail(`Вход не удался: ${e.message}`);
+    return manualKey(cfg);
+  }
+  if (st.needsSetup) {
+    let where = "";
+    if (generated) {
+      // Only a generated password is written down (0600) so the user can log in later.
+      const file = path.join(cfg.dir, "dashboard-login.txt");
+      fs.writeFileSync(file, `FreeLLMAPI dashboard ${cfg.url}\nemail: ${email}\npassword: ${password}\n`, { mode: 0o600 });
+      where = ` (пароль сгенерирован и сохранён в ${file})`;
+    }
+    ok(`Аккаунт дашборда создан: ${email}${where}`);
+  }
+  const key = await router.getUnifiedKey(cfg, token);
+  router.saveRouterKey(key);
+  ok(`Единый ключ получен и сохранён в ${path.join(router.stellaHome(), "credentials.json")} (права 600) — его используют STELLA и студия.`);
+
+  if (!has("--no-keyless")) {
+    console.log(`  ${yellow("Важно:")} бесплатные провайдеры без ключа (Kilo Gateway, OVH AI Endpoints) работают сразу, но Kilo по своим правилам`);
+    console.log("  может использовать бесплатные запросы для обучения моделей. Не отправляйте через них закрытый код.");
+    if (await yesNo("Включить провайдеры без ключа, чтобы роутер работал сразу?", true)) {
+      const added = await router.enableKeylessProviders(cfg, token).catch(() => []);
+      added.length ? ok(`Включены: ${added.join(", ")}`) : warn("Провайдеры без ключа уже включены или недоступны.");
+    }
+  }
+  if (!YES) {
+    console.log("  Добавьте свои бесплатные ключи — они быстрее и надёжнее (Enter — пропустить):");
+    for (const [platform, label, hint] of [
+      ["groq", "Groq", "https://console.groq.com/keys, ключ gsk_…"],
+      ["google", "Google AI Studio (Gemini)", "https://aistudio.google.com/app/apikey, ключ AIza…"],
+      ["openrouter", "OpenRouter", "https://openrouter.ai/keys, ключ sk-or-…"],
+    ]) {
+      const k = await askHidden(`${label} — ${hint}`);
+      if (!k) continue;
+      try {
+        await router.addProviderKey(cfg, token, platform, k);
+        ok(`${label}: ключ добавлен`);
+      } catch (e) {
+        fail(`${label}: ${e.message}`);
+      }
+    }
+  }
+  console.log(dim(`    Остальные провайдеры и порядок фолбэка: ${cfg.url} → Keys / Fallback Chain`));
+}
+
+async function manualKey(cfg) {
+  console.log(`  Откройте ${cfg.url}, страница Keys → скопируйте единый ключ из шапки.`);
+  const key = await askHidden("Вставьте ключ freellmapi-… (Enter — позже)");
+  if (!key) {
+    warn("Ключ не сохранён. Позже: stella auth set freellmapi <ключ> (или node tools/freellmapi-router.mjs key <ключ>).");
+    return;
+  }
+  if (!(await router.validateKey(cfg, key))) warn("Роутер не принял ключ (проверьте его), но он сохранён.");
+  router.saveRouterKey(key);
+  ok("Ключ сохранён.");
+}
+
+// ---------------------------------------------------------------- components
+
+function linkStella(dir) {
+  if (npm(["link"], dir)) return "npm link";
+  // Global prefix not writable (system Node): drop a launcher into a user bin dir.
+  const main = path.join(dir, "dist", "cli", "main.js");
+  if (IS_WIN) {
+    const bin = path.join(process.env.APPDATA || os.homedir(), "npm");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "stella.cmd"), `@echo off\r\n"${process.execPath}" "${main}" %*\r\n`);
+    return path.join(bin, "stella.cmd");
+  }
+  const bin = path.join(os.homedir(), ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const file = path.join(bin, "stella");
+  fs.writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`, { mode: 0o755 });
+  if (!(process.env.PATH || "").split(path.delimiter).includes(bin)) warn(`Добавьте ${bin} в PATH (например, в ~/.bashrc: export PATH="$HOME/.local/bin:$PATH").`);
+  return file;
+}
+
+function installStella() {
+  step("STELLA CODER — терминальный агент");
+  const dir = path.join(ROOT, "stella-coder");
+  if (!npm(["ci", "--no-audit", "--no-fund"], dir) || !npm(["run", "build"], dir)) {
+    fail("Не удалось собрать STELLA CODER (см. вывод npm выше).");
+    return false;
+  }
+  ok(`Команда stella установлена (${linkStella(dir)}).`);
+  return true;
+}
+
+function installStudio() {
+  step("Vibing AI Studio — конструктор сайтов");
+  const dir = path.join(ROOT, "vibing-studio");
+  if (!npm(["ci", "--no-audit", "--no-fund"], dir) || !npm(["run", "build"], dir)) {
+    fail("Не удалось собрать студию (см. вывод npm выше).");
+    return false;
+  }
+  ok("Студия собрана.");
+  return true;
+}
+
+// ---------------------------------------------------------------- main
+
+async function main() {
+  if (has("--help-check")) {
+    // CI smoke check: modules load and the environment is detected, nothing is installed.
+    console.log(JSON.stringify({ node: process.versions.node, engine: router.detectEngine()?.engine ?? null, router: await router.status() }));
+    return;
+  }
+  console.log(violet("\n  ✦ STELLA CODER · Vibing AI Studio — установка\n"));
+  checkNode();
+  let stella = has("--stella");
+  let studio = has("--studio");
+  if (!stella && !studio) {
+    const choice = await ask("Что установить? 1 — STELLA CODER, 2 — Vibing AI Studio, 3 — оба", "3");
+    stella = choice === "1" || choice === "3";
+    studio = choice === "2" || choice === "3";
+  }
+  const { cfg, running } = await setupRouter();
+  const results = {};
+  if (stella) results.stella = installStella();
+  if (studio) results.studio = installStudio();
+  rl?.close();
+
+  step("Готово");
+  console.log(`  Роутер FreeLLMAPI: ${running ? green("работает") : red("не запущен")} — ${cfg.url} (дашборд)`);
+  console.log(dim("  Роутер запускается автоматически при старте stella и студии; вручную: node tools/freellmapi-router.mjs start|stop|status|logs"));
+  if (results.stella) {
+    console.log(`\n  ${violet("STELLA CODER")}`);
+    console.log("    cd ваш-проект");
+    console.log("    stella                # интерактивная сессия (модель freellmapi:auto:smart)");
+    console.log('    stella -p "задача"    # неинтерактивно');
+  }
+  if (results.studio) {
+    console.log(`\n  ${violet("Vibing AI Studio")}`);
+    console.log(`    cd ${path.relative(process.cwd(), path.join(ROOT, "vibing-studio")) || "vibing-studio"}`);
+    console.log("    npm run dev           # http://localhost:3000 (первый зарегистрированный — администратор)");
+  }
+  if (Object.values(results).some((v) => v === false)) process.exitCode = 1;
+}
+
+main().catch((e) => {
+  fail(e.stack || e.message);
+  process.exit(1);
+});

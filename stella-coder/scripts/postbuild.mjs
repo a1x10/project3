@@ -7,3 +7,11 @@ if (existsSync(entry)) {
   writeFileSync(entry, src);
   try { chmodSync(entry, 0o755); } catch { /* windows */ }
 }
+
+// Bundle the shared FreeLLMAPI router manager (repo: ../tools) so dist/ is self-contained.
+import { copyFileSync, mkdirSync } from 'node:fs';
+const routerSrc = new URL('../../tools/freellmapi-router.mjs', import.meta.url);
+if (existsSync(routerSrc)) {
+  mkdirSync(new URL('../dist/router/', import.meta.url), { recursive: true });
+  copyFileSync(routerSrc, new URL('../dist/router/freellmapi.mjs', import.meta.url));
+}

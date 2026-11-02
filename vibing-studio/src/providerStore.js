@@ -12,11 +12,13 @@ export const PRESET_PROVIDERS = [
     url: "/llm/v1/chat/completions",
     defaultModel: "auto:smart",
     models: ["auto:smart", "auto", "auto:fast", "qwen/qwen3.8-max:free", "glm-5.3:free", "deepseek/deepseek-v4-flash-0731free:free", "nvidia/nemotron-3-ultra-550b-a55b:free"],
-    requiresKey: true,
+    requiresKey: false,
+    optionalKey: true,
     canListModels: true,
-    placeholder: "freellmapi-...",
+    placeholder: "необязательно — установщик сохранил ключ, его подставит сервер",
     instructions:
       "FreeLLMAPI — самохостящийся роутер: один ключ, сотни бесплатных моделей, автоматический переход на другую модель при лимитах.\n" +
+      "Если вы ставили всё через install.sh / install.cmd, роутер уже установлен, запускается вместе со студией, а ключ подставляется сервером — поле ключа можно оставить пустым.\n" +
       "1. Установите роутер: curl -fsSL https://freellmapi.co/install.sh | bash (нужен Docker). Он запустится на http://localhost:3001.\n" +
       "2. В дашборде роутера на странице Keys добавьте ключи провайдеров (Groq, Gemini, OpenRouter и др.).\n" +
       "3. Скопируйте единый ключ freellmapi-… из шапки страницы Keys и вставьте сюда.\n" +

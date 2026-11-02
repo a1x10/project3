@@ -466,7 +466,7 @@ export default function Chat({
       if (pId === "local") {
         setError(`Не удалось получить ответ: ${e.message} Проверьте, что локальный сервер запущен (${apiUrl}).`);
       } else if (pId === "freellmapi") {
-        setError(`FreeLLMAPI: ${e.message} Убедитесь, что роутер запущен (по умолчанию http://localhost:3001) и ключ freellmapi-… указан верно.`);
+        setError(`FreeLLMAPI: ${e.message} Роутер запускается вместе со студией (npm run dev), если он установлен через install.sh / install.cmd. Проверьте его: node ../tools/freellmapi-router.mjs status. Ключ сохраняет установщик; можно вписать его вручную в «AI: FreeLLMAPI».`);
       } else {
         setError(`Ошибка провайдера ${preset.name}: ${e.message}`);
       }

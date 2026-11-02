@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    paths: ['stella-coder/**', 'vibing-studio/**', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
   pull_request:
-    paths: ['stella-coder/**', 'vibing-studio/**', '.github/workflows/stella-ci.yml']
+    paths: ['stella-coder/**', 'vibing-studio/**', 'tools/**', 'install.*', '.github/workflows/stella-ci.yml']
 
 permissions:
   contents: read
@@ -32,8 +32,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
-      - name: Smoke test the CLI binary
-        run: node dist/cli/main.js --version && node dist/cli/main.js --help
+      - name: Smoke test the CLI binary and router manager
+        run: node dist/cli/main.js --version && node dist/cli/main.js --help && node dist/cli/main.js router status && node ../install.mjs --help-check
 
   vibing-studio:
     name: vibing-studio (build, unit, e2e)

@@ -68,6 +68,7 @@ ${c.bold('Commands')}
   stella auth set <provider> <key>     store an API key (also: status, remove)
   stella sessions [search <q>]         list or search sessions
   stella doctor                        diagnose the installation
+  stella router install|start|stop|status|logs|connect   manage the local FreeLLMAPI router
   stella config [get|set|path] …       settings
 
 ${c.bold('Environment')}
@@ -156,7 +157,7 @@ function parseArgs(argv: string[]): Args {
         rest.push(x);
     }
   }
-  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config'].includes(rest[0]!) && !a.print) a.sub = rest;
+  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config', 'router'].includes(rest[0]!) && !a.print) a.sub = rest;
   else if (rest.length) a.prompt = rest.join(' ');
   return a;
 }
@@ -200,8 +201,44 @@ function plainCtx(rt: Runtime): CommandContext {
   };
 }
 
+/** Shared FreeLLMAPI router manager (copied into dist/router at build time). */
+export async function loadRouter(): Promise<any | null> {
+  try {
+    const url = new URL('../router/freellmapi.mjs', import.meta.url);
+    return await import(url.href);
+  } catch {
+    return null;
+  }
+}
+
+/** Start the local FreeLLMAPI router if the active model uses it and it is installed but stopped. */
+async function ensureRouter(rt: Runtime, quiet: boolean) {
+  if (rt.main.model.provider !== 'freellmapi' || process.env.STELLA_NO_ROUTER_AUTOSTART) return;
+  const base = rt.registry.listProviders().find((p) => p.name === 'freellmapi')?.baseUrl ?? '';
+  const m = /^https?:\/\/(localhost|127\.0\.0\.1)(?::(\d+))?/.exec(base);
+  if (!m) return;
+  const mod = await loadRouter();
+  if (!mod) return;
+  const cfg = mod.routerConfig({ ...process.env, FREELLMAPI_PORT: m[2] ?? '80' });
+  if (await mod.ping(cfg)) return;
+  if (!mod.installedMode(cfg)) {
+    process.stderr.write(c.warn(`FreeLLMAPI не найден на ${base}. Установите его: ./install.sh (Windows: install.cmd) или stella router install\n`));
+    return;
+  }
+  if (!quiet) process.stderr.write(c.dim('Запускаю роутер FreeLLMAPI…\n'));
+  const r = await mod.ensure(cfg, {});
+  if (!r.running) process.stderr.write(c.warn(`Роутер FreeLLMAPI не запустился: ${r.reason}. Подробности: stella router logs\n`));
+  else if (!quiet) process.stderr.write(c.dim(`FreeLLMAPI работает: ${cfg.url}\n`));
+}
+
 async function runSub(args: Args) {
   const [cmd, ...rest] = args.sub!;
+  if (cmd === 'router') {
+    const mod = await loadRouter();
+    if (!mod) throw new Error('Модуль роутера не найден (пересоберите: npm run build)');
+    await mod.cli(rest);
+    return;
+  }
   if (cmd === 'auth') {
     const [op, provider, key] = rest;
     if (op === 'set' && provider && key) {
@@ -327,6 +364,8 @@ async function main() {
     await rt.shutdown();
     process.exit(code);
   };
+
+  await ensureRouter(rt, args.print && args.outputFormat !== 'text');
 
   if (args.print) {
     for (const w of rt.warnings) process.stderr.write(c.warn(w) + '\n');
