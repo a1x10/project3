@@ -114,3 +114,13 @@ describe('permission engine', () => {
     expect(mostRestrictive('plan', 'auto')).toBe('plan');
   });
 });
+
+describe('windows-style absolute rules', () => {
+  it('matches //C:/ patterns against drive paths', async () => {
+    const { ruleMatches, parseRule } = await import('../../src/permissions/engine.js');
+    const p = { abs: 'C:\\opt\\x.txt', real: 'C:\\opt\\x.txt', inWorkspace: false, isSystem: false, isConfidential: false, relToRoot: null, viaSymlink: false };
+    const d: PermissionDescriptor = { kind: 'read', risk: 'low', readOnly: true, summary: 'r', paths: [p] };
+    expect(ruleMatches(parseRule('Read(//C:/opt/**)'), 'Read', d)).toBe(true);
+    expect(ruleMatches(parseRule('Read(//C:/other/**)'), 'Read', d)).toBe(false);
+  });
+});
