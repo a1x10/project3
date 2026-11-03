@@ -13,7 +13,7 @@ services:
       - freellmapi-data:/app/server/data
     # Dashboard only on the server's loopback: open it through an SSH tunnel (see README).
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${ROUTER_HOST_PORT:-3001}:3001"
 
   stella-cloud:
     build: .
@@ -34,7 +34,7 @@ services:
     volumes:
       - stella-data:/data
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${STELLA_HOST_PORT:-8080}:8080"
 
   caddy:
     image: caddy:2
