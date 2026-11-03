@@ -38,6 +38,8 @@ services:
 
   caddy:
     image: caddy:2
+    # HTTPS proxy; deploy.sh leaves it off when nginx already serves ports 80/443 on the host
+    profiles: ["caddy"]
     restart: unless-stopped
     depends_on:
       - stella-cloud
