@@ -13,6 +13,7 @@ from typing import Any, Sequence
 
 import httpx
 
+from ..keys import base_url_of
 from .base import Image, LLMError, LLMReply, ToolSpec
 
 log = logging.getLogger("stella.llm.openai_compat")
@@ -103,6 +104,8 @@ class OpenAICompatLLM:
         return model
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not base_url_of(self.provider.id):
+            raise LLMError("не задан адрес своего сервера — Настройки → «Свой сервер: Base URL»")
         keys = self.store.candidates(self.provider.id)
         if not keys:
             raise LLMError(f"нет ключей {self.provider.name} — добавь в панели («Ключи»)")
@@ -110,7 +113,7 @@ class OpenAICompatLLM:
         async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as http:
             for item in keys:
                 try:
-                    resp = await http.post(f"{self.provider.base_url}/chat/completions", json=body,
+                    resp = await http.post(f"{base_url_of(self.provider.id)}/chat/completions", json=body,
                                            headers={"Authorization": f"Bearer {item.key}"})
                 except httpx.HTTPError as exc:
                     errors.append(f"связь: {type(exc).__name__}")
@@ -139,10 +142,16 @@ class OpenAICompatLLM:
         model = self._model(model)
         by_name = {t.name: t for t in tools}
         budget = MAX_INPUT_TOKENS
-        tool_defs = _slim_tools(tools, 300)
-        if _tokens(system) + _tokens(tool_defs) > budget * 0.7:
-            tool_defs = _slim_tools(tools, 120)
-        prompt = _fit_prompt(prompt, budget - _tokens(system) - _tokens(tool_defs))
+        small = self.provider.id == "groq"  # у бесплатного Groq крошечный лимит токенов в минуту — ужимаем
+        if small:
+            tool_defs = _slim_tools(tools, 300)
+            if _tokens(system) + _tokens(tool_defs) > budget * 0.7:
+                tool_defs = _slim_tools(tools, 120)
+            prompt = _fit_prompt(prompt, budget - _tokens(system) - _tokens(tool_defs))
+        else:
+            tool_defs = [{"type": "function", "function": {"name": t.name, "description": t.description[:1024],
+                                                           "parameters": t.input_schema}}
+                         for t in tools if t.name != "make_html"]
         if images:
             content: Any = [{"type": "text", "text": prompt}] + [
                 {"type": "image_url", "image_url": {"url": f"data:{i.media_type};base64,{i.data_b64}"}}
@@ -152,7 +161,7 @@ class OpenAICompatLLM:
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": content}]
         text = ""
         for _ in range(max(1, max_turns)):
-            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS}
+            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS if small else 4096}
             if tool_defs:
                 body["tools"] = tool_defs
             if "gpt-oss" in model:  # обдумывание тоже съедает лимит токенов в минуту — коротко
@@ -210,9 +219,11 @@ async def check_key(provider: str, key: str, transport: httpx.AsyncBaseTransport
     from ..keys import PROVIDERS
 
     p = PROVIDERS[provider]
+    if not base_url_of(provider):
+        return False, "не задан адрес сервера — Настройки → «Свой сервер: Base URL»", []
     try:
         async with httpx.AsyncClient(timeout=20, transport=transport) as http:
-            resp = await http.get(f"{p.base_url}/models", headers={"Authorization": f"Bearer {key}"})
+            resp = await http.get(f"{base_url_of(provider)}/models", headers={"Authorization": f"Bearer {key}"})
     except httpx.HTTPError as exc:
         return False, f"нет связи с {p.name} ({type(exc).__name__})", []
     if resp.status_code != 200:
