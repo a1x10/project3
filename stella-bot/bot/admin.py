@@ -230,7 +230,7 @@ def install_ring_log() -> None:
 
 # ---------- настройки, которые можно менять из панели ----------
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
-BACKENDS = ["agent_sdk", "messages_api", "groq", "openrouter", "gemini", "openai"]
+BACKENDS = ["agent_sdk", "messages_api", "custom", "groq", "openrouter", "gemini", "openai"]
 EDITABLE: list[dict[str, Any]] = [
     {"key": "llm_model", "label": "Модель", "type": "select", "options": MODELS,
      "hint": "Opus — самая умная (дороже Sonnet в 2 раза), Haiku — самая дешёвая"},
@@ -239,7 +239,10 @@ EDITABLE: list[dict[str, Any]] = [
     {"key": "llm_backend", "label": "Где работает модель сейчас", "type": "select", "options": BACKENDS,
      "hint": "agent_sdk — бонусные кредиты Anthropic; groq / openrouter / gemini / openai — по ключам из вкладки "
              "«Ключи»; messages_api — платный баланс Anthropic"},
-    {"key": "alt_model", "label": "Модель у Groq / OpenRouter / Gemini / OpenAI", "type": "text", "max_len": 120,
+    {"key": "custom_base_url", "label": "Свой сервер: Base URL", "type": "text", "max_len": 200,
+     "hint": "OpenAI-совместимый адрес, например https://example.org/v1; ключ — во вкладке «Ключи» → «Свой сервер»"},
+    {"key": "alt_model", "label": "Модель у своего сервера / Groq / OpenRouter / Gemini / OpenAI", "type": "text",
+     "max_len": 120,
      "hint": "пусто — модель провайдера по умолчанию (у Groq — openai/gpt-oss-120b)"},
     {"key": "llm_backend_after", "label": "После окончания бонусных кредитов", "type": "select",
      "options": ["off", *BACKENDS[1:]],
@@ -362,7 +365,7 @@ class ProfileBody(BaseModel):
 
 
 class KeyBody(BaseModel):
-    provider: str = Field(pattern="^(groq|openrouter|gemini|openai)$")
+    provider: str = Field(pattern="^(custom|groq|openrouter|gemini|openai)$")
     key: str = Field(min_length=16, max_length=300)
     label: str = Field(default="", max_length=40)
 
@@ -373,7 +376,7 @@ class KeyPatch(BaseModel):
 
 
 class ActiveBody(BaseModel):
-    backend: str = Field(pattern="^(agent_sdk|messages_api|groq|openrouter|gemini|openai)$")
+    backend: str = Field(pattern="^(agent_sdk|messages_api|custom|groq|openrouter|gemini|openai)$")
     model: str = Field(default="", max_length=120)
 
 

@@ -66,6 +66,9 @@ class Settings:
     # что она отвечает, когда к ней обращаются, а модель выключена (одному чату — не чаще раза в 6 часов)
     # модель у Groq / OpenRouter / Gemini / OpenAI (ключи — в панели, «Ключи»); пусто — модель провайдера по умолчанию
     alt_model: str = field(default_factory=lambda: _str("ALT_MODEL"))
+    # «Свой сервер» (LLM_BACKEND=custom): любой OpenAI-совместимый адрес вида https://…/v1 и ключ к нему
+    custom_base_url: str = field(default_factory=lambda: _str("CUSTOM_BASE_URL"))
+    custom_api_key: str = field(default_factory=lambda: _str("CUSTOM_API_KEY"))
     model_off_message: str = field(default_factory=lambda: _str("MODEL_OFF_MESSAGE", "Я пока на паузе 🙏"))
     llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-opus-5-5"))
     # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут

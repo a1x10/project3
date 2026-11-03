@@ -276,6 +276,7 @@ class Brain:
 
         KEYS.db = self.db  # ключи Groq и др. из панели
         await KEYS.load()
+        self._custom_server()
         await load_overrides(self)  # настройки, изменённые в панели, важнее .env
         from .admin import LOCKS_KV
 
@@ -308,6 +309,14 @@ class Brain:
         """Настройки поменяли в панели: пересобрать то, что от них зависит."""
         self.system = system_prompt(self.s)
         self._make_voice()
+        self._custom_server()
+
+    def _custom_server(self) -> None:
+        """Адрес и ключ «своего сервера» (OpenAI-совместимого) — из настроек в общий список ключей."""
+        from .keys import CUSTOM
+
+        CUSTOM["base_url"] = self.s.custom_base_url.strip()
+        CUSTOM["env_key"] = self.s.custom_api_key.strip()
 
     def _make_voice(self) -> None:
         """Создаёт распознавание и озвучку; при смене модели в панели старая выгружается из памяти."""

@@ -163,3 +163,30 @@ async def test_big_request_is_slimmed_and_413_retried_without_tools():
     user = first["messages"][1]["content"]
     assert user.endswith("ПОСЛЕДНЕЕ") and len(user) < 20000 and first["max_tokens"] <= 1200
     assert "tools" not in bodies[1] and store.keys[0].last_error is None  # ключ не виноват
+
+
+async def test_custom_server_from_env(tmp_path):
+    from bot.keys import CUSTOM
+
+    s = make_settings(tmp_path, llm_backend="custom", alt_model="auto")
+    CUSTOM.update(base_url="https://example.org/v1/", env_key="sk-test-" + "x" * 30)
+    try:
+        store = KeyStore()
+        seen = []
+
+        def handler(req):
+            seen.append((str(req.url), req.headers["authorization"]))
+            return httpx.Response(200, json=chat_reply("привет"))
+
+        tools = [ToolSpec("make_cartoon", "мультик " * 100, {"type": "object", "properties": {}}, None)]
+        llm = OpenAICompatLLM("custom", s.backend_for(s.local_today())[1], store,
+                              transport=httpx.MockTransport(handler))
+        assert (await llm.ask(system="s", prompt="p", tools=tools)).text == "привет"
+        assert seen[0] == ("https://example.org/v1/chat/completions", "Bearer sk-test-" + "x" * 30)
+        assert store.has("custom") and store.public()[0]["masked"] == "sk-t…xxxx"
+        assert "sk-test-" + "x" * 30 not in json.dumps(store.public())
+        CUSTOM["base_url"] = ""
+        with pytest.raises(LLMError, match="адрес"):
+            await llm.ask(system="s", prompt="p")
+    finally:
+        CUSTOM.update(base_url="", env_key="")

@@ -45,9 +45,21 @@ PROVIDERS: dict[str, Provider] = {p.id: p for p in (
     Provider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
              "gemini-2.5-flash", ("gemini-2.5-flash", "gemini-2.5-pro"), "https://aistudio.google.com/apikey",
              "Бесплатный уровень с лимитами"),
+    Provider("custom", "Свой сервер", "", "auto", ("auto",), "",
+             "Любой OpenAI-совместимый адрес (Base URL — в Настройках: «Свой сервер: Base URL»)"),
     Provider("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini", ("gpt-4.1-mini", "gpt-4.1"),
              "https://platform.openai.com/api-keys", "Платно, по балансу аккаунта"),
 )}
+
+
+# «Свой сервер»: адрес и ключ из .env (CUSTOM_BASE_URL, CUSTOM_API_KEY) или панели — brain обновляет при старте
+CUSTOM: dict[str, str] = {"base_url": "", "env_key": ""}
+
+
+def base_url_of(provider: str) -> str:
+    if provider == "custom":
+        return CUSTOM["base_url"].rstrip("/")
+    return PROVIDERS[provider].base_url
 
 
 def _iso(ts: float | None) -> str | None:
@@ -98,18 +110,32 @@ class KeyStore:
         self.keys = [ApiKey(**{k: v for k, v in item.items() if k in known}) for item in raw
                      if isinstance(item, dict) and item.get("provider") in PROVIDERS and item.get("key")]
 
-    async def save(self) -> None:
-        if self.db is not None:
-            await self.db.kv_set(KEYS_KV, json.dumps([asdict(k) for k in self.keys], ensure_ascii=False), time.time())
 
     def get(self, key_id: str) -> ApiKey | None:
         return next((k for k in self.keys if k.id == key_id), None)
 
     def public(self) -> list[dict[str, Any]]:
-        return [k.public(self.cooldown.get(k.id)) for k in self.keys]
+        items = list(self.keys)
+        if CUSTOM["env_key"] and not any(k.key == CUSTOM["env_key"] for k in items):
+            items.append(self._env_key())
+        return [k.public(self.cooldown.get(k.id)) for k in items]
 
     def has(self, provider: str) -> bool:
+        if provider == "custom" and CUSTOM["env_key"]:
+            return True
         return any(k.provider == provider and not k.disabled for k in self.keys)
+
+    def _env_key(self) -> ApiKey:
+        """Ключ из .env (CUSTOM_API_KEY): в базе не хранится, в панели не показывается целиком."""
+        item = getattr(self, "_env_item", None)
+        if item is None or item.key != CUSTOM["env_key"]:
+            item = ApiKey(id="k_env", provider="custom", key=CUSTOM["env_key"], label="из .env")
+            self._env_item = item
+        return item
+
+    async def save(self) -> None:
+        if self.db is not None:
+            await self.db.kv_set(KEYS_KV, json.dumps([asdict(k) for k in self.keys], ensure_ascii=False), time.time())
 
     async def add(self, provider: str, key: str, label: str = "") -> ApiKey:
         key = key.strip()
@@ -134,6 +160,8 @@ class KeyStore:
     def candidates(self, provider: str) -> list[ApiKey]:
         """Ключи провайдера в порядке очереди: сначала свободные (по кругу), на паузе — в конце."""
         pool = [k for k in self.keys if k.provider == provider and not k.disabled]
+        if provider == "custom" and CUSTOM["env_key"] and not any(k.key == CUSTOM["env_key"] for k in pool):
+            pool.append(self._env_key())
         if not pool:
             return []
         start = self._turn.get(provider, 0) % len(pool)
