@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -234,6 +235,17 @@ async function ensureRouter(rt: Runtime, quiet: boolean) {
   else if (!quiet) process.stderr.write(c.dim(`FreeLLMAPI работает: ${cfg.url}\n`));
 }
 
+/** Open a link (the Telegram bot) in the default browser / Telegram app; ignore failures. */
+function openInBrowser(url: string) {
+  if (process.env.STELLA_NO_BROWSER || !/^https?:\/\//.test(url)) return;
+  const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  try {
+    spawn(cmd as string, args as string[], { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => undefined).unref();
+  } catch {
+    /* no browser */
+  }
+}
+
 async function runSub(args: Args) {
   const [cmd, ...rest] = args.sub!;
   if (cmd === 'router') {
@@ -243,7 +255,15 @@ async function runSub(args: Args) {
     return;
   }
   if (cmd === 'login') {
-    const { url, user } = await cloudLogin(rest[0], { print: (t) => console.log(t) });
+    let r: Awaited<ReturnType<typeof cloudLogin>>;
+    try {
+      r = await cloudLogin(rest[0], { print: (t) => console.log(t), openUrl: openInBrowser });
+    } catch (e) {
+      console.error(c.err(`✗ ${(e as Error).message}`));
+      process.exitCode = 1;
+      return;
+    }
+    const { url, user } = r;
     const plan = user?.planInfo;
     console.log(c.ok(`✓ Вход выполнен: ${user?.name ?? ''} · ${url}`));
     if (plan) console.log(c.dim(`  Тариф ${plan.name}: ${plan.dailyRequests ?? '∞'} запросов в день. Модель по умолчанию теперь cloud:auto.`));

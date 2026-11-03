@@ -66,6 +66,24 @@ ssh -L 3001:127.0.0.1:3001 root@IP-сервера
 
 Пользователям доступны `/me`, `/key [название]`, `/keys` (с отзывом), `/login КОД`, `/delete`.
 
+## Раздача приложений пользователям
+
+Пользователям нужны только сайт и бот: всё остальное они скачивают с вашего сервера.
+
+1. В GitHub → Actions → последний запуск **CI** → **Artifacts** скачайте `stella-coder-package` (агент, `.tgz`) и `VibingAIStudio-Setup` (установщик для Windows). Чтобы в приложение был вшит адрес сервера, заранее задайте переменную репозитория `STELLA_CLOUD_URL` (Settings → Secrets and variables → Actions → Variables) и перезапустите CI.
+2. Распакуйте zip-архивы и положите файлы на сервер:
+   ```bash
+   scp stella-coder-0.1.0.tgz VibingAIStudio-Setup-1.0.0.exe alex@IP-сервера:~/
+   cd ~/project3/cloud && sudo docker compose cp ~/stella-coder-0.1.0.tgz stella-cloud:/data/downloads/ && sudo docker compose cp ~/VibingAIStudio-Setup-1.0.0.exe stella-cloud:/data/downloads/
+   ```
+3. На главной странице сайта появятся кнопка «Скачать Studio для Windows» и команды установки агента:
+   - Windows (PowerShell): `irm https://ваш-домен/install.ps1 | iex`
+   - Linux / macOS: `curl -fsSL https://ваш-домен/install.sh | bash`
+
+   Команда сама поставит Node.js (Windows, через winget), установит агента и откроет бота для подтверждения входа.
+
+Новая версия — просто положите новый файл: сайт и установщики берут самый свежий `stella-coder*.tgz`.
+
 ## Подключение приложений
 
 - **Vibing AI Studio** (Windows): установщик `.exe` положите в том `stella-data` → `/data/downloads/`. Например: `docker compose cp VibingAIStudio-Setup-1.0.0.exe stella-cloud:/data/downloads/`. Он появится на сайте в разделе «Скачать». В приложении нажмите «Войти через Telegram»; адрес сервера спрашивается один раз.
