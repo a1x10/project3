@@ -76,6 +76,26 @@ jobs:
           name: stella-cloud-screenshots
           path: cloud/web/test-results/
 
+  stella-package:
+    name: STELLA CODER package (.tgz for the server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stella-coder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm pack
+      - name: Package installs and runs
+        run: npm i -g --prefix "$RUNNER_TEMP/p" ./stella-coder-*.tgz && "$RUNNER_TEMP/p/bin/stella-coder" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stella-coder-package
+          path: stella-coder/stella-coder-*.tgz
+
   vibing-studio:
     name: vibing-studio (unit, e2e in Chromium and Electron)
     runs-on: ubuntu-latest
@@ -114,6 +134,13 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      - name: STELLA installer script parses in Windows PowerShell 5.1
+        shell: cmd
+        working-directory: cloud/server
+        run: |
+          call npm ci --no-audit --no-fund
+          node --import tsx -e "import('./src/installers.ts').then(m=>process.stdout.write(m.installPs1('https://ai.example.com','stella-coder-0.1.0.tgz')))" > %TEMP%\stella-install.ps1
+          powershell -NoProfile -Command "$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:TEMP+'\stella-install.ps1',[ref]$null,[ref]$e); if ($e) { $e; exit 1 } else { 'ok' }"
       - name: Build NSIS installer
         run: npm run dist:win
         env:

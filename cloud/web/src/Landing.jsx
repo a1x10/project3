@@ -1,14 +1,17 @@
 import React from 'react';
 
 const features = [
-  { icon: '⌘', title: 'STELLA CODER', text: 'Автономный ИИ-агент в терминале: читает проект, правит код, запускает команды и тесты.', cmd: 'stella-coder login' },
+  { icon: '⌘', title: 'STELLA CODER', text: 'Автономный ИИ-агент в терминале: читает проект, правит код, запускает команды и тесты. Ставится одной командой.' },
   { icon: '✦', title: 'Vibing AI Studio', text: 'Приложение для Windows: опишите сайт словами — студия соберёт, покажет превью и выгрузит проект.' },
   { icon: '⇄', title: 'OpenAI-совместимый API', text: 'Ключ из бота подходит к любому клиенту: Cursor, Continue, LangChain, curl.' },
 ];
 
 export default function Landing({ config, me, onLogin }) {
   const downloads = config?.downloads ?? [];
-  const exe = downloads.find((d) => /\.exe$/i.test(d.name));
+  const apps = downloads.filter((d) => !/\.tgz$/i.test(d.name));
+  const exe = apps.find((d) => /\.exe$/i.test(d.name));
+  const base = config?.publicUrl || (typeof location !== 'undefined' ? location.origin : '');
+  const copy = (t) => navigator.clipboard?.writeText(t);
   return (
     <div className="landing">
       <section className="hero">
@@ -55,9 +58,9 @@ export default function Landing({ config, me, onLogin }) {
         <div className="grid2">
           <div>
             <h3>Vibing AI Studio (Windows)</h3>
-            {downloads.length ? (
+            {apps.length ? (
               <ul className="list">
-                {downloads.map((d) => (
+                {apps.map((d) => (
                   <li key={d.name}>
                     <a href={d.url} download>
                       {d.name}
@@ -69,11 +72,21 @@ export default function Landing({ config, me, onLogin }) {
             ) : (
               <p className="muted">Установщик появится здесь, когда администратор загрузит его на сервер.</p>
             )}
-            <p className="muted small">После запуска нажмите «Войти через Telegram» — и всё.</p>
+            <p className="muted small">После запуска нажмите «Войти через Telegram» — и всё. Если Windows покажет SmartScreen: «Подробнее» → «Выполнить в любом случае».</p>
           </div>
           <div>
             <h3>STELLA CODER (терминал)</h3>
-            <pre className="code-block">{`stella-coder login ${config?.publicUrl || ''}`}</pre>
+            {config?.stellaPackage ? (
+              <>
+                <p className="muted small">Windows — PowerShell:</p>
+                <pre className="code-block copyable" onClick={() => copy(`irm ${base}/install.ps1 | iex`)} title="Нажмите, чтобы скопировать">{`irm ${base}/install.ps1 | iex`}</pre>
+                <p className="muted small">Linux / macOS:</p>
+                <pre className="code-block copyable" onClick={() => copy(`curl -fsSL ${base}/install.sh | bash`)} title="Нажмите, чтобы скопировать">{`curl -fsSL ${base}/install.sh | bash`}</pre>
+                <p className="muted small">Команда поставит Node.js (если нужно) и агента, затем попросит подтвердить вход в Telegram. Дальше в папке проекта: <code>stella-coder</code></p>
+              </>
+            ) : (
+              <p className="muted">Установка появится здесь, когда администратор загрузит пакет агента на сервер.</p>
+            )}
             <h3>Любой OpenAI-клиент</h3>
             <pre className="code-block">{`Base URL: ${config?.apiBase || '/v1'}
 API key:  /key в Telegram-боте

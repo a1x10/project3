@@ -558,3 +558,10 @@ textarea {
     display: none;
   }
 }
+
+.copyable {
+  cursor: copy;
+}
+.copyable:hover {
+  border-color: var(--violet);
+}

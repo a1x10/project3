@@ -10,6 +10,7 @@ import { Gateway, gatewaySettings, limitStatus } from './gateway.js';
 import { HttpError, RateLimiter, Router, applyCors, clientIp, readJson, sendJson, serveStatic, type Req } from './http.js';
 import { TelegramClient } from './telegram.js';
 import { Upstream } from './upstream.js';
+import { installPs1, installSh, stellaPackage } from './installers.js';
 
 export interface App {
   server: http.Server;
@@ -73,7 +74,7 @@ export function createApp(cfg: Config, opts: { store?: Store } = {}): App {
     try {
       return fs
         .readdirSync(cfg.downloadsDir)
-        .filter((f) => /\.(exe|msi|zip|dmg|AppImage|deb)$/i.test(f))
+        .filter((f) => /\.(exe|msi|zip|dmg|AppImage|deb|tgz)$/i.test(f))
         .map((f) => ({ name: f, url: `/downloads/${encodeURIComponent(f)}`, size: fs.statSync(path.join(cfg.downloadsDir, f)).size }));
     } catch {
       return [];
@@ -82,8 +83,16 @@ export function createApp(cfg: Config, opts: { store?: Store } = {}): App {
 
   // ---------------- public
   router.get('/api/health', async (_req, res) => sendJson(res, 200, { ok: true, bot: !!bot, botUsername: tg.username || null }));
+  // one-command STELLA CODER install from this server
+  const script = (res: http.ServerResponse, body: string) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache' });
+    res.end(body);
+  };
+  router.get('/install.ps1', async (_req, res) => script(res, installPs1(cfg.publicUrl, stellaPackage(cfg.downloadsDir))));
+  router.get('/install.sh', async (_req, res) => script(res, installSh(cfg.publicUrl, stellaPackage(cfg.downloadsDir))));
+
   router.get('/api/config', async (_req, res) =>
-    sendJson(res, 200, { name: 'Stella Cloud', publicUrl: cfg.publicUrl, apiBase: `${cfg.publicUrl}/v1`, botUsername: tg.username || null, botLink: botLink(), downloads: downloads(), plans: store.plans() }),
+    sendJson(res, 200, { name: 'Stella Cloud', publicUrl: cfg.publicUrl, apiBase: `${cfg.publicUrl}/v1`, botUsername: tg.username || null, botLink: botLink(), downloads: downloads(), stellaPackage: stellaPackage(cfg.downloadsDir), plans: store.plans() }),
   );
 
   // ---------------- Telegram login (device flow)
