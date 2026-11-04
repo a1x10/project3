@@ -1,0 +1,1346 @@
+#!/bin/bash
+set -u
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+ENV_FILE="${STELLA_ENV_FILE:-/etc/stella/stella.env}"
+APP_DIR="${STELLA_APP_DIR:-/opt/stella}"
+API_URL="${STELLA_API_URL:-http://127.0.0.1:8000}"
+PORTAL_HOST=10.42.0.1
+SOS_SSID=SOS-STELLA-RESCUE
+WLAN=wlan0
+NM_CONF=/etc/NetworkManager/conf.d/stella-unmanaged.conf
+INSTALL_LOG=/var/log/stella-install.log
+INSTALL_LOCK=/run/stella-install.lock
+NET_LOG=/var/log/stella-net.log
+LOG_MAX=5242880
+UPDATE_UNIT=stella-update
+INSTALL_UNIT=stella-install
+NET_UNIT=stella-net-switch
+POWER_SCRIPT="$APP_DIR/deploy/stella-power.sh"
+LLAMA_BIN="$APP_DIR/llama.cpp/build/bin/llama-server"
+SERVICES=(stella-app stella-llm stella-hw nginx hostapd dnsmasq stella-net)
+
+API_CODE=""
+API_BODY=""
+DETACHED=""
+
+B="" R="" RED="" GRN="" YEL=""
+if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then
+  B=$'\e[1m' R=$'\e[0m' RED=$'\e[1;31m' GRN=$'\e[32m' YEL=$'\e[33m'
+fi
+
+read -r -d '' PY_AI <<'PYEOF'
+import json, sys, time
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except ValueError:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+ai = data.get("ai") if isinstance(data.get("ai"), dict) else {}
+now = time.time()
+ENG = {"cloud": "облачный Claude", "local": "локальный (llama.cpp)", "reserve": "резервный (по правилам)"}
+ST = {"ok": "работает", "offline": "нет интернета", "cooldown": "пауза после ошибки", "disabled": "выключен",
+      "error": "ошибка", "unknown": "ещё проверяется", "loading": "загружает модель", "down": "не запущен"}
+MODES = {"auto": "авто: облако → локальный → резерв", "cloud": "только облако (+ резерв)",
+         "local": "только локальный (+ резерв)", "offline": "офлайн: только резерв"}
+
+
+def ago(ts):
+    if not isinstance(ts, (int, float)):
+        return ""
+    s = max(int(now - ts), 0)
+    if s < 60:
+        return "%d с назад" % s
+    if s < 3600:
+        return "%d мин назад" % (s // 60)
+    return "%d ч назад" % (s // 3600)
+
+
+def row(name, value):
+    print("   %s: %s" % (name, value) if name else "      %s" % value)
+
+
+def engine(title, block, extra):
+    if not isinstance(block, dict) or not block:
+        row(title, "нет данных")
+        return
+    parts = [ST.get(block.get("state"), str(block.get("state") or "?"))]
+    parts += [x for x in extra if x]
+    if isinstance(block.get("latency_ms"), (int, float)):
+        parts.append("%d мс" % block["latency_ms"])
+    until = block.get("cooldown_until")
+    if isinstance(until, (int, float)) and until > now:
+        parts.append("пауза ещё %d с" % int(until - now))
+    row(title, " · ".join(parts))
+    if block.get("reason"):
+        row("", str(block["reason"]))
+    last_error = block.get("last_error")
+    if last_error and last_error != block.get("reason"):
+        row("", "последняя ошибка: " + str(last_error)[:160])
+    calls, fails = block.get("calls"), block.get("failures")
+    if isinstance(calls, int) and calls:
+        row("", "ответов: %d, сбоев: %d" % (calls, fails if isinstance(fails, int) else 0))
+
+
+if not ai:
+    row("ИИ", "сайт не вернул данных")
+    sys.exit(0)
+row("Режим", MODES.get(ai.get("mode"), str(ai.get("mode") or "?")))
+row("Ответит сейчас", ENG.get(ai.get("active"), str(ai.get("active") or "?")))
+cloud = ai.get("cloud") if isinstance(ai.get("cloud"), dict) else {}
+engine("Облако", cloud, [cloud.get("model") if cloud.get("configured") else "ключ не задан",
+                         "" if cloud.get("sdk", True) else "нет библиотеки anthropic"])
+local = ai.get("local") if isinstance(ai.get("local"), dict) else {}
+engine("Локальный", local, [local.get("model") or "",
+                            ("питание " + str(local.get("power"))) if local.get("power") else ""])
+row("Резерв", "работает всегда, без сети и без модели")
+last = ai.get("last_reply")
+if isinstance(last, dict):
+    row("Последний ответ", "%s · %s мс · %s" % (ENG.get(last.get("engine"), last.get("engine")),
+                                               last.get("ms", "?"), ago(last.get("ts"))))
+PYEOF
+
+read -r -d '' PY_TEST <<'PYEOF'
+import json, sys, textwrap
+try:
+    d = json.loads(sys.stdin.read() or "{}")
+except ValueError:
+    d = {}
+if not isinstance(d, dict):
+    d = {}
+ENG = {"cloud": "облачный Claude", "local": "локальный (llama.cpp)", "reserve": "резервный (по правилам)"}
+PRI = {"red": "КРАСНЫЙ — срочно", "yellow": "ЖЁЛТЫЙ", "green": "ЗЕЛЁНЫЙ", "unknown": "пока не ясно"}
+ms = d.get("ms") if isinstance(d.get("ms"), (int, float)) else 0
+print("   Сообщение:  " + str(d.get("input", "")))
+print("   Ответил:    %s за %.1f с" % (ENG.get(d.get("engine"), str(d.get("engine"))), ms / 1000.0))
+print("   Приоритет:  " + PRI.get(d.get("priority"), str(d.get("priority"))))
+print("   Ответ:")
+for line in textwrap.wrap(str(d.get("text") or "(пусто)"), 72) or ["(пусто)"]:
+    print("      " + line)
+attempts = [a for a in (d.get("attempts") or []) if isinstance(a, dict)]
+if attempts:
+    print("   Попытки:")
+    for a in attempts:
+        state = "успешно" if a.get("ok") else "не вышло: " + str(a.get("error") or "?")[:120]
+        print("      %s — %s (%s мс)" % (ENG.get(a.get("engine"), str(a.get("engine"))), state, a.get("ms", "?")))
+PYEOF
+
+read -r -d '' PY_JSON_TEXT <<'PYEOF'
+import json, sys
+print(json.dumps({"text": sys.argv[1]}, ensure_ascii=False))
+PYEOF
+
+say() { printf '%s\n' "$*"; }
+err() { printf '%s!!! %s%s\n' "$RED" "$*" "$R" >&2; }
+fail() { err "$*"; exit 1; }
+have() { command -v "$1" > /dev/null 2>&1; }
+is_num() { [[ "$1" =~ ^[0-9]+$ ]]; }
+section() { printf '\n%s== %s%s\n' "$B" "$*" "$R"; }
+row() { printf '   %s: %s\n' "$1" "$2"; }
+nlog() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
+
+banner() {
+  local line="=============================================================="
+  say ""
+  say "$B$line$R"
+  local l
+  for l in "$@"; do say "$B   $l$R"; done
+  say "$B$line$R"
+}
+
+file_size() {
+  local n
+  n=$(stat -c %s "$1" 2>/dev/null) || n=0
+  if is_num "$n"; then echo "$n"; else echo 0; fi
+}
+
+human() {
+  local b="${1:-0}"
+  is_num "$b" || b=0
+  if [ "$b" -ge 1073741824 ]; then
+    printf '%s,%s ГБ' $((b / 1073741824)) $(((b % 1073741824) * 10 / 1073741824))
+  elif [ "$b" -ge 1048576 ]; then
+    printf '%s МБ' $((b / 1048576))
+  else
+    printf '%s КБ' $((b / 1024))
+  fi
+}
+
+env_get() {
+  local file="$1" key="$2" line value=""
+  [ -r "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in "$key="*) value="${line#"$key="}" ;; esac
+  done < "$file"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" == \"*\" ]] && [ ${#value} -ge 2 ]; then value="${value:1:${#value}-2}"; fi
+  if [[ "$value" == \'*\' ]] && [ ${#value} -ge 2 ]; then value="${value:1:${#value}-2}"; fi
+  printf '%s' "$value"
+}
+
+env_set() {
+  local file="$1" key="$2" value="$3" tmp
+  if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    err "неверное имя настройки: $key"
+    return 2
+  fi
+  if ! [[ "$value" =~ ^[A-Za-z0-9_.,:/@+=-]*$ ]]; then
+    err "в значении $key недопустимые символы"
+    return 2
+  fi
+  if [ ! -f "$file" ]; then
+    err "нет файла настроек $file — сначала установите Stella: sudo stella update"
+    return 1
+  fi
+  if ! tmp=$(mktemp "$(dirname "$file")/.stella.env.XXXXXX" 2>/dev/null); then
+    err "не могу записать в $(dirname "$file") (нужен sudo?)"
+    return 1
+  fi
+  if ! KEY="$key" VALUE="$value" awk '
+      BEGIN { k = ENVIRON["KEY"]; v = ENVIRON["VALUE"]; done = 0 }
+      { line = $0; sub(/\r$/, "", line) }
+      index(line, k "=") == 1 { if (!done) print k "=" v; done = 1; next }
+      { print line }
+      END { if (!done) print k "=" v }
+    ' "$file" > "$tmp"; then
+    rm -f "$tmp"
+    err "не удалось обновить $file"
+    return 1
+  fi
+  chmod --reference="$file" "$tmp" 2>/dev/null || chmod 640 "$tmp"
+  chown --reference="$file" "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$file"; then
+    rm -f "$tmp"
+    err "не удалось сохранить $file"
+    return 1
+  fi
+}
+
+clean_key() {
+  local k="$1"
+  k="${k//[[:space:]]/}"
+  k="${k//\"/}"
+  k="${k//\'/}"
+  k="${k#ANTHROPIC_API_KEY=}"
+  printf '%s' "$k"
+}
+
+key_valid() {
+  [[ "$1" =~ ^sk-ant-[A-Za-z0-9_-]{16,300}$ ]]
+}
+
+mask_key() {
+  local k="$1"
+  if [ ${#k} -lt 20 ]; then
+    printf 'sk-ant-…'
+  else
+    printf '%s…%s' "${k:0:10}" "${k: -4}"
+  fi
+}
+
+model_valid() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{1,99}$ ]]
+}
+
+new_pin() {
+  local n
+  n=$(shuf -i 100000-999999 -n 1 --random-source=/dev/urandom 2>/dev/null) || n=""
+  if ! [[ "$n" =~ ^[0-9]{6}$ ]]; then
+    n=$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d ' ') || n=""
+    is_num "$n" || n=$((RANDOM * 32768 + RANDOM))
+    n=$((100000 + n % 900000))
+  fi
+  echo "$n"
+}
+
+json_str() {
+  [ -r "$1" ] || return 1
+  sed -n "/\"$2\"[[:space:]]*:/{s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p;q;}" "$1" 2>/dev/null
+}
+
+json_num() {
+  [ -r "$1" ] || return 1
+  sed -n "/\"$2\"[[:space:]]*:/{s/.*\"$2\"[[:space:]]*:[[:space:]]*\\([0-9][0-9.]*\\).*/\\1/p;q;}" "$1" 2>/dev/null
+}
+
+text_field() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+
+state_dir() {
+  local d="${STELLA_STATE_DIR:-}"
+  [ -n "$d" ] || d=$(env_get "$ENV_FILE" STELLA_STATE_DIR 2>/dev/null)
+  echo "${d:-/var/lib/stella}"
+}
+
+setting() {
+  local v
+  v=$(env_get "$ENV_FILE" "$1" 2>/dev/null) || v=""
+  echo "${v:-${2:-}}"
+}
+
+api() {
+  local method="$1" path="$2" data="${3:-}" pin out
+  local -a args
+  pin=$(setting STELLA_RESCUER_PIN)
+  args=(-s --max-time "${API_TIMEOUT:-15}" -H "Host: $PORTAL_HOST" -H "X-Rescuer-Pin: $pin" -X "$method" -w '\n%{http_code}')
+  if [ -n "$data" ]; then
+    args+=(-H 'Content-Type: application/json' --data-binary "$data")
+  fi
+  API_CODE=000
+  API_BODY=""
+  have curl || return 1
+  out=$(curl "${args[@]}" "$API_URL$path" 2>/dev/null) || true
+  API_CODE="${out##*$'\n'}"
+  is_num "$API_CODE" || API_CODE=000
+  if [[ "$out" == *$'\n'* ]]; then API_BODY="${out%$'\n'*}"; fi
+  [ "$API_CODE" = 200 ]
+}
+
+api_problem() {
+  case "$API_CODE" in
+    000) err "сайт Stella не отвечает (служба stella-app). Посмотрите: sudo stella status и sudo stella logs app" ;;
+    401) err "PIN в $ENV_FILE не совпадает с PIN работающего сайта. Перезапустите: sudo stella restart" ;;
+    429) err "$(text_field "$API_BODY" error || true) — подождите немного и повторите" ;;
+    504) err "ИИ не ответил вовремя — попробуйте ещё раз" ;;
+    *) err "сайт ответил ошибкой $API_CODE: $(text_field "$API_BODY" error)" ;;
+  esac
+}
+
+app_healthy() {
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "Host: $PORTAL_HOST" "$API_URL/api/health" 2>/dev/null) || code=000
+  [ "$code" = 200 ]
+}
+
+wait_app() {
+  for _ in $(seq 1 "${1:-20}"); do
+    app_healthy && return 0
+    sleep 1
+  done
+  return 1
+}
+
+restart_app() {
+  say "Перезапускаю сайт (stella-app)…"
+  if ! systemctl restart stella-app; then
+    err "stella-app не перезапустилась — sudo stella logs app"
+    return 1
+  fi
+  if wait_app 25; then
+    say "  ${GRN}сайт снова работает${R}"
+  else
+    err "сайт не ответил за 25 с — посмотрите: sudo stella logs app"
+    return 1
+  fi
+}
+
+svc_active() {
+  systemctl is-active --quiet "$1" 2>/dev/null
+}
+
+engine_name() {
+  case "$1" in
+    cloud) echo "облачный Claude (интернет)" ;;
+    local) echo "локальный llama.cpp (без интернета)" ;;
+    reserve) echo "резервный по правилам (всегда работает)" ;;
+    *) echo "${1:-?}" ;;
+  esac
+}
+
+profile_text() {
+  case "$1" in
+    normal) echo "normal — полная мощность" ;;
+    safe) echo "safe — бережный: 1 ядро, частота снижена, маленькая модель" ;;
+    off) echo "off — локальный ИИ выключен, чтобы плата не перезагружалась" ;;
+    *) echo "${1:-нет данных}" ;;
+  esac
+}
+
+big_policy() {
+  local p c
+  local -a cpus
+  for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -r "$p/related_cpus" ] || continue
+    cpus=()
+    read -r -a cpus 2> /dev/null < "$p/related_cpus" || true
+    for c in "${cpus[@]}"; do
+      if [ "$c" = 4 ]; then echo "$p"; return 0; fi
+    done
+  done
+  return 1
+}
+
+soc_temp() {
+  local f t max=""
+  for f in /sys/class/thermal/thermal_zone*/temp; do
+    [ -r "$f" ] || continue
+    t=$(cat "$f" 2>/dev/null)
+    is_num "$t" || continue
+    if [ -z "$max" ] || [ "$t" -gt "$max" ]; then max="$t"; fi
+  done
+  if [ -n "$max" ]; then echo "$((max / 1000)) °C"; fi
+}
+
+llm_why() {
+  local sd profile
+  sd=$(state_dir)
+  profile=$(json_str "$sd/power.json" profile)
+  if [ "$profile" = off ]; then echo "выключена сторожем питания (sudo stella power)"; return; fi
+  if [ ! -x "$LLAMA_BIN" ]; then echo "llama.cpp не собрана (sudo stella update с интернетом)"; return; fi
+  if [ ! -f "$APP_DIR/models/model-0.5b.gguf" ] && [ ! -f "$APP_DIR/models/model.gguf" ]; then
+    echo "нет модели (sudo stella update с интернетом)"
+    return
+  fi
+  echo "подробности: sudo stella logs llm"
+}
+
+svc_text() {
+  local s
+  s=$(systemctl is-active "$1" 2>/dev/null) || true
+  case "$s" in
+    active) echo "${GRN}работает${R}" ;;
+    activating) echo "${YEL}запускается${R}" ;;
+    deactivating) echo "${YEL}останавливается${R}" ;;
+    failed) echo "${RED}СБОЙ${R} — sudo stella logs ${1#stella-}" ;;
+    inactive)
+      if [ "$1" = stella-llm ]; then echo "${YEL}остановлена${R} — $(llm_why)"; else echo "${YEL}остановлена${R}"; fi
+      ;;
+    *) echo "${s:-неизвестно}" ;;
+  esac
+}
+
+current_wifi() {
+  local ssid=""
+  if have iw; then
+    ssid=$(iw dev "$WLAN" link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p')
+  fi
+  if [ -z "$ssid" ] && have nmcli; then
+    ssid=$(LC_ALL=C nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | sed -n 's/^yes://p' | head -n 1)
+  fi
+  printf '%s' "$ssid"
+}
+
+internet_ok() {
+  local code
+  have curl || return 1
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "${1:-5}" https://api.anthropic.com 2>/dev/null) || code=000
+  [ -n "$code" ] && [ "$code" != 000 ]
+}
+
+net_quick_probe() {
+  local p1 p2 a=0 b=0
+  { if curl -s -o /dev/null --max-time 6 https://pypi.org/simple/ 2>/dev/null; then exit 0; else exit 1; fi; } &
+  p1=$!
+  { if curl -s -o /dev/null --max-time 6 "${STELLA_HF_BASE:-https://huggingface.co}" 2>/dev/null; then exit 0; else exit 1; fi; } &
+  p2=$!
+  wait "$p1" && a=1
+  wait "$p2" && b=1
+  [ "$a" = 1 ] || [ "$b" = 1 ]
+}
+
+model_files_text() {
+  local f out=""
+  for f in "$APP_DIR/models/model-0.5b.gguf" "$APP_DIR/models/model.gguf"; do
+    [ -f "$f" ] || continue
+    out="${out:+$out, }$(basename "$f") ($(human "$(file_size "$f")"))"
+  done
+  echo "${out:-нет моделей}"
+}
+
+power_lines() {
+  local sd pfile profile setting reason unclean policy maxf temp
+  sd=$(state_dir)
+  pfile="$sd/power.json"
+  profile=$(json_str "$pfile" profile)
+  if [ -n "$profile" ]; then
+    setting=$(json_str "$pfile" setting)
+    reason=$(json_str "$pfile" reason)
+    unclean=$(json_num "$pfile" unclean_boots)
+    row "Профиль" "$(profile_text "$profile")"
+    row "Настройка" "${setting:-$(setting STELLA_POWER auto)} (изменить: sudo stella power auto|normal|safe|off)"
+    if [ -n "$reason" ]; then row "Причина" "$reason"; fi
+    row "Сбои питания" "${unclean:-0} неожиданных перезагрузок"
+  else
+    row "Профиль" "нет данных от сторожа питания (служба stella-hw); настройка STELLA_POWER=$(setting STELLA_POWER auto)"
+  fi
+  if policy=$(big_policy); then
+    maxf=$(cat "$policy/scaling_max_freq" 2>/dev/null)
+    if is_num "$maxf"; then row "Большие ядра" "до $((maxf / 1000)) МГц"; fi
+  fi
+  temp=$(soc_temp)
+  if [ -n "$temp" ]; then row "Температура" "$temp"; fi
+}
+
+cmd_status() {
+  local sd version health engine mode key model clients wifi last node_mode
+  sd=$(state_dir)
+  version=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' "$APP_DIR/app/config.py" 2>/dev/null)
+  say "${B}Stella Pocket ${version:-?}${R} · $(hostname 2>/dev/null) · $(date '+%d.%m.%Y %H:%M')"
+  section "Сеть"
+  if svc_active hostapd; then
+    clients=$(iw dev "$WLAN" station dump 2>/dev/null | grep -c '^Station') || true
+    row "Режим" "${GRN}SOS${R} — раздаёт открытую сеть «$(setting STELLA_SSID "$SOS_SSID")», адрес $PORTAL_HOST"
+    row "Подключено устройств" "${clients:-0}"
+  else
+    wifi=$(current_wifi)
+    row "Режим" "${YEL}ОБСЛУЖИВАНИЕ${R} — сеть SOS выключена${wifi:+, плата в Wi-Fi «$wifi»}. Вернуть: sudo stella sos"
+  fi
+  row "Адреса платы" "$(hostname -I 2>/dev/null || echo '?')"
+  if internet_ok 4; then row "Интернет" "${GRN}есть${R}"; else row "Интернет" "нет (облачный ИИ недоступен — это нормально в поле)"; fi
+  section "Службы"
+  local s
+  for s in "${SERVICES[@]}"; do row "$s" "$(svc_text "$s")"; done
+  section "ИИ"
+  health=$(curl -s --max-time 5 -H "Host: $PORTAL_HOST" "$API_URL/api/health" 2>/dev/null) || health=""
+  engine=$(text_field "$health" ai)
+  if [ -n "$engine" ]; then
+    row "Сейчас отвечает" "${B}$(engine_name "$engine")${R}"
+  else
+    row "Сейчас отвечает" "${RED}сайт не отвечает${R} — sudo stella logs app"
+  fi
+  mode=$(setting STELLA_AI_MODE auto)
+  key=$(setting ANTHROPIC_API_KEY)
+  model=$(setting STELLA_CLOUD_MODEL claude-opus-5)
+  row "Режим ИИ" "$mode (изменить: sudo stella ai mode auto|cloud|local|offline)"
+  if [ -n "$key" ]; then
+    row "Облако" "ключ $(mask_key "$key"), модель $model"
+  else
+    row "Облако" "ключ не задан — sudo stella ai key"
+  fi
+  row "Локальные модели" "$(model_files_text)"
+  section "Питание"
+  power_lines
+  section "Узел"
+  node_mode=$(json_str "$(setting STELLA_MODE_FILE "$sd/mode.json")" mode)
+  case "$node_mode" in
+    emergency) row "Режим узла" "${RED}ЧС${R} (тревога включена)" ;;
+    standby|"") row "Режим узла" "ожидание" ;;
+    *) row "Режим узла" "$node_mode" ;;
+  esac
+  if [ -r "$sd/install.last" ]; then
+    last="$(sed -n 's/^when=//p' "$sd/install.last") · $(sed -n 's/^result=//p' "$sd/install.last") · $(sed -n 's/^mode=//p' "$sd/install.last") · версия $(sed -n 's/^version=//p' "$sd/install.last")"
+    row "Последняя установка" "$last"
+  fi
+  say ""
+  say "Подробнее: sudo stella ai · sudo stella power · sudo stella logs · все команды: stella help"
+}
+
+rotate_log() {
+  if [ -f "$1" ] && [ "$(file_size "$1")" -gt "$LOG_MAX" ]; then
+    mv -f "$1" "$1.1" 2>/dev/null || true
+  fi
+}
+
+unit_running() {
+  local s
+  s=$(systemctl is-active "$1" 2>/dev/null) || true
+  [ "$s" = active ] || [ "$s" = activating ]
+}
+
+run_detached() {
+  local unit="$1"
+  shift
+  DETACHED=""
+  if have systemd-run && [ -d /run/systemd/system ]; then
+    systemctl reset-failed "$unit" > /dev/null 2>&1 || true
+    if systemd-run --quiet --collect --unit "$unit" --description "Stella Pocket: $unit" "$@" > /dev/null 2>&1; then
+      DETACHED="unit:$unit"
+      return 0
+    fi
+  fi
+  setsid nohup "$@" > /dev/null 2>&1 < /dev/null &
+  DETACHED="pid:$!"
+}
+
+install_busy() {
+  have flock || return 1
+  [ -e "$INSTALL_LOCK" ] || return 1
+  ! flock -n "$INSTALL_LOCK" true 2> /dev/null
+}
+
+detached_running() {
+  case "$DETACHED" in
+    lock) install_busy ;;
+    unit:*) unit_running "${DETACHED#unit:}" ;;
+    pid:*) kill -0 "${DETACHED#pid:}" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
+follow_log() {
+  local file="$1" offset="$2" tail_pid
+  tail -c "+$((offset + 1))" -F "$file" 2>/dev/null &
+  tail_pid=$!
+  trap 'kill "$tail_pid" 2>/dev/null; printf "\nПерестал показывать журнал — работа продолжается в фоне. Смотреть снова: sudo tail -f %s\n" "'"$file"'"; exit 0' INT
+  sleep 2
+  while detached_running; do sleep 2; done
+  sleep 1
+  kill "$tail_pid" 2>/dev/null
+  wait "$tail_pid" 2>/dev/null
+  trap - INT
+}
+
+net_result() {
+  local offset="$1"
+  tail -c "+$((offset + 1))" "$NET_LOG" 2>/dev/null | sed -n 's/.*ИТОГ: //p' | tail -n 1
+}
+
+wlan_ip() {
+  ip -4 -o addr show dev "$WLAN" 2>/dev/null | awk '{split($4, a, "/"); if (a[1] != "10.42.0.1") {print a[1]; exit}}'
+}
+
+nm_state() {
+  LC_ALL=C nmcli -t -f DEVICE,STATE dev 2>/dev/null | awk -F: -v d="$WLAN" '$1 == d {print $2; exit}'
+}
+
+write_nm_conf() {
+  mkdir -p "$(dirname "$NM_CONF")" 2>/dev/null || return 1
+  printf '[keyfile]\nunmanaged-devices=interface-name:%s\n' "$WLAN" > "$NM_CONF"
+}
+
+firewall_off() {
+  have iptables || return 0
+  for _ in 1 2 3 4 5 6 7 8; do iptables -D INPUT -i "$WLAN" -j STELLA_IN 2> /dev/null || break; done
+  for _ in 1 2 3 4 5 6 7 8; do iptables -t nat -D PREROUTING -i "$WLAN" -j STELLA 2> /dev/null || break; done
+  iptables -F STELLA_IN 2> /dev/null || true
+  iptables -t nat -F STELLA 2> /dev/null || true
+}
+
+show_on_screen() {
+  [ -w /dev/tty1 ] || return 0
+  printf '\r\n%s\r\n' "$1" | timeout 3 tee /dev/tty1 > /dev/null 2>&1 || true
+}
+
+sos_core() {
+  local sd
+  sd=$(state_dir)
+  if have nmcli; then timeout 15 nmcli dev disconnect "$WLAN" > /dev/null 2>&1 || true; fi
+  write_nm_conf || nlog "не удалось записать $NM_CONF"
+  if svc_active NetworkManager; then
+    systemctl reload NetworkManager 2> /dev/null || systemctl restart NetworkManager 2> /dev/null || true
+    sleep 2
+    timeout 10 nmcli dev set "$WLAN" managed no > /dev/null 2>&1 || true
+  fi
+  have rfkill && rfkill unblock wlan 2> /dev/null
+  sleep 1
+  nlog "запускаю сеть SOS: stella-net, hostapd, dnsmasq"
+  systemctl restart stella-net 2> /dev/null || nlog "stella-net не запустилась"
+  systemctl restart hostapd 2> /dev/null || nlog "hostapd не запустился с первого раза"
+  systemctl restart dnsmasq 2> /dev/null || nlog "dnsmasq не запустился"
+  systemctl restart nginx stella-app 2> /dev/null || nlog "nginx/stella-app не перезапустились"
+  systemctl restart stella-hw 2> /dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    svc_active hostapd && break
+    sleep 1
+  done
+  if ! svc_active hostapd; then
+    nlog "hostapd не поднялся — перезапускаю NetworkManager и пробую ещё раз"
+    if svc_active NetworkManager; then
+      systemctl restart NetworkManager 2> /dev/null || true
+      sleep 4
+      timeout 10 nmcli dev set "$WLAN" managed no > /dev/null 2>&1 || true
+    fi
+    systemctl restart stella-net hostapd dnsmasq 2> /dev/null || true
+    sleep 3
+  fi
+  rm -f "$sd/home.ip"
+  if svc_active hostapd; then
+    nlog "Сеть $SOS_SSID работает: чат http://$PORTAL_HOST/ , консоль http://$PORTAL_HOST/rescuer"
+    show_on_screen "Stella: сеть $SOS_SSID снова работает (http://$PORTAL_HOST/)"
+    return 0
+  fi
+  nlog "!!! Сеть SOS не поднялась. Перезагрузите плату: sudo reboot (после загрузки сеть SOS включается сама)"
+  return 1
+}
+
+sos_worker() {
+  exec >> "$NET_LOG" 2>&1
+  nlog "=== Возвращаю спасательную сеть $SOS_SSID ==="
+  if sos_core; then nlog "ИТОГ: OK"; else nlog "ИТОГ: ОШИБКА"; fi
+}
+
+home_rollback() {
+  nlog "Не получилось: $1"
+  nlog "Возвращаю сеть SOS, чтобы коробка не осталась без связи…"
+  sos_core
+  nlog "ИТОГ: ОТКАТ — $1"
+}
+
+home_why() {
+  case "$1" in
+    *[Ss]ecrets*|*password*|*psk*|*"802-11-wireless-security"*) echo "неверный пароль Wi-Fi" ;;
+    *"No network with SSID"*|*"not found"*) echo "сеть не найдена — плата её не видит (далеко или сеть 5 ГГц)" ;;
+    *[Tt]imeout*|*"timed out"*) echo "роутер не ответил вовремя" ;;
+    *) printf '%s' "${1:-неизвестная ошибка}" | tr '\n' ' ' | cut -c1-200 ;;
+  esac
+}
+
+home_worker() {
+  local secret="${1:-}" ssid="" pass="" out rc state ip sd user host
+  exec >> "$NET_LOG" 2>&1
+  if [ -n "$secret" ] && [ -r "$secret" ]; then
+    { IFS= read -r ssid; IFS= read -r pass; } < "$secret"
+  fi
+  if [ -n "$secret" ]; then rm -f "$secret"; fi
+  sd=$(state_dir)
+  nlog "=== Переключаю плату в домашний Wi-Fi «$ssid» ==="
+  if [ -z "$ssid" ]; then
+    nlog "ИТОГ: ОШИБКА — не задано имя сети"
+    return 1
+  fi
+  systemctl stop hostapd dnsmasq 2> /dev/null || true
+  firewall_off
+  ip addr flush dev "$WLAN" 2> /dev/null || true
+  rm -f "$NM_CONF"
+  systemctl reload NetworkManager 2> /dev/null || systemctl restart NetworkManager 2> /dev/null || true
+  state=""
+  for _ in $(seq 1 20); do
+    state=$(nm_state)
+    if [ -n "$state" ] && [ "$state" != unmanaged ]; then break; fi
+    sleep 1
+  done
+  if [ -z "$state" ] || [ "$state" = unmanaged ]; then
+    timeout 10 nmcli dev set "$WLAN" managed yes > /dev/null 2>&1 || true
+    sleep 3
+    state=$(nm_state)
+  fi
+  write_nm_conf || true
+  if [ -z "$state" ] || [ "$state" = unmanaged ]; then
+    home_rollback "NetworkManager не взял $WLAN под управление"
+    return 1
+  fi
+  timeout 10 nmcli radio wifi on > /dev/null 2>&1 || true
+  timeout 15 nmcli dev wifi rescan ifname "$WLAN" > /dev/null 2>&1 || true
+  sleep 4
+  nlog "подключаюсь к «$ssid»…"
+  if [ -n "$pass" ]; then
+    out=$(LC_ALL=C timeout 70 nmcli --wait 60 dev wifi connect "$ssid" password "$pass" ifname "$WLAN" 2>&1)
+    rc=$?
+  elif LC_ALL=C nmcli -t -f NAME con show 2> /dev/null | grep -Fxq -- "$ssid"; then
+    out=$(LC_ALL=C timeout 70 nmcli --wait 60 con up id "$ssid" ifname "$WLAN" 2>&1)
+    rc=$?
+  else
+    out=$(LC_ALL=C timeout 70 nmcli --wait 60 dev wifi connect "$ssid" ifname "$WLAN" 2>&1)
+    rc=$?
+  fi
+  nlog "nmcli: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-240)"
+  if [ "$rc" != 0 ]; then
+    home_rollback "$(home_why "$out")"
+    return 1
+  fi
+  ip=""
+  for _ in $(seq 1 25); do
+    ip=$(wlan_ip)
+    [ -n "$ip" ] && break
+    sleep 1
+  done
+  if [ -z "$ip" ]; then
+    home_rollback "роутер не выдал адрес за 25 секунд"
+    return 1
+  fi
+  mkdir -p "$sd" 2> /dev/null
+  printf '%s\n' "$ip" > "$sd/home.ip" 2> /dev/null
+  printf '%s\n' "$ssid" > "$sd/home.ssid" 2> /dev/null
+  user=$(getent passwd 1000 2> /dev/null | cut -d: -f1)
+  host=$(hostname 2> /dev/null)
+  local net="нет (плата в сети, но интернета нет)"
+  if internet_ok 8; then net="есть"; fi
+  nlog "=============================================================="
+  nlog "   ГОТОВО: плата в Wi-Fi «$ssid»"
+  nlog "   НОВЫЙ АДРЕС ПЛАТЫ:   $ip"
+  nlog "   Подключение:  ssh ${user:-orangepi}@$ip"
+  if svc_active avahi-daemon; then nlog "   или по имени:  ssh ${user:-orangepi}@$host.local"; fi
+  nlog "   Интернет: $net"
+  nlog "   Вернуть сеть SOS: sudo stella sos (или просто перезагрузите плату)"
+  nlog "=============================================================="
+  show_on_screen "Stella: плата в Wi-Fi «$ssid», АДРЕС $ip — ssh ${user:-orangepi}@$ip"
+  nlog "ИТОГ: OK $ip"
+}
+
+start_net_job() {
+  local what="$1" offset result
+  shift
+  if unit_running "$NET_UNIT"; then
+    fail "переключение сети уже идёт — подождите минуту: sudo tail -f $NET_LOG"
+  fi
+  touch "$NET_LOG" 2> /dev/null
+  chmod 640 "$NET_LOG" 2> /dev/null
+  rotate_log "$NET_LOG"
+  offset=$(file_size "$NET_LOG")
+  run_detached "$NET_UNIT" /bin/bash "$SELF" "$what" "$@"
+  say "Ход показываю ниже (журнал: $NET_LOG). Ctrl+C — перестать смотреть, переключение продолжится."
+  follow_log "$NET_LOG" "$offset"
+  result=$(net_result "$offset")
+  case "$result" in
+    OK*) return 0 ;;
+    "") say "Итог не получен — посмотрите: sudo stella logs home"; return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_home() {
+  local ssid="${1:-}" pass="${2:-}" sd secret user
+  have nmcli || fail "на плате нет NetworkManager (nmcli) — домашний Wi-Fi недоступен. Подключите кабель к роутеру."
+  sd=$(state_dir)
+  if [ -z "$ssid" ]; then
+    ssid=$(cat "$sd/home.ssid" 2> /dev/null)
+    if [ -z "$ssid" ]; then
+      say 'Использование: sudo stella home "ИМЯ_WIFI" "ПАРОЛЬ"'
+      say 'Пример:        sudo stella home "Beeline_5G" "mypassword123"'
+      return 1
+    fi
+    say "Подключаюсь к последней домашней сети «$ssid» (пароль сохранён в NetworkManager)."
+  elif [ $# -lt 2 ] && [ -t 0 ]; then
+    read -r -s -p "Пароль Wi-Fi «$ssid» (Enter — сеть без пароля): " pass
+    echo
+  fi
+  if [ ${#ssid} -gt 32 ]; then fail "имя сети длиннее 32 символов — проверьте, что оно в кавычках"; fi
+  if [ -n "$pass" ] && { [ ${#pass} -lt 8 ] || [ ${#pass} -gt 64 ]; }; then
+    fail "пароль Wi-Fi должен быть от 8 до 64 символов (если в нём пробелы — возьмите его в кавычки)"
+  fi
+  case "$ssid$pass" in *$'\n'*) fail "в имени или пароле сети не должно быть переносов строки" ;; esac
+  secret=$(mktemp /run/stella-home.XXXXXX 2> /dev/null) || fail "не могу создать временный файл в /run"
+  chmod 600 "$secret"
+  printf '%s\n%s\n' "$ssid" "$pass" > "$secret"
+  user="${SUDO_USER:-orangepi}"
+  [ "$user" = root ] && user=orangepi
+  say "Переключаю плату в домашний Wi-Fi «$ssid». Сеть SOS на это время выключится."
+  say "Если вы подключены через $SOS_SSID, SSH сейчас оборвётся — так и должно быть:"
+  say "  1) подключите ноутбук к своему домашнему Wi-Fi «$ssid»;"
+  say "  2) через минуту зайдите:  ssh $user@$(hostname 2> /dev/null).local  или по адресу из роутера;"
+  say "  3) адрес платы появится ниже, на экране платы (если подключён телевизор) и в sudo stella status."
+  say "Если подключиться не получится, плата сама вернёт сеть SOS примерно через минуту."
+  start_net_job __home-worker "$secret"
+}
+
+cmd_sos() {
+  say "Возвращаю спасательную сеть $SOS_SSID…"
+  say "Если вы подключены через домашний Wi-Fi, SSH оборвётся — это нормально."
+  say "Через минуту подключитесь к Wi-Fi $SOS_SSID:  ssh ${SUDO_USER:-orangepi}@$PORTAL_HOST"
+  start_net_job __sos-worker
+}
+
+find_zip() {
+  local d f t best="" best_t=0 home=""
+  local -a dirs=()
+  if [ -n "${SUDO_USER:-}" ]; then home=$(getent passwd "$SUDO_USER" 2> /dev/null | cut -d: -f6); fi
+  if [ -n "$home" ]; then dirs+=("$home" "$home/Downloads" "$home/Загрузки"); fi
+  dirs+=("$PWD")
+  for d in /home/* /root; do dirs+=("$d" "$d/Downloads" "$d/Загрузки"); done
+  shopt -s nullglob nocaseglob
+  for d in "${dirs[@]}"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/stella*.zip; do
+      [ -f "$f" ] || continue
+      t=$(stat -c %Y "$f" 2> /dev/null) || t=0
+      if [ "$t" -gt "$best_t" ]; then best="$f"; best_t="$t"; fi
+    done
+  done
+  shopt -u nullglob nocaseglob
+  if [ -n "$best" ]; then printf '%s\n' "$best"; else return 1; fi
+}
+
+extract_zip() {
+  local zip="$1" dest="$2" rc
+  if have unzip; then
+    unzip -tq "$zip" > /dev/null 2>&1
+    rc=$?
+    [ "$rc" -le 1 ] || return 2
+    unzip -q -o "$zip" -d "$dest" > /dev/null 2>&1
+    rc=$?
+    [ "$rc" -le 1 ] || return 1
+  elif have python3; then
+    python3 -m zipfile -t "$zip" > /dev/null 2>&1 || return 2
+    python3 -m zipfile -e "$zip" "$dest" > /dev/null 2>&1 || return 1
+  else
+    return 3
+  fi
+}
+
+fix_backslash_paths() {
+  local dir="$1" f rel
+  while IFS= read -r -d '' f; do
+    rel="${f#"$dir"/}"
+    rel="${rel//\\//}"
+    mkdir -p "$(dirname "$dir/$rel")" && mv -f "$f" "$dir/$rel"
+  done < <(find "$dir" -type f -name '*\\*' -print0 2> /dev/null)
+}
+
+update_hint_no_zip() {
+  local user="${SUDO_USER:-orangepi}"
+  [ "$user" = root ] && user=orangepi
+  err "не нашёл архив stella*.zip"
+  say "Искал в: домашних папках (/home/*, /root, в них Downloads и Загрузки) и в текущей папке $PWD."
+  say "Скопируйте архив с компьютера (PowerShell, в папке с архивом):"
+  say "   scp stella_pocket_rescue.zip $user@$PORTAL_HOST:~        — ноутбук в сети $SOS_SSID"
+  say "   scp stella_pocket_rescue.zip $user@АДРЕС_ПЛАТЫ:~        — плата в домашнем Wi-Fi или по кабелю"
+  say "Потом снова:  sudo stella update"
+  say "Или укажите путь:  sudo stella update /путь/к/архиву.zip"
+}
+
+cmd_update() {
+  local src="" quick="${STELLA_QUICK:-}" model="${MODEL:-}" jobs="${JOBS:-}" work dir zip_info rc
+  local installed new_version offset end_text sd result started depth
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --quick|-q|quick) quick=1 ;;
+      --full|full) quick=0 ;;
+      --model) shift; model="${1:-}" ;;
+      --model=*) model="${1#--model=}" ;;
+      --jobs|-j) shift; jobs="${1:-}" ;;
+      --jobs=*) jobs="${1#--jobs=}" ;;
+      0.5b|1.5b|0.5B|1.5B) model="$1" ;;
+      -*) fail "неизвестный параметр $1 (есть: --quick, --full, --model 0.5b|1.5b, --jobs N)" ;;
+      *) src="$1" ;;
+    esac
+    shift
+  done
+  model=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
+  case "$model" in ""|0.5b|1.5b) ;; *) fail "модель может быть 0.5b или 1.5b" ;; esac
+  if [ -n "$jobs" ] && ! is_num "$jobs"; then fail "--jobs: нужно число, например 1"; fi
+  sd=$(state_dir)
+  if unit_running "$UPDATE_UNIT" || unit_running "$INSTALL_UNIT" || install_busy; then
+    say "Обновление уже идёт. Показываю журнал (Ctrl+C — перестать смотреть):"
+    DETACHED=lock
+    if unit_running "$UPDATE_UNIT"; then DETACHED="unit:$UPDATE_UNIT"; fi
+    if unit_running "$INSTALL_UNIT"; then DETACHED="unit:$INSTALL_UNIT"; fi
+    follow_log "$INSTALL_LOG" "$(( $(file_size "$INSTALL_LOG") > 4000 ? $(file_size "$INSTALL_LOG") - 4000 : 0 ))"
+    return 0
+  fi
+  find /var/tmp -maxdepth 1 -name 'stella-update.*' -mmin +30 -exec rm -rf {} + 2> /dev/null
+  if [ -n "$src" ] && [ -d "$src" ]; then
+    dir=$(readlink -f "$src")
+    [ -f "$dir/deploy/install.sh" ] || fail "в папке $src нет deploy/install.sh"
+    say "Ставлю из папки: $dir"
+  else
+    if [ -n "$src" ]; then
+      [ -f "$src" ] || fail "нет файла $src"
+      zip=$(readlink -f "$src")
+    elif ! zip=$(find_zip); then
+      update_hint_no_zip
+      return 1
+    fi
+    zip_info="$(date -d "@$(stat -c %Y "$zip")" '+%d.%m.%Y %H:%M' 2> /dev/null), $(human "$(file_size "$zip")")"
+    say "Архив:     $zip ($zip_info)"
+    work=$(mktemp -d /var/tmp/stella-update.XXXXXX 2> /dev/null) || fail "не могу создать папку в /var/tmp (закончилось место?)"
+    extract_zip "$zip" "$work"
+    rc=$?
+    case "$rc" in
+      0) ;;
+      2) rm -rf "$work"; fail "архив повреждён или скопирован не до конца — скопируйте его заново (scp)" ;;
+      3) rm -rf "$work"; fail "нечем распаковать архив: нет unzip и python3 (sudo apt install unzip)" ;;
+      *) rm -rf "$work"; fail "не удалось распаковать архив (мало места на карте? df -h)" ;;
+    esac
+    fix_backslash_paths "$work"
+    dir=""
+    for depth in 2 3 4 5; do
+      dir=$(find "$work" -maxdepth "$depth" -type f -path '*/deploy/install.sh' -print -quit 2> /dev/null)
+      [ -n "$dir" ] && break
+    done
+    dir="${dir%/deploy/install.sh}"
+    if [ -z "$dir" ] || [ ! -f "$dir/app/main.py" ]; then
+      rm -rf "$work"
+      fail "в архиве нет deploy/install.sh и app/main.py — это не архив Stella Pocket"
+    fi
+    chmod -R u+rwX,go+rX "$dir" 2> /dev/null
+  fi
+  sed -i 's/\r$//' "$dir/deploy/install.sh" 2> /dev/null
+  bash -n "$dir/deploy/install.sh" 2> /dev/null || fail "установщик в архиве повреждён (deploy/install.sh) — скопируйте архив заново"
+  new_version=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' "$dir/app/config.py" 2> /dev/null)
+  installed=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' "$APP_DIR/app/config.py" 2> /dev/null)
+  say "Версия:    ${new_version:-?} (установлена сейчас: ${installed:-нет или старая})"
+  if [ "$quick" = 1 ]; then
+    say "Режим:     БЫСТРЫЙ — только файлы программы, настройки и службы (1–2 минуты)"
+  elif [ "$quick" = 0 ]; then
+    say "Режим:     ПОЛНЫЙ — пакеты, библиотеки, модели, сборка llama.cpp при необходимости"
+  elif net_quick_probe; then
+    say "Интернет:  есть → ПОЛНОЕ обновление: библиотеки (в т.ч. для облачного ИИ), модель 0.5B, llama.cpp если её нет (5–40 минут)"
+  else
+    say "Интернет:  нет → БЫСТРОЕ обновление: только файлы программы и настройки (1–2 минуты)."
+    say "           Облачный ИИ и новые модели — при следующем обновлении с интернетом."
+  fi
+  if [ ! -x "$APP_DIR/venv/bin/python" ] || [ ! -f "$ENV_FILE" ] || ! svc_active hostapd; then
+    end_text="плата перезагрузится и вернётся в режим SOS — через 3 минуты подключитесь к Wi-Fi $SOS_SSID"
+  else
+    end_text="службы перезапустятся без перезагрузки, сеть SOS продолжит работать"
+  fi
+  say "В конце:   $end_text"
+  say "Журнал:    sudo stella logs install   (или sudo tail -f $INSTALL_LOG)"
+  say ""
+  local -a envs=(STELLA_OVER_WIFI=1)
+  if [ -n "$quick" ]; then envs+=("STELLA_QUICK=$quick"); fi
+  if [ -n "$model" ]; then envs+=("MODEL=$model"); fi
+  if [ -n "$jobs" ]; then envs+=("JOBS=$jobs"); fi
+  if [ -n "${STELLA_HF_BASE:-}" ]; then envs+=("STELLA_HF_BASE=$STELLA_HF_BASE"); fi
+  if [ -n "${STELLA_REBOOT:-}" ]; then envs+=("STELLA_REBOOT=$STELLA_REBOOT"); fi
+  touch "$INSTALL_LOG" 2> /dev/null
+  rotate_log "$INSTALL_LOG"
+  offset=$(file_size "$INSTALL_LOG")
+  started=$(date +%s)
+  run_detached "$UPDATE_UNIT" "$(command -v env)" "${envs[@]}" /bin/bash "$dir/deploy/install.sh"
+  say "Установка запущена в фоне — обрыв SSH ей не помешает. Ход показываю ниже, Ctrl+C — перестать смотреть."
+  follow_log "$INSTALL_LOG" "$offset"
+  result=""
+  if [ "$(stat -c %Y "$sd/install.last" 2> /dev/null || echo 0)" -ge "$started" ]; then
+    result=$(sed -n 's/^result=//p' "$sd/install.last" 2> /dev/null)
+  fi
+  say ""
+  case "$result" in
+    ok) say "${GRN}Обновление завершено успешно.${R} Проверить: sudo stella status" ;;
+    warn) say "${YEL}Обновление завершено с предупреждениями (см. ИТОГ выше).${R} Проверить: sudo stella status" ;;
+    fail) err "Обновление не удалось — причина выше. Исправьте её и повторите: sudo stella update" ;;
+    *) say "Итог не найден — посмотрите журнал: sudo stella logs install" ;;
+  esac
+  if [ -n "${work:-}" ] && ! detached_running; then rm -rf "$work"; fi
+}
+
+ai_status() {
+  local mode key model effort
+  mode=$(setting STELLA_AI_MODE auto)
+  key=$(setting ANTHROPIC_API_KEY)
+  model=$(setting STELLA_CLOUD_MODEL claude-opus-5)
+  effort=$(setting STELLA_CLOUD_EFFORT low)
+  section "Настройки ИИ ($ENV_FILE)"
+  row "Режим" "$mode"
+  if [ -n "$key" ]; then row "Ключ Anthropic" "$(mask_key "$key")"; else row "Ключ Anthropic" "не задан — sudo stella ai key"; fi
+  row "Облачная модель" "$model (усилие: $effort)"
+  row "Локальные модели" "$(model_files_text)"
+  section "Состояние (проверяю прямо сейчас)"
+  if ! API_TIMEOUT=25 api POST /api/rescuer/ai/probe; then
+    api GET /api/rescuer/ai || true
+  fi
+  if [ "$API_CODE" != 200 ]; then
+    api_problem
+    return 1
+  fi
+  if have python3; then
+    printf '%s' "$API_BODY" | python3 -c "$PY_AI" 2> /dev/null || say "   $API_BODY"
+  else
+    say "   $API_BODY"
+  fi
+  say ""
+  say "Проверить ответ ИИ:  sudo stella ai test"
+}
+
+ai_key() {
+  local key="${1:-}" typed=0
+  if [ -z "$key" ]; then
+    typed=1
+    [ -t 0 ] || fail "передайте ключ: sudo stella ai key sk-ant-..."
+    say "Ключ берётся на https://console.anthropic.com → Settings → API Keys (нужен пополненный счёт)."
+    read -r -s -p "Вставьте ключ (начинается с sk-ant-, ввод скрыт) и нажмите Enter: " key
+    echo
+  fi
+  case "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')" in
+    off|none|delete|remove|clear|нет|удалить)
+      env_set "$ENV_FILE" ANTHROPIC_API_KEY "" || return 1
+      say "Ключ удалён — облачный ИИ выключен. Отвечают локальный и резервный."
+      restart_app
+      return
+      ;;
+  esac
+  key=$(clean_key "$key")
+  if ! key_valid "$key"; then
+    fail "это не похоже на ключ Anthropic: он начинается с sk-ant- и состоит из латинских букв, цифр, - и _"
+  fi
+  env_set "$ENV_FILE" ANTHROPIC_API_KEY "$key" || return 1
+  say "Ключ сохранён: $(mask_key "$key")"
+  if [ "$typed" = 0 ]; then
+    say "Совет: ключ из командной строки остаётся в истории команд. Надёжнее вводить так: sudo stella ai key"
+  fi
+  restart_app || return 1
+  say "Облачный ИИ заработает, когда у платы есть интернет (sudo stella home …)."
+  say "Проверить прямо сейчас:  sudo stella ai test"
+}
+
+ai_mode() {
+  local mode
+  mode=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+  case "$mode" in
+    auto) say "auto — облако, если есть интернет и ключ; иначе локальный ИИ; в крайнем случае резерв" ;;
+    cloud) say "cloud — только облако; без интернета отвечает резерв" ;;
+    local) say "local — только локальный ИИ на плате; если он не готов — резерв" ;;
+    offline) say "offline — только резервные ответы по правилам (самый надёжный и быстрый)" ;;
+    *) fail "режим: auto | cloud | local | offline — например: sudo stella ai mode auto" ;;
+  esac
+  env_set "$ENV_FILE" STELLA_AI_MODE "$mode" || return 1
+  restart_app
+}
+
+ai_model() {
+  local model="${1:-}"
+  if [ -z "$model" ]; then
+    say "Сейчас: $(setting STELLA_CLOUD_MODEL claude-opus-5)"
+    say "Пример:  sudo stella ai model claude-opus-5   (умнее)"
+    say "         sudo stella ai model claude-haiku-4-5 (быстрее и дешевле)"
+    return 0
+  fi
+  model_valid "$model" || fail "странное имя модели: $model (пример: claude-opus-5)"
+  env_set "$ENV_FILE" STELLA_CLOUD_MODEL "$model" || return 1
+  say "Облачная модель: $model"
+  restart_app
+}
+
+ai_test() {
+  local text="$*" body='{}'
+  if [ -n "$text" ]; then
+    if have python3; then
+      body=$(python3 -c "$PY_JSON_TEXT" "${text:0:300}" 2> /dev/null) || body='{}'
+    else
+      say "(нет python3 — отправляю стандартный вопрос)"
+    fi
+  fi
+  say "Отправляю ИИ тестовое сообщение пострадавшего… (до 90 секунд)"
+  if ! API_TIMEOUT=110 api POST /api/verify/ai-test "$body"; then
+    api_problem
+    return 1
+  fi
+  if have python3; then
+    printf '%s' "$API_BODY" | python3 -c "$PY_TEST" 2> /dev/null || say "$API_BODY"
+  else
+    say "   движок: $(text_field "$API_BODY" engine)"
+    say "   ответ:  $(text_field "$API_BODY" text)"
+  fi
+}
+
+cmd_ai() {
+  local sub="${1:-status}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    status|probe|state) ai_status ;;
+    key) ai_key "$@" ;;
+    mode) ai_mode "$@" ;;
+    model) ai_model "$@" ;;
+    test) ai_test "$@" ;;
+    *) fail "не знаю «ai $sub». Есть: ai, ai key, ai key off, ai mode auto|cloud|local|offline, ai model ID, ai test" ;;
+  esac
+}
+
+wait_power_file() {
+  local file="$1" want="$2" profile setting
+  for _ in $(seq 1 12); do
+    profile=$(json_str "$file" profile)
+    setting=$(json_str "$file" setting)
+    if [ -n "$profile" ] && { [ -z "$want" ] || [ "$setting" = "$want" ]; }; then
+      echo "$profile"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+apply_power() {
+  local profile="$1"
+  if [ -x "$POWER_SCRIPT" ]; then "$POWER_SCRIPT" "$profile"; fi
+  if [ "$profile" = off ]; then
+    systemctl stop stella-llm 2> /dev/null
+    say "Локальный ИИ выключен. Чат работает: отвечают облачный (если есть интернет) и резервный ИИ."
+  elif [ -x "$LLAMA_BIN" ]; then
+    systemctl reset-failed stella-llm > /dev/null 2>&1
+    systemctl restart stella-llm 2> /dev/null || err "stella-llm не перезапустилась — sudo stella logs llm"
+    say "Локальный ИИ перезапускается в профиле $profile — модель загрузится примерно за минуту."
+  else
+    say "llama.cpp не собрана — локальный ИИ появится после sudo stella update с интернетом."
+  fi
+}
+
+power_set() {
+  local want="$1" sd profile
+  sd=$(state_dir)
+  case "$want" in
+    auto) say "auto — сторож сам решает: начинает бережно (safe), а если плата перезагружается от нехватки питания — выключает локальный ИИ (off)." ;;
+    normal) say "normal — полная мощность локального ИИ. Нужен хороший блок питания 5 В / 4 А, иначе плата может перезагружаться." ;;
+    safe) say "safe — бережный режим: 1 ядро, частота до $(( $(setting STELLA_CPU_MAX_KHZ 1416000) / 1000 )) МГц, маленькая модель 0.5B." ;;
+    off) say "off — локальный ИИ выключен совсем. Отвечают облачный (с интернетом) и резервный." ;;
+  esac
+  env_set "$ENV_FILE" STELLA_POWER "$want" || return 1
+  systemctl restart stella-hw 2> /dev/null || err "stella-hw не перезапустилась — sudo stella logs hw"
+  if ! profile=$(wait_power_file "$sd/power.json" "$want"); then
+    case "$want" in auto) profile=safe ;; *) profile="$want" ;; esac
+    err "сторож питания не обновил $sd/power.json — применяю профиль $profile сам"
+  fi
+  say "Профиль питания сейчас: $(profile_text "$profile")"
+  apply_power "$profile"
+}
+
+power_reset() {
+  local sd profile
+  sd=$(state_dir)
+  say "Забываю историю сбоев питания и начинаю заново (профиль по настройке STELLA_POWER=$(setting STELLA_POWER auto))…"
+  systemctl stop stella-hw 2> /dev/null
+  rm -f "$sd/power.json" "$sd/guard.json"
+  systemctl start stella-hw 2> /dev/null || err "stella-hw не запустилась — sudo stella logs hw"
+  if ! profile=$(wait_power_file "$sd/power.json" ""); then
+    profile=$(setting STELLA_POWER auto)
+    case "$profile" in normal|safe|off) ;; *) profile=safe ;; esac
+    err "сторож питания не создал $sd/power.json — применяю профиль $profile сам"
+  fi
+  say "Профиль питания сейчас: $(profile_text "$profile")"
+  apply_power "$profile"
+}
+
+cmd_power() {
+  local sub
+  sub=$(printf '%s' "${1:-status}" | tr '[:upper:]' '[:lower:]')
+  case "$sub" in
+    status|"")
+      section "Питание"
+      power_lines
+      row "Локальный ИИ" "$(svc_text stella-llm)"
+      say ""
+      say "Изменить: sudo stella power auto | normal | safe | off   · сбросить историю сбоев: sudo stella power reset"
+      ;;
+    auto|normal|safe|off) power_set "$sub" ;;
+    reset) power_reset ;;
+    *) fail "не знаю «power $sub». Есть: power, power auto|normal|safe|off, power reset" ;;
+  esac
+}
+
+cmd_pin() {
+  local pin
+  case "${1:-}" in
+    "")
+      pin=$(setting STELLA_RESCUER_PIN)
+      if [ -z "$pin" ]; then fail "PIN не задан. Задать новый: sudo stella pin new"; fi
+      say "PIN спасателя: ${B}$pin${R}"
+      say "Консоль: http://$PORTAL_HOST/rescuer · новый случайный PIN: sudo stella pin new"
+      ;;
+    new)
+      pin=$(new_pin)
+      env_set "$ENV_FILE" STELLA_RESCUER_PIN "$pin" || return 1
+      restart_app
+      banner "НОВЫЙ PIN СПАСАТЕЛЯ:  $pin" "Старый PIN больше не работает — войдите в консоль заново: http://$PORTAL_HOST/rescuer"
+      ;;
+    *)
+      if [[ "$1" =~ ^[0-9]{4,12}$ ]]; then
+        env_set "$ENV_FILE" STELLA_RESCUER_PIN "$1" || return 1
+        restart_app
+        banner "PIN СПАСАТЕЛЯ ИЗМЕНЁН:  $1"
+      else
+        fail "PIN — это 4–12 цифр. Или: sudo stella pin new"
+      fi
+      ;;
+  esac
+}
+
+cmd_logs() {
+  local what="${1:-}"
+  local -a units=(-u stella-app -u stella-llm -u stella-hw -u stella-net -u hostapd -u dnsmasq)
+  case "$what" in
+    install|update)
+      if [ -r "$INSTALL_LOG" ]; then tail -n 150 "$INSTALL_LOG"; else say "журнала установки ещё нет"; fi
+      return
+      ;;
+    home|sos|switch)
+      if [ -r "$NET_LOG" ]; then tail -n 60 "$NET_LOG"; else say "переключений сети ещё не было"; fi
+      return
+      ;;
+  esac
+  have journalctl || fail "нет journalctl"
+  case "$what" in
+    "") journalctl "${units[@]}" -n 80 --no-pager ;;
+    -f|follow) journalctl "${units[@]}" -f -n 20 ;;
+    app|llm|hw) journalctl -u "stella-$what" -n 120 --no-pager ;;
+    wifi|hostapd|net) journalctl -u hostapd -u stella-net -n 80 --no-pager ;;
+    dns|dnsmasq) journalctl -u dnsmasq -n 80 --no-pager ;;
+    nginx|web) journalctl -u nginx -n 80 --no-pager ;;
+    *) fail "журналы: stella logs [app|llm|hw|wifi|dns|nginx|install|home|-f]" ;;
+  esac
+}
+
+cmd_restart() {
+  local s
+  say "Перезапускаю службы Stella…"
+  systemctl restart stella-hw 2> /dev/null || err "stella-hw не перезапустилась"
+  systemctl restart nginx 2> /dev/null || err "nginx не перезапустился"
+  restart_app
+  if [ -x "$LLAMA_BIN" ] && [ "$(json_str "$(state_dir)/power.json" profile)" != off ]; then
+    systemctl reset-failed stella-llm > /dev/null 2>&1
+    systemctl restart stella-llm 2> /dev/null || err "stella-llm не перезапустилась"
+  fi
+  for s in stella-app stella-llm stella-hw nginx; do row "$s" "$(svc_text "$s")"; done
+}
+
+usage() {
+  cat <<'EOF'
+stella — управление коробкой Stella Pocket. Все команды — через sudo.
+
+Главное
+  sudo stella status                       что работает: сеть, службы, ИИ, питание
+  sudo stella logs [app|llm|hw|wifi|install|home|-f]   журналы (без слова — всё сразу)
+  sudo stella restart                      перезапустить службы Stella
+
+Сеть
+  sudo stella home "ИМЯ_WIFI" "ПАРОЛЬ"     подключить плату к домашнему Wi-Fi (интернет для обновлений и облака)
+  sudo stella home                         снова подключиться к последней домашней сети
+  sudo stella sos                          вернуть спасательную сеть SOS-STELLA-RESCUE (или просто перезагрузка)
+
+Обновление
+  sudo stella update                       найти архив stella*.zip в домашней папке и установить
+  sudo stella update ~/stella.zip          установить указанный архив
+  sudo stella update --quick               только файлы программы (без интернета, 1–2 минуты)
+  sudo stella update --model 1.5b          заодно скачать большую модель 1.5B (--jobs 1 — если сборке мало памяти)
+
+Искусственный интеллект
+  sudo stella ai                           состояние: облачный Claude, локальный llama.cpp, резерв
+  sudo stella ai key                       ввести ключ Anthropic (ввод скрыт — так надёжнее)
+  sudo stella ai key sk-ant-...            задать ключ одной строкой
+  sudo stella ai key off                   удалить ключ
+  sudo stella ai mode auto                 auto | cloud | local | offline
+  sudo stella ai model claude-opus-5       модель облачного ИИ
+  sudo stella ai test "У нас завал"        проверить, кто и как отвечает
+
+Питание (защита от перезагрузок при слабом блоке питания)
+  sudo stella power                        профиль, сбои питания, частота ядер, температура
+  sudo stella power auto                   auto | normal | safe | off
+  sudo stella power reset                  забыть сбои питания и начать заново
+
+PIN спасателя
+  sudo stella pin                          показать PIN консоли http://10.42.0.1/rescuer
+  sudo stella pin new                      новый случайный PIN
+EOF
+}
+
+main() {
+  local cmd="${1:-status}"
+  case "$cmd" in
+    help|-h|--help|помощь) usage; return 0 ;;
+  esac
+  if [ "$(id -u)" != 0 ]; then
+    if have sudo; then
+      local -a pass=()
+      local v
+      for v in MODEL JOBS STELLA_QUICK STELLA_HF_BASE STELLA_REBOOT; do
+        if [ -n "${!v:-}" ]; then pass+=("$v=${!v}"); fi
+      done
+      if [ ${#pass[@]} -gt 0 ]; then exec sudo -- env "${pass[@]}" "$SELF" "$@"; fi
+      exec sudo -- "$SELF" "$@"
+    fi
+    fail "нужны права администратора: запустите через sudo"
+  fi
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    status) cmd_status ;;
+    home) cmd_home "$@" ;;
+    sos) cmd_sos ;;
+    update) cmd_update "$@" ;;
+    ai) cmd_ai "$@" ;;
+    power) cmd_power "$@" ;;
+    pin) cmd_pin "$@" ;;
+    logs|log) cmd_logs "$@" ;;
+    restart) cmd_restart ;;
+    __home-worker) home_worker "$@" ;;
+    __sos-worker) sos_worker ;;
+    *) err "не знаю команду «$cmd»"; usage; return 1 ;;
+  esac
+}
+
+if [ "${STELLA_CLI_LIB:-0}" != 1 ]; then
+  main "$@"
+  exit $?
+fi
