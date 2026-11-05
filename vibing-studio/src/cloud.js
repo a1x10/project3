@@ -102,30 +102,10 @@ export async function logout(apiKey) {
   await saveCredentials(null);
 }
 
-export async function listModels(apiKey) {
-  const r = await call("/v1/models", { apiKey });
-  return (r?.data || []).map((m) => m.id).filter(Boolean);
-}
 
 /** Target for llmClient.streamChat: the cloud gateway speaks the OpenAI protocol. */
 export function cloudTarget(apiKey, model) {
-  return { url: `${cloudUrl()}/v1/chat/completions`, model: model || "auto", apiKey };
-}
-
-const MODEL_KEY = "stella-cloud-model";
-export function savedModel() {
-  try {
-    return localStorage.getItem(MODEL_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-export function saveModel(m) {
-  try {
-    localStorage.setItem(MODEL_KEY, m);
-  } catch {
-    /* ignore */
-  }
+  return { url: `${cloudUrl()}/v1/chat/completions`, model: model || "auto:smart", apiKey };
 }
 
 export function openExternal(url) {

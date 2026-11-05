@@ -308,7 +308,7 @@ function Settings({ settings, onSaved }) {
       </div>
       <div className="grid2">
         <label className="field">
-          <span>Разрешённые модели (по одной в строке; пусто — все модели роутера)</span>
+          <span>Разрешённые модели (по одной в строке). Одна модель — все запросы принудительно идут в неё; пусто — любые модели роутера</span>
           <textarea rows={6} value={models} onChange={(e) => setModels(e.target.value)} placeholder={'auto\nauto:smart\nauto:fast'} />
         </label>
         <label className="field">

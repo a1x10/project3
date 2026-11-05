@@ -3,3 +3,4 @@ dist/
 *.log
 test-results/
 release/
+agent/

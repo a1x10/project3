@@ -50,7 +50,7 @@ export const BUILTIN_MODELS: ModelInfo[] = [
 ];
 
 export const DEFAULT_ALIASES: Record<string, string> = {
-  cloud: 'cloud:auto',
+  cloud: 'cloud:auto:smart',
   free: 'freellmapi:auto:smart',
   'free-fast': 'freellmapi:auto:fast',
   opus: 'anthropic:claude-opus-5-5',

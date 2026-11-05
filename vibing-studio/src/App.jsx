@@ -7,6 +7,9 @@ import { CloudLoginModal, AccountModal } from "./CloudModals.jsx";
 import { HistoryModal } from "./ExtraModals.jsx";
 import { getProjects, saveProjects } from "./projectStore.js";
 import { renderSite } from "./pro3d/render.js";
+import DevMode from "./DevMode.jsx";
+
+const WORK_KEY = "vibing-work-mode";
 import { fetchMe, loadCredentials, logout as cloudLogout, saveCredentials } from "./cloud.js";
 
 const THEME_KEY = "vc-theme";
@@ -37,6 +40,22 @@ export default function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  // «Сайты» — 3D Pro конструктор, «Разработка» — ИИ-агент для любого кода на этом компьютере
+  const [workMode, setWorkMode] = useState(() => {
+    try {
+      return localStorage.getItem(WORK_KEY) === "dev" ? "dev" : "sites";
+    } catch {
+      return "sites";
+    }
+  });
+  const switchWork = (m) => {
+    setWorkMode(m);
+    try {
+      localStorage.setItem(WORK_KEY, m);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const refreshMe = useCallback(async (c) => {
     const cur = c || creds;
@@ -364,6 +383,7 @@ export default function App() {
         <div className="topbar-left">
           <button
             className="topbar-sidebar-toggle"
+            style={workMode === "dev" ? { visibility: "hidden" } : undefined}
             onClick={() => setSidebarOpen((v) => !v)}
             title="Боковая панель проектов"
           >
@@ -375,11 +395,19 @@ export default function App() {
             </span>
             <span className="logo-name">Vibing AI Studio</span>
             <span className="logo-sep" />
-            <span className="logo-sub">{currentProject ? `${currentProject.name} / ${currentChat?.title || "Чат"}` : "Конструктор"}</span>
+            <span className="logo-sub">{workMode === "dev" ? "Разработка" : currentProject ? `${currentProject.name} / ${currentChat?.title || "Чат"}` : "Конструктор"}</span>
+          </div>
+          <div className="worktabs" role="tablist" aria-label="Режим работы">
+            <button role="tab" aria-selected={workMode === "sites"} className={workMode === "sites" ? "on" : ""} onClick={() => switchWork("sites")}>
+              Сайты
+            </button>
+            <button role="tab" aria-selected={workMode === "dev"} className={workMode === "dev" ? "on" : ""} onClick={() => switchWork("dev")}>
+              Разработка
+            </button>
           </div>
         </div>
 
-        <div className="topbar-actions">
+        <div className="topbar-actions" style={workMode === "dev" ? { visibility: "hidden" } : undefined}>
           <button
             className="topbtn"
             onClick={undo}
@@ -413,7 +441,7 @@ export default function App() {
         </div>
 
         <div className="topbar-right">
-          <label className="modetoggle" title="Автоматическое обновление превью">
+          <label className="modetoggle" title="Автоматическое обновление превью" style={workMode === "dev" ? { display: "none" } : undefined}>
             <span>Режим сайта</span>
             <input type="checkbox" checked={siteMode} onChange={(e) => setSiteMode(e.target.checked)} />
             <span className="track">
@@ -458,7 +486,8 @@ export default function App() {
       </header>
 
 
-      <div className="builder-main">
+      {workMode === "dev" && <DevMode apiKey={creds?.apiKey || ""} onOpenAuth={() => setAuthModalOpen(true)} onAuthLost={handleAuthLost} />}
+      <div className="builder-main" style={workMode === "dev" ? { display: "none" } : undefined}>
         <ProjectSidebar
           projects={projects}
           activeProjectId={activeProjectId}

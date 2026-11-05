@@ -106,7 +106,7 @@ export class ModelRegistry {
   }
 
   defaultModelRef(): string {
-    return this.settings.model ?? process.env.STELLA_MODEL ?? (cloudConfigured() ? 'cloud:auto' : DEFAULT_MODEL);
+    return this.settings.model ?? process.env.STELLA_MODEL ?? (cloudConfigured() ? 'cloud:auto:smart' : DEFAULT_MODEL);
   }
 
   resolve(ref?: string): ModelInfo {

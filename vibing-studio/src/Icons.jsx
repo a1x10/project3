@@ -33,6 +33,8 @@ const P = {
   close: <path d="M18 6 6 18M6 6l12 12" />,
   user: (<><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>),
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  code: <path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14" />,
+  send: <path d="M5 12h14M13 6l6 6-6 6" />,
 };
 
 export default function Icon({ name, size = 16 }) {

@@ -112,9 +112,17 @@ jobs:
       - run: npm run build
       - run: npm ci
         working-directory: cloud/server
+      - name: Build the development agent (STELLA CODER) used by the «Разработка» mode
+        run: npm ci && npm run build
+        working-directory: stella-coder
       - run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - run: npm run e2e
       - run: E2E_ELECTRON=1 xvfb-run -a npm run e2e
+      - name: Bundled agent works under Electron's Node (as in the installer)
+        run: |
+          node scripts/bundle-agent.mjs
+          ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron agent/dist/cli/main.js --version
+          STUDIO_AGENT_ENTRY=$PWD/agent/dist/cli/main.js E2E_ELECTRON=1 xvfb-run -a npm run e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
