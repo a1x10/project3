@@ -20,14 +20,6 @@ import { buildProCreatePrompt, buildProEditPrompt, commentAfterJson, specFromAns
 import { templateById } from "./pro3d/templates3d.js";
 import ProBar from "./ProBar.jsx";
 
-const PRO_KEY = "vibing-pro3d";
-const loadPro = () => {
-  try {
-    return localStorage.getItem(PRO_KEY) !== "0";
-  } catch {
-    return true;
-  }
-};
 
 const EDIT_MAX_TOKENS = 3072;
 
@@ -278,17 +270,7 @@ export default function Chat({
   const [images, setImages] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dismissed, setDismissed] = useState("");
-  // 3D Pro: the AI fills a professional template (texts + palette) instead of writing HTML.
-  const [proMode, setProMode] = useState(loadPro);
-  const toggleProMode = () =>
-    setProMode((v) => {
-      try {
-        localStorage.setItem(PRO_KEY, v ? "0" : "1");
-      } catch {
-        /* ignore */
-      }
-      return !v;
-    });
+  // 3D Pro: the AI always picks a professional template itself and fills texts + palette.
   const currentSite = siteMode && getSite ? getSite() || "" : "";
   const activeSpec = siteMode && chatData?.siteSpec && currentSite && currentSite === chatData.siteSpecHtml ? chatData.siteSpec : null;
   const selection = hasSite && selectedHtml && selectedHtml !== dismissed ? selectedHtml : "";
@@ -347,7 +329,7 @@ export default function Chat({
     const editMode = siteMode && !!base.trim();
     const history = [...messages, { role: "user", content, timestamp: new Date().toISOString() }];
     const aiIndex = history.length;
-    if (siteMode && onApplySpec && (activeSpec || (proMode && !editMode))) return sendPro({ content, history, aiIndex, base, spec: activeSpec });
+    if (siteMode && onApplySpec && (activeSpec || !editMode)) return sendPro({ content, history, aiIndex, base, spec: activeSpec });
     const mode = editMode ? "edit" : "new";
 
     let apiMessages;
@@ -646,13 +628,6 @@ export default function Chat({
       <div className="dock">
         <div className="column">
           {activeSpec && <ProBar spec={activeSpec} disabled={busy} onChange={(next) => onApplySpec(next)} onNewSite={onNewSite} />}
-          {siteMode && !hasSite && onApplySpec && (
-            <label className="pro-toggle" title="ИИ выбирает профессиональный 3D-шаблон и пишет только тексты и цвета">
-              <input type="checkbox" checked={proMode} onChange={toggleProMode} />
-              <span className="pro-toggle-track"><span /></span>
-              <span><b>3D Pro</b> — профессиональный шаблон с 3D-анимацией{proMode ? "" : " (выключено: ИИ пишет HTML сам)"}</span>
-            </label>
-          )}
           {hasSite && !activeSpec && (
             <div className="editbar">
               <span className="editbar-dot" />
