@@ -16,6 +16,18 @@ import "prismjs/components/prism-css";
 import "prismjs/components/prism-markup";
 import { streamChat } from "./llmClient.js";
 import { cloudTarget, listModels, saveModel, savedModel } from "./cloud.js";
+import { buildProCreatePrompt, buildProEditPrompt, commentAfterJson, specFromAnswer } from "./pro3d/prompt.js";
+import { templateById } from "./pro3d/templates3d.js";
+import ProBar from "./ProBar.jsx";
+
+const PRO_KEY = "vibing-pro3d";
+const loadPro = () => {
+  try {
+    return localStorage.getItem(PRO_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
 
 const EDIT_MAX_TOKENS = 3072;
 
@@ -246,6 +258,7 @@ export default function Chat({
   apiKey = "",
   onAfterRequest,
   onAuthLost,
+  onApplySpec,
   chatData,
   onSaveMessages,
   onOpenAuth,
@@ -265,6 +278,19 @@ export default function Chat({
   const [images, setImages] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dismissed, setDismissed] = useState("");
+  // 3D Pro: the AI fills a professional template (texts + palette) instead of writing HTML.
+  const [proMode, setProMode] = useState(loadPro);
+  const toggleProMode = () =>
+    setProMode((v) => {
+      try {
+        localStorage.setItem(PRO_KEY, v ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  const currentSite = siteMode && getSite ? getSite() || "" : "";
+  const activeSpec = siteMode && chatData?.siteSpec && currentSite && currentSite === chatData.siteSpecHtml ? chatData.siteSpec : null;
   const selection = hasSite && selectedHtml && selectedHtml !== dismissed ? selectedHtml : "";
   const selTag = selection ? (selection.match(/^<\s*([a-z0-9-]+)/i) || [])[1] || "блок" : "";
 
@@ -319,9 +345,10 @@ export default function Chat({
 
     const base = siteMode && getSite ? getSite() || "" : "";
     const editMode = siteMode && !!base.trim();
-    const mode = editMode ? "edit" : "new";
     const history = [...messages, { role: "user", content, timestamp: new Date().toISOString() }];
     const aiIndex = history.length;
+    if (siteMode && onApplySpec && (activeSpec || (proMode && !editMode))) return sendPro({ content, history, aiIndex, base, spec: activeSpec });
+    const mode = editMode ? "edit" : "new";
 
     let apiMessages;
     let codes = [];
@@ -463,6 +490,89 @@ export default function Chat({
     }
   }
 
+  /** 3D Pro: one JSON answer → rendered professional site. */
+  async function sendPro({ content, history, aiIndex, base, spec }) {
+    const mode = spec ? "pro-edit" : "pro";
+    const extra = buildContext({ images });
+    const recent = messages
+      .filter((m) => m.role === "user")
+      .slice(-3)
+      .map((m) => m.content.slice(0, 300));
+    const apiMessages = [
+      { role: "system", content: spec ? buildProEditPrompt(spec) : buildProCreatePrompt() },
+      ...(spec || !recent.length ? [] : [{ role: "user", content: `Ранее я просил: ${recent.join(" / ")}` }]),
+      { role: "user", content: extra + content },
+    ];
+    setMessages([...history, { role: "assistant", content: "", streaming: true, mode }]);
+    setInput("");
+    setImages([]);
+    setPickerOpen(false);
+    setBusy(true);
+    stickRef.current = true;
+    onPreview(base, true, aiIndex, spec ? "edit" : "new");
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    accRef.current = "";
+    const target = cloudTarget(apiKey, activeModel);
+    const finish = (msg) =>
+      setMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = msg;
+        if (onSaveMessages) onSaveMessages(next);
+        return next;
+      });
+    try {
+      const r = await streamChat({
+        target,
+        messages: apiMessages,
+        maxTokens: 4096,
+        temperature: spec ? 0.4 : 0.8,
+        signal: ctl.signal,
+        onToken: (snapshot) => {
+          accRef.current = snapshot;
+        },
+      });
+      const next = specFromAnswer(r.text);
+      if (!next) {
+        finish({ role: "assistant", content: "Модель ответила не в том формате, сайт не изменён. Попробуйте ещё раз, выберите другую модель или выключите «3D Pro».", streaming: false, mode, timestamp: new Date().toISOString() });
+        onPreview(base, false, aiIndex, "edit");
+        return;
+      }
+      onApplySpec(next, aiIndex);
+      const tpl = templateById(next.template);
+      const comment = commentAfterJson(r.text);
+      finish({
+        role: "assistant",
+        content: `${comment || (spec ? "Готово, изменения применены." : "Готово! Сайт собран.")}\n\n**Шаблон:** ${tpl?.name || next.template} · 3D: ${tpl?.desc?.split(" — ")[0] || ""}`,
+        streaming: false,
+        mode,
+        timestamp: new Date().toISOString(),
+        model: r.routedVia ? `${target.model} → ${r.routedVia}` : target.model,
+        provider: "Stella Cloud",
+      });
+      if (onAfterRequest) onAfterRequest();
+    } catch (e) {
+      if (e.name === "AbortError") {
+        finish({ role: "assistant", content: "Остановлено.", streaming: false, mode });
+        onPreview(base, false, aiIndex, "edit");
+        return;
+      }
+      setMessages((prev) => prev.slice(0, -1));
+      setInput(content);
+      if (e.status === 401 || e.status === 403) {
+        setError(`${e.detail || e.message} Войдите через Telegram ещё раз.`);
+        if (onAuthLost) onAuthLost();
+      } else if (e.status === 429) {
+        setError(`${e.detail || e.message} Лимит обновится завтра; тариф меняет администратор.`);
+        if (onOpenPlans) onOpenPlans();
+        if (onAfterRequest) onAfterRequest();
+      } else setError(`Stella Cloud: ${e.detail || e.message}`);
+      onPreview(base, false, aiIndex, "edit");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="chat">
       <div className="apirow" title="Модели работают на сервере Stella Cloud">
@@ -521,7 +631,7 @@ export default function Chat({
                       )}
                     </>
                   ) : m.streaming ? (
-                    <Vibing label={m.mode === "edit" ? "Правлю сайт..." : "Vibing..."} />
+                    <Vibing label={m.mode === "pro" ? "Подбираю 3D-шаблон и пишу тексты..." : m.mode === "pro-edit" ? "Обновляю 3D-сайт..." : m.mode === "edit" ? "Правлю сайт..." : "Vibing..."} />
                   ) : (
                     <div className="vlabel">Пустой ответ. Попробуй ещё раз.</div>
                   )}
@@ -535,7 +645,15 @@ export default function Chat({
 
       <div className="dock">
         <div className="column">
-          {hasSite && (
+          {activeSpec && <ProBar spec={activeSpec} disabled={busy} onChange={(next) => onApplySpec(next)} onNewSite={onNewSite} />}
+          {siteMode && !hasSite && onApplySpec && (
+            <label className="pro-toggle" title="ИИ выбирает профессиональный 3D-шаблон и пишет только тексты и цвета">
+              <input type="checkbox" checked={proMode} onChange={toggleProMode} />
+              <span className="pro-toggle-track"><span /></span>
+              <span><b>3D Pro</b> — профессиональный шаблон с 3D-анимацией{proMode ? "" : " (выключено: ИИ пишет HTML сам)"}</span>
+            </label>
+          )}
+          {hasSite && !activeSpec && (
             <div className="editbar">
               <span className="editbar-dot" />
               <span>Правлю текущий сайт, а не создаю заново</span>

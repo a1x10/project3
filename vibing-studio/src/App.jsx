@@ -6,6 +6,7 @@ import { ProjectSidebar } from "./ProjectSidebar.jsx";
 import { CloudLoginModal, AccountModal } from "./CloudModals.jsx";
 import { TemplatesModal, HistoryModal } from "./ExtraModals.jsx";
 import { getProjects, saveProjects } from "./projectStore.js";
+import { normalizeSpec, renderSite } from "./pro3d/render.js";
 import { fetchMe, loadCredentials, logout as cloudLogout, saveCredentials } from "./cloud.js";
 
 const THEME_KEY = "vc-theme";
@@ -167,6 +168,23 @@ export default function App() {
   );
 
   const getSite = useCallback(() => siteRef.current.edited ?? siteRef.current.html, []);
+
+  /** 3D Pro: render a spec, remember it in the chat (for one-click restyling and AI edits) and show it. */
+  const applySpec = useCallback(
+    (spec, genId = Date.now()) => {
+      const html = renderSite(spec, { demo: false });
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === activeProjectId
+            ? { ...p, chats: (p.chats || []).map((c) => (c.id === activeChatId ? { ...c, siteSpec: spec, siteSpecHtml: html } : c)) }
+            : p
+        )
+      );
+      onPreview(html, false, genId, "new");
+      return html;
+    },
+    [onPreview, activeProjectId, activeChatId]
+  );
 
   const onEdited = useCallback(
     (doc) => {
@@ -389,7 +407,7 @@ export default function App() {
             title="Открыть галерею 40+ готовых шаблонов сайтов"
           >
             <Icon name="sparkles" size={15} />
-            <span>Шаблоны (40+)</span>
+            <span>Шаблоны · 3D Pro</span>
           </button>
 
           <div className="topbar-sep" />
@@ -474,6 +492,7 @@ export default function App() {
             currentUser={currentUser}
             apiKey={creds?.apiKey || ""}
             onAfterRequest={handleAfterRequest}
+            onApplySpec={applySpec}
             onAuthLost={handleAuthLost}
             chatData={currentChat}
             onSaveMessages={handleSaveMessages}
@@ -515,6 +534,7 @@ export default function App() {
       <TemplatesModal
         isOpen={templatesModalOpen}
         onClose={() => setTemplatesModalOpen(false)}
+        onSelectPro={(templateId) => applySpec(normalizeSpec({ template: templateId }))}
         onSelectTemplate={(template) => {
           siteRef.current = { html: template.html, edited: null };
           commit(template.html);

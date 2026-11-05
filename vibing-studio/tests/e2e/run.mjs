@@ -37,6 +37,19 @@ const EDIT = `Меняю заголовок.
 >>>>>>> REPLACE
 Готово: заголовок обновлён.`;
 
+const PRO_SPEC = {
+  template: "warm-bistro",
+  brand: "Зерно Казань",
+  palette: { bg: "#140d09", surface: "#231811", text: "#fbf1e6", muted: "#c7ab92", accent: "#d4a373", accent2: "#f4d6a0" },
+  hero: { eyebrow: "Кофейня в центре Казани", title: "Кофе, ради которого просыпаются", highlight: "просыпаются", subtitle: "Своя обжарка и свежая выпечка.", cta: "Забронировать", cta2: "Меню" },
+  stats: [{ value: "12", label: "сортов" }],
+  features: { title: "Почему мы", items: [{ icon: "coffee", title: "Своя обжарка", text: "Каждую неделю." }] },
+  contact: { title: "Ждём вас", phone: "+7 843 000-00-00", address: "Казань, ул. Баумана, 1" },
+  sections: ["stats", "features", "contact"],
+};
+const PRO_SITE = "```json\n" + JSON.stringify(PRO_SPEC) + "\n```\nСобрал сайт кофейни на шаблоне Warm Bistro.";
+const PRO_EDIT = "```json\n" + JSON.stringify({ ...PRO_SPEC, hero: { ...PRO_SPEC.hero, title: "Лучший кофе Казани", highlight: "Казани" } }) + "\n```\nОбновил заголовок.";
+
 const readBody = async (req) => {
   let b = "";
   for await (const c of req) b += c;
@@ -56,7 +69,8 @@ const upstream = http.createServer(async (req, res) => {
   if (req.url === "/v1/models") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: "auto" }, { id: "auto:smart" }] }));
   upstreamRequests.push(body);
   const sys = body.messages.map((m) => (m.role === "system" ? m.content : "")).join("\n");
-  const text = sys.includes("ТЕКУЩИЙ КОД САЙТА") ? EDIT : SITE;
+  const pro = sys.includes("арт-директор");
+  const text = pro ? (sys.includes("ТЕКУЩИЙ JSON САЙТА") ? PRO_EDIT : PRO_SITE) : sys.includes("ТЕКУЩИЙ КОД САЙТА") ? EDIT : SITE;
   res.writeHead(200, { "content-type": "text/event-stream", "x-routed-via": "groq/llama-3.3-70b-versatile" });
   for (let i = 0; i < text.length; i += 40) {
     res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text.slice(i, i + 40) } }] })}\n\n`);
@@ -150,6 +164,21 @@ let electronApp;
 let preview;
 let page;
 const userData = path.join(tmp, "electron-user-data");
+// Offline runs: serve three.js / lucide from a local folder (E2E_CDN_DIR) instead of the CDNs.
+async function routeCdn(target) {
+  const dir = process.env.E2E_CDN_DIR;
+  if (!dir) return;
+  const file = (n) => fs.readFileSync(path.join(dir, n));
+  await target.route(/cdn\.jsdelivr\.net|unpkg\.com|fonts\.(googleapis|gstatic)\.com/, (r) => {
+    const u = r.request().url();
+    const js = { contentType: "application/javascript", headers: { "access-control-allow-origin": "*" } };
+    if (u.includes("three.module")) return r.fulfill({ body: file("three.module.min.js"), ...js });
+    if (u.includes("RoomEnvironment")) return r.fulfill({ body: file("RoomEnvironment.js"), ...js });
+    if (u.includes("lucide")) return r.fulfill({ body: file("lucide.min.js"), ...js });
+    return r.abort();
+  });
+}
+
 async function openApp() {
   if (ELECTRON) {
     electronApp = await pw._electron.launch({
@@ -158,6 +187,7 @@ async function openApp() {
       env: { ...process.env, STELLA_CLOUD_URL: cloudUrl, STUDIO_USER_DATA: userData, STUDIO_E2E: "1" },
     });
     page = await electronApp.firstWindow();
+    await routeCdn(page);
     await page.setViewportSize({ width: 1440, height: 900 }).catch(() => undefined);
   } else {
     if (!preview) {
@@ -175,6 +205,7 @@ async function openApp() {
         if (!localStorage.getItem("stella-cloud-url")) localStorage.setItem("stella-cloud-url", u);
         window.open = (url) => ((window.__opened = [...(window.__opened || []), url]), null);
       }, cloudUrl);
+      await routeCdn(ctx);
       page = await ctx.newPage();
       page.__port = port;
     }
@@ -207,9 +238,43 @@ try {
   await page.screenshot({ path: path.join(shots, `1-signed-in${ELECTRON ? "-electron" : ""}.png`) });
 
   const box = page.locator(".composer textarea");
+  const frame = page.frameLocator("iframe.pv-frame");
+
+  // 3D Pro (default): the model returns only JSON (template + texts + palette)
+  await box.fill("Сделай сайт кофейни «Зерно» в Казани");
+  await box.press("Enter");
+  await frame.locator("h1").filter({ hasText: "Кофе, ради которого" }).waitFor({ timeout: 20000 });
+  await frame.locator("#hero3d").waitFor({ state: "attached" });
+  await page.locator(".probar").waitFor();
+  await page.getByText("Шаблон:").first().waitFor();
+  if (!upstreamRequests.at(-1).messages.some((m) => m.role === "system" && m.content.includes("warm-bistro"))) throw new Error("3D Pro prompt missing the template catalog");
+  step("3D Pro: AI picked the template and wrote the content, site rendered with a WebGL hero");
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: path.join(shots, `2-pro-site${ELECTRON ? "-electron" : ""}.png`) });
+
+  await page.getByRole("button", { name: "Палитра Мята" }).click();
+  for (let i = 0; ; i++) {
+    const bg = await frame.locator("body").evaluate((b) => getComputedStyle(b).backgroundColor).catch(() => "");
+    if (bg === "rgb(242, 251, 247)") break;
+    if (i > 50) throw new Error("palette was not applied, body background: " + bg);
+    await page.waitForTimeout(200);
+  }
+  await page.locator(".probar select").first().selectOption("kinetic-fit");
+  await frame.locator('meta[name="generator"][content*="kinetic-fit"]').waitFor({ state: "attached", timeout: 10000 });
+  await frame.locator("h1").filter({ hasText: "Кофе, ради которого" }).waitFor();
+  step("one-click palette and template switch keep the texts (no AI call)");
+
+  await box.fill("Сделай заголовок про лучший кофе Казани");
+  await box.press("Enter");
+  await frame.locator("h1").filter({ hasText: "Лучший кофе Казани" }).waitFor({ timeout: 20000 });
+  if (!upstreamRequests.at(-1).messages[0].content.includes("ТЕКУЩИЙ JSON САЙТА")) throw new Error("3D Pro edit did not send the current spec");
+  step("3D Pro edit: the AI changed only the content of the current spec");
+
+  // classic mode: the AI writes HTML itself
+  await page.locator(".probar-new").click();
+  await page.locator(".pro-toggle").click();
   await box.fill("Сделай лендинг кофейни");
   await box.press("Enter");
-  const frame = page.frameLocator("iframe.pv-frame");
   await frame.locator("#title").filter({ hasText: "Кофейня Тест" }).waitFor({ timeout: 20000 });
   await page.getByText("→ groq/llama-3.3-70b-versatile").first().waitFor();
   const first = upstreamRequests.at(-1);
@@ -221,8 +286,8 @@ try {
   await box.press("Enter");
   await frame.locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor({ timeout: 20000 });
   await page.getByText("Применено правок: 1 из 1").waitFor();
-  await page.locator(".plan-limit-counter").filter({ hasText: "48 ост." }).waitFor({ timeout: 10000 });
-  step("edit mode works; server-side usage counter updates (48 left)");
+  await page.locator(".plan-limit-counter").filter({ hasText: "46 ост." }).waitFor({ timeout: 10000 });
+  step("edit mode works; server-side usage counter updates (46 left)");
 
   // restart: still signed in, project kept
   if (ELECTRON) {
@@ -236,6 +301,19 @@ try {
     if (vault.length < 10) throw new Error("credential vault empty");
   }
   step("after restart: still signed in, project restored");
+
+  await page.getByRole("button", { name: /Шаблоны · 3D Pro/ }).click();
+  await page.locator(".pro-grid .template-card").first().waitFor();
+  const proCount = await page.locator(".pro-grid .template-card").count();
+  if (proCount < 14) throw new Error("expected 14+ 3D Pro templates in the gallery, got " + proCount);
+  await page.screenshot({ path: path.join(shots, `3-gallery${ELECTRON ? "-electron" : ""}.png`) });
+  await page.getByRole("button", { name: "Предпросмотр 3D" }).nth(2).click();
+  await page.frameLocator("iframe.pro-preview-frame").locator("#hero3d").waitFor({ state: "attached" });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: path.join(shots, `4-pro-preview${ELECTRON ? "-electron" : ""}.png`) });
+  await page.locator(".pro-preview-modal .modal-close").click();
+  await page.locator(".templates-modal .modal-close").click();
+  step(`gallery shows ${proCount} 3D Pro templates with a live 3D preview`);
 
   // the owner bans the user in Telegram → the app drops the session
   say("/start"); // nothing: user 5150 is not admin; admin is tg id 1
