@@ -2902,3 +2902,12 @@ html.theming *, html.theming *::before, html.theming *::after {
 .templates-scroll .pro-grid {
   margin-bottom: 22px;
 }
+.probar-tpl {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

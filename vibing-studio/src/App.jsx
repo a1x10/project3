@@ -4,9 +4,9 @@ import Preview from "./Preview.jsx";
 import Icon from "./Icons.jsx";
 import { ProjectSidebar } from "./ProjectSidebar.jsx";
 import { CloudLoginModal, AccountModal } from "./CloudModals.jsx";
-import { TemplatesModal, HistoryModal } from "./ExtraModals.jsx";
+import { HistoryModal } from "./ExtraModals.jsx";
 import { getProjects, saveProjects } from "./projectStore.js";
-import { normalizeSpec, renderSite } from "./pro3d/render.js";
+import { renderSite } from "./pro3d/render.js";
 import { fetchMe, loadCredentials, logout as cloudLogout, saveCredentials } from "./cloud.js";
 
 const THEME_KEY = "vc-theme";
@@ -36,7 +36,6 @@ export default function App() {
   const currentUser = creds?.user || null;
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
 
   const refreshMe = useCallback(async (c) => {
@@ -400,15 +399,6 @@ export default function App() {
             <Icon name="think" size={15} />
             <span>История ({hist.stack.length})</span>
           </button>
-          <div className="topbar-sep" />
-          <button
-            className="topbtn highlight-btn"
-            onClick={() => setTemplatesModalOpen(true)}
-            title="Открыть галерею 40+ готовых шаблонов сайтов"
-          >
-            <Icon name="sparkles" size={15} />
-            <span>Шаблоны · 3D Pro</span>
-          </button>
 
           <div className="topbar-sep" />
           <button
@@ -529,22 +519,6 @@ export default function App() {
         user={currentUser}
         onLogout={handleLogout}
         onRefresh={() => refreshMe()}
-      />
-
-      <TemplatesModal
-        isOpen={templatesModalOpen}
-        onClose={() => setTemplatesModalOpen(false)}
-        onSelectPro={(templateId) => applySpec(normalizeSpec({ template: templateId }))}
-        onSelectTemplate={(template) => {
-          siteRef.current = { html: template.html, edited: null };
-          commit(template.html);
-          setPreview({
-            html: template.html,
-            streaming: false,
-            genId: Date.now(),
-            kind: "new",
-          });
-        }}
       />
 
       <HistoryModal

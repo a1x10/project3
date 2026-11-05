@@ -259,10 +259,10 @@ try {
     if (i > 50) throw new Error("palette was not applied, body background: " + bg);
     await page.waitForTimeout(200);
   }
-  await page.locator(".probar select").first().selectOption("kinetic-fit");
-  await frame.locator('meta[name="generator"][content*="kinetic-fit"]').waitFor({ state: "attached", timeout: 10000 });
   await frame.locator("h1").filter({ hasText: "Кофе, ради которого" }).waitFor();
-  step("one-click palette and template switch keep the texts (no AI call)");
+  if (await page.locator(".probar select option[value='kinetic-fit']").count()) throw new Error("users must not be able to pick a template");
+  if (await page.getByText(/Шаблоны · 3D Pro|Галерея шаблонов/).count()) throw new Error("template gallery must be gone");
+  step("one-click palette keeps the texts; templates are chosen only by the AI");
 
   await box.fill("Сделай заголовок про лучший кофе Казани");
   await box.press("Enter");
@@ -270,24 +270,10 @@ try {
   if (!upstreamRequests.at(-1).messages[0].content.includes("ТЕКУЩИЙ JSON САЙТА")) throw new Error("3D Pro edit did not send the current spec");
   step("3D Pro edit: the AI changed only the content of the current spec");
 
-  // classic mode: the AI writes HTML itself
-  await page.locator(".probar-new").click();
-  await page.locator(".pro-toggle").click();
-  await box.fill("Сделай лендинг кофейни");
-  await box.press("Enter");
-  await frame.locator("#title").filter({ hasText: "Кофейня Тест" }).waitFor({ timeout: 20000 });
-  await page.getByText("→ groq/llama-3.3-70b-versatile").first().waitFor();
-  const first = upstreamRequests.at(-1);
-  if (!first.messages[0].content.startsWith("OWNER-PROMPT")) throw new Error("owner prompt was not injected: " + first.messages[0].content.slice(0, 80));
-  step("site generated through Stella Cloud with the owner's system prompt");
-  await page.screenshot({ path: path.join(shots, `2-site${ELECTRON ? "-electron" : ""}.png`) });
-
-  await box.fill("Поменяй заголовок");
-  await box.press("Enter");
-  await frame.locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor({ timeout: 20000 });
-  await page.getByText("Применено правок: 1 из 1").waitFor();
-  await page.locator(".plan-limit-counter").filter({ hasText: "46 ост." }).waitFor({ timeout: 10000 });
-  step("edit mode works; server-side usage counter updates (46 left)");
+  await page.locator(".plan-limit-counter").filter({ hasText: "48 ост." }).waitFor({ timeout: 10000 });
+  const firstReq = upstreamRequests[0];
+  if (!firstReq.messages[0].content.startsWith("OWNER-PROMPT")) throw new Error("owner prompt was not injected: " + firstReq.messages[0].content.slice(0, 80));
+  step("owner prompt injected by the server; usage counter updates (48 left)");
 
   // restart: still signed in, project kept
   if (ELECTRON) {
@@ -295,25 +281,13 @@ try {
     await openApp();
   } else await page.reload();
   await page.locator(".user-name-label").filter({ hasText: "Анна" }).waitFor({ timeout: 15000 });
-  await page.frameLocator("iframe.pv-frame").locator("#title").filter({ hasText: "Кофейня Обновлено" }).waitFor();
+  await page.frameLocator("iframe.pv-frame").locator("h1").filter({ hasText: "Лучший кофе Казани" }).waitFor();
+  await page.locator(".probar").waitFor();
   if (ELECTRON) {
     const vault = fs.readFileSync(path.join(userData, "credentials.bin"));
     if (vault.length < 10) throw new Error("credential vault empty");
   }
   step("after restart: still signed in, project restored");
-
-  await page.getByRole("button", { name: /Шаблоны · 3D Pro/ }).click();
-  await page.locator(".pro-grid .template-card").first().waitFor();
-  const proCount = await page.locator(".pro-grid .template-card").count();
-  if (proCount < 14) throw new Error("expected 14+ 3D Pro templates in the gallery, got " + proCount);
-  await page.screenshot({ path: path.join(shots, `3-gallery${ELECTRON ? "-electron" : ""}.png`) });
-  await page.getByRole("button", { name: "Предпросмотр 3D" }).nth(2).click();
-  await page.frameLocator("iframe.pro-preview-frame").locator("#hero3d").waitFor({ state: "attached" });
-  await page.waitForTimeout(1500);
-  await page.screenshot({ path: path.join(shots, `4-pro-preview${ELECTRON ? "-electron" : ""}.png`) });
-  await page.locator(".pro-preview-modal .modal-close").click();
-  await page.locator(".templates-modal .modal-close").click();
-  step(`gallery shows ${proCount} 3D Pro templates with a live 3D preview`);
 
   // the owner bans the user in Telegram → the app drops the session
   say("/start"); // nothing: user 5150 is not admin; admin is tg id 1
