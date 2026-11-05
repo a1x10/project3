@@ -66,8 +66,9 @@ ${c.bold('Options')}
   -v, --version · -h, --help
 
 ${c.bold('Commands')}
-  stella login [https://server]        sign in to Stella Cloud via Telegram (then model cloud:auto)
+  stella login [https://server]        sign in to Stella Cloud via Telegram (then model cloud:auto:smart)
   stella logout · stella whoami        sign out (revokes the key) · show account and limits
+  stella serve [--cwd dir]             JSON-lines agent over stdio (for desktop apps)
   stella mcp list|add|remove|test …    manage MCP servers (same as /mcp)
   stella auth set <provider> <key>     store an API key (also: status, remove)
   stella sessions [search <q>]         list or search sessions
@@ -161,7 +162,7 @@ function parseArgs(argv: string[]): Args {
         rest.push(x);
     }
   }
-  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config', 'router', 'login', 'logout', 'whoami'].includes(rest[0]!) && !a.print) a.sub = rest;
+  if (rest.length && ['mcp', 'auth', 'sessions', 'doctor', 'config', 'router', 'login', 'logout', 'whoami', 'serve'].includes(rest[0]!) && !a.print) a.sub = rest;
   else if (rest.length) a.prompt = rest.join(' ');
   return a;
 }
@@ -254,6 +255,11 @@ async function runSub(args: Args) {
     await mod.cli(rest);
     return;
   }
+  if (cmd === 'serve') {
+    const { serve } = await import('./serve.js');
+    await serve({ cwd: args.cwd, model: args.model, permissionMode: args.mode, resume: args.resume });
+    return;
+  }
   if (cmd === 'login') {
     let r: Awaited<ReturnType<typeof cloudLogin>>;
     try {
@@ -266,7 +272,7 @@ async function runSub(args: Args) {
     const { url, user } = r;
     const plan = user?.planInfo;
     console.log(c.ok(`✓ Вход выполнен: ${user?.name ?? ''} · ${url}`));
-    if (plan) console.log(c.dim(`  Тариф ${plan.name}: ${plan.dailyRequests ?? '∞'} запросов в день. Модель по умолчанию теперь cloud:auto.`));
+    if (plan) console.log(c.dim(`  Тариф ${plan.name}: ${plan.dailyRequests ?? '∞'} запросов в день. Модель: cloud:auto:smart.`));
     return;
   }
   if (cmd === 'logout') {

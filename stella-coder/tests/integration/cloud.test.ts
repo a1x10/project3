@@ -75,10 +75,10 @@ describe('Stella Cloud login and provider', () => {
     expect((await cloudWhoami()).user.name).toBe('Анна');
 
     const rt = await runtimeFor(await makeProject({}), {});
-    expect(`${rt.main.model.provider}:${rt.main.model.id}`).toBe('cloud:auto');
+    expect(`${rt.main.model.provider}:${rt.main.model.id}`).toBe('cloud:auto:smart');
     const res = await rt.submit('привет');
     expect(res?.text).toContain('Привет из облака');
-    expect(llm.requests.at(-1)!.body.model).toBe('auto');
+    expect(llm.requests.at(-1)!.body.model).toBe('auto:smart');
     expect(llm.requests.at(-1)!.headers!['x-stella-client']).toBe('stella');
     await rt.shutdown();
   });

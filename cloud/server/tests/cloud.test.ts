@@ -114,7 +114,7 @@ describe('Stella Cloud', () => {
     // client system prompt is merged after the owner's
     await api(base, '/v1/chat/completions', { token: apiKey, body: { model: 'auto:fast', messages: [{ role: 'system', content: 'Пиши код.' }, { role: 'user', content: 'x' }] } });
     expect(up.requests.at(-1).messages[0].content).toBe('Ты — Stella. Отвечай по-русски.\n\nПиши код.');
-    expect(up.requests.at(-1).model).toBe('auto:fast');
+    expect(up.requests.at(-1).model).toBe('auto:smart'); // locked to the default model out of the box
 
     // streaming passes SSE through and captures usage
     const s = await api(base, '/v1/chat/completions', { token: apiKey, body: { stream: true, messages: [{ role: 'user', content: 'x' }] } });
@@ -157,10 +157,13 @@ describe('Stella Cloud', () => {
     const { token: aliceToken, apiKey: _ } = await login(ALICE, 'web');
     expect((await api(base, '/api/admin/users', { token: aliceToken })).status).toBe(403);
 
-    const put = await api(base, '/api/admin/settings', { method: 'PUT', token, body: { systemPrompt: 'NEW PROMPT', allowedModels: ['auto:smart'] } });
+    const put = await api(base, '/api/admin/settings', { method: 'PUT', token, body: { systemPrompt: 'NEW PROMPT', allowedModels: ['auto:smart', 'auto'] } });
     expect(put.json.systemPrompt).toBe('NEW PROMPT');
     const { apiKey } = await login(ALICE, 'stella');
     expect((await api(base, '/v1/chat/completions', { token: apiKey, body: { model: 'auto:fast', messages: [{ role: 'user', content: 'x' }] } })).status).toBe(403);
+    await api(base, '/api/admin/settings', { method: 'PUT', token, body: { allowedModels: ['auto:smart'] } });
+    expect((await api(base, '/v1/chat/completions', { token: apiKey, body: { model: 'auto:fast', messages: [{ role: 'user', content: 'x' }] } })).status).toBe(200);
+    expect(up.requests.at(-1).model).toBe('auto:smart'); // single allowed model: every request is rewritten to it
     await api(base, '/v1/chat/completions', { token: apiKey, body: { messages: [{ role: 'user', content: 'x' }] } });
     expect(up.requests.at(-1).messages[0].content).toBe('NEW PROMPT');
     await api(base, '/api/admin/settings', { method: 'PUT', token, body: { allowedModels: [], promptMode: 'off' } });

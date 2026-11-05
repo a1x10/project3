@@ -10,8 +10,9 @@
     "test": "vitest run",
     "e2e": "node tests/e2e/run.mjs",
     "desktop": "vite build && electron .",
-    "dist:win": "vite build && electron-builder --win nsis --x64 --publish never",
-    "dist:dir": "vite build && electron-builder --dir --publish never"
+    "dist:win": "node scripts/bundle-agent.mjs && vite build && electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "node scripts/bundle-agent.mjs && vite build && electron-builder --dir --publish never",
+    "bundle-agent": "node scripts/bundle-agent.mjs"
   },
   "dependencies": {},
   "devDependencies": {
@@ -68,7 +69,16 @@
     },
     "extraMetadata": {
       "main": "electron/main.cjs"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "agent",
+        "to": "agent",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
   "repository": {
     "type": "git",

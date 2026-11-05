@@ -18,7 +18,8 @@ export function gatewaySettings(store: Store, cfg: Config): GatewaySettings {
     systemPrompt: store.getSetting('system_prompt', cfg.defaultSystemPrompt),
     promptMode: store.getSetting('prompt_mode', 'prepend'),
     defaultModel: store.getSetting('default_model', cfg.defaultModel),
-    allowedModels: store.getSetting('allowed_models', [] as string[]),
+    // Locked to the default model unless the owner lists other models in the admin panel.
+    allowedModels: store.getSetting('allowed_models', [cfg.defaultModel] as string[]),
   };
 }
 
@@ -90,7 +91,9 @@ export class Gateway {
     if (!Array.isArray(body?.messages)) throw new HttpError(400, '`messages` must be an array');
     const s = gatewaySettings(this.store, this.cfg);
     const requested = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : s.defaultModel;
-    const model = requested === 'default' ? s.defaultModel : requested;
+    let model = requested === 'default' ? s.defaultModel : requested;
+    // a single allowed model means "everyone uses this model": rewrite instead of refusing
+    if (s.allowedModels.length === 1) model = s.allowedModels[0]!;
     if (s.allowedModels.length && !s.allowedModels.includes(model)) throw new HttpError(403, `Модель ${model} недоступна. Доступны: ${s.allowedModels.join(', ')}`, 'permission_error');
     const client = String(req.headers['x-stella-client'] ?? '').slice(0, 30) || undefined;
     const upstreamBody = { ...body, model, messages: injectPrompt(body.messages, s) };

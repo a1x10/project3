@@ -68,6 +68,22 @@ const upstream = http.createServer(async (req, res) => {
   if (req.headers.authorization !== "Bearer router-key") return res.writeHead(401).end("{}");
   if (req.url === "/v1/models") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: "auto" }, { id: "auto:smart" }] }));
   upstreamRequests.push(body);
+  if (Array.isArray(body.tools) && body.tools.length) {
+    // the development agent (STELLA CODER): first a Write tool call, then the final answer
+    const hasTool = body.messages.some((m) => m.role === "tool");
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
+    if (!hasTool) {
+      send({ choices: [{ index: 0, delta: { content: "Создаю Telegram-бота. " } }] });
+      send({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_bot", type: "function", function: { name: "Write", arguments: JSON.stringify({ file_path: "bot.py", content: "print('bot')\n" }) } }] } }] });
+      send({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
+    } else {
+      send({ choices: [{ index: 0, delta: { content: "Готово: бот создан в **bot.py**." } }] });
+      send({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    }
+    send({ choices: [], usage: { prompt_tokens: 50, completion_tokens: 20 } });
+    return res.end("data: [DONE]\n\n");
+  }
   const sys = body.messages.map((m) => (m.role === "system" ? m.content : "")).join("\n");
   const pro = sys.includes("арт-директор");
   const text = pro ? (sys.includes("ТЕКУЩИЙ JSON САЙТА") ? PRO_EDIT : PRO_SITE) : sys.includes("ТЕКУЩИЙ КОД САЙТА") ? EDIT : SITE;
@@ -164,6 +180,8 @@ let electronApp;
 let preview;
 let page;
 const userData = path.join(tmp, "electron-user-data");
+const devFolder = path.join(tmp, "dev-project");
+fs.mkdirSync(devFolder, { recursive: true });
 // Offline runs: serve three.js / lucide from a local folder (E2E_CDN_DIR) instead of the CDNs.
 async function routeCdn(target) {
   const dir = process.env.E2E_CDN_DIR;
@@ -184,7 +202,7 @@ async function openApp() {
     electronApp = await pw._electron.launch({
       executablePath: require("electron"),
       args: [root, ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
-      env: { ...process.env, STELLA_CLOUD_URL: cloudUrl, STUDIO_USER_DATA: userData, STUDIO_E2E: "1" },
+      env: { ...process.env, STELLA_CLOUD_URL: cloudUrl, STUDIO_USER_DATA: userData, STUDIO_E2E: "1", STUDIO_E2E_FOLDER: devFolder },
     });
     page = await electronApp.firstWindow();
     await routeCdn(page);
@@ -288,6 +306,28 @@ try {
     if (vault.length < 10) throw new Error("credential vault empty");
   }
   step("after restart: still signed in, project restored");
+
+  // «Разработка»: the coding agent works in a project folder on this computer
+  await page.getByRole("tab", { name: "Разработка" }).click();
+  if (ELECTRON) {
+    await page.getByRole("button", { name: "Выбрать папку проекта" }).click();
+    await page.locator(".dev-folder").filter({ hasText: "dev-project" }).waitFor();
+    await page.locator(".dev-composer textarea").fill("Сделай телеграм-бота");
+    await page.locator(".dev-composer textarea").press("Enter");
+    await page.locator(".dev-card.perm").waitFor({ timeout: 30000 });
+    await page.getByRole("button", { name: "Разрешить", exact: true }).click();
+    await page.locator(".dev-text").filter({ hasText: "бот создан" }).waitFor({ timeout: 30000 });
+    await page.locator(".dev-files li").filter({ hasText: "bot.py" }).waitFor();
+    if (fs.readFileSync(path.join(devFolder, "bot.py"), "utf8") !== "print('bot')\n") throw new Error("agent did not write bot.py");
+    const agentReq = upstreamRequests.find((r) => Array.isArray(r.tools) && r.tools.length);
+    if (agentReq.model !== "auto:smart") throw new Error("agent model is not locked: " + agentReq.model);
+    await page.screenshot({ path: path.join(shots, "5-dev-electron.png") });
+    step("Разработка: agent asked permission, wrote bot.py in the project folder (model auto:smart)");
+  } else {
+    await page.getByText("Разработка доступна в приложении для Windows").waitFor();
+    step("Разработка in a plain browser explains it needs the desktop app");
+  }
+  await page.getByRole("tab", { name: "Сайты" }).click();
 
   // the owner bans the user in Telegram → the app drops the session
   say("/start"); // nothing: user 5150 is not admin; admin is tg id 1

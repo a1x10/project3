@@ -15,7 +15,9 @@ import "prismjs/components/prism-go";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-markup";
 import { streamChat } from "./llmClient.js";
-import { cloudTarget, listModels, saveModel, savedModel } from "./cloud.js";
+import { cloudTarget } from "./cloud.js";
+
+const LOCKED_MODEL = "auto:smart";
 import { buildProCreatePrompt, buildProEditPrompt, commentAfterJson, specFromAnswer } from "./pro3d/prompt.js";
 import { templateById } from "./pro3d/templates3d.js";
 import ProBar from "./ProBar.jsx";
@@ -282,24 +284,8 @@ export default function Chat({
   }, [chatData?.id]);
 
 
-  // Models offered by the Stella Cloud server (the owner can restrict the list).
-  const [models, setModels] = useState([]);
-  const [model, setModel] = useState(() => savedModel());
-  useEffect(() => {
-    if (!apiKey) return undefined;
-    let off = false;
-    listModels(apiKey)
-      .then((ids) => {
-        if (off) return;
-        setModels(ids);
-        setModel((m) => (m && ids.includes(m) ? m : ids[0] || "auto"));
-      })
-      .catch(() => {});
-    return () => {
-      off = true;
-    };
-  }, [apiKey]);
-  const activeModel = model || "auto";
+  // The model is fixed for everyone (the server enforces it too).
+  const activeModel = LOCKED_MODEL;
   const providerLabel = "Stella Cloud";
 
   const onScroll = () => {
@@ -560,25 +546,7 @@ export default function Chat({
       <div className="apirow" title="Модели работают на сервере Stella Cloud">
         <span className="pulse-dot" />
         <span className="apirow-name">{providerLabel}</span>
-        {models.length > 1 ? (
-          <select
-            className="apirow-select"
-            value={activeModel}
-            onChange={(e) => {
-              setModel(e.target.value);
-              saveModel(e.target.value);
-            }}
-            aria-label="Модель"
-          >
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="apirow-model">{activeModel}</span>
-        )}
+        <span className="apirow-model">{activeModel}</span>
       </div>
 
       <div className="feed" ref={feedRef} onScroll={onScroll}>
