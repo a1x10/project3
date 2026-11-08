@@ -95,6 +95,8 @@
     font-variant-numeric:tabular-nums; }
   .t-red{ --c:var(--red); } .t-yellow{ --c:var(--yel); } .t-unknown{ --c:var(--unk); } .t-green{ --c:var(--grn); }
 
+  .dev .net{ display:inline-block; margin:2px 0 1px; padding:1px 7px; border-radius:6px; background:rgba(100,210,255,.14); color:var(--cy); font-size:11px; font-weight:600; }
+
   /* панели */
   .panel{ background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px; }
   .panel h3{ margin:0 0 12px; display:flex; align-items:baseline; justify-content:space-between; gap:10px;
@@ -434,7 +436,7 @@
     function done(){ if(t){ clearTimeout(t); t=null; } }
     return fetch(u,{method:m,cache:'no-store',headers:{'Content-Type':'application/json','X-Rescuer-Pin':pin},body:b?JSON.stringify(b):undefined,signal:ctl?ctl.signal:undefined})
       .then(function(r){ noteClock(r); return r.text().then(function(s){ done(); var j=null; try{ j=s?JSON.parse(s):null; }catch(e){}
-        if(!r.ok){ var e=new Error(isObj(j)&&typeof j.error==='string'&&j.error ? j.error : 'код '+r.status); e.status=r.status; throw e; }
+        if(!r.ok){ var e=new Error(isObj(j)&&typeof j.error==='string'&&j.error ? j.error : 'код '+r.status); e.status=r.status; if(isObj(j)&&j.admin) e.admin=true; throw e; }
         if(!isObj(j)){ var bad=new Error('узел прислал некорректный ответ'); bad.status=r.status; throw bad; }
         return j; }); })
       .catch(function(x){ done(); if(x && x.status) throw x;
@@ -452,6 +454,7 @@
       $('pin').value=''; $('login').hidden=true; $('app').hidden=false; authed=true;
       linkOk(); apply(d); startPolling();
     }).catch(function(e){
+      if(e.admin){ toAdmin(); return; }
       if(e.status===401) forgetPin();
       $('loginErr').textContent = e.status===429 ? 'Заблокировано на 5 минут (много попыток)' : e.status===401 ? 'Неверный PIN'
         : netErr(e) ? e.message+'. Проверьте подключение к Wi‑Fi SOS-STELLA-RESCUE и повторите.' : 'Ошибка узла: '+e.message;
@@ -467,7 +470,8 @@
     $('pwrBanner').hidden=true; $('linkBar').hidden=true; netFails=0; renderAi();
     $('loginErr').textContent=msg||'Сессия завершена — войдите снова'; try{ $('pin').focus(); }catch(e){}
   }
-  function authGuard(e){ if(e && e.status===401){ authLost('PIN изменён или больше не подходит — войдите снова'); return true; } return false; }
+  function toAdmin(){ location.href='/admin?next='+encodeURIComponent('/rescuer'); }
+  function authGuard(e){ if(e && e.admin){ toAdmin(); return true; } if(e && e.status===401){ authLost('PIN изменен или больше не подходит, войдите снова'); return true; } return false; }
   $('loginForm').onsubmit=function(e){ e.preventDefault(); login(); };
   if(pin) login();
 
@@ -553,6 +557,7 @@
       var live=el('span',{'class':'live'+(it.online?' on':'')}); c.appendChild(live);
       c.appendChild(el('div',{'class':'id'},'#'+it.id+' · '+LABEL[p]));
       c.appendChild(el('div',{'class':'nm'}, it.device||'устройство'));
+      if(it.origin==='remote') c.appendChild(el('div',{'class':'net'},'через интернет'));
       var sub=el('div',{'class':'sub'});
       sub.appendChild(document.createTextNode((it.proximity?it.proximity+' · ':'')+(it.signal!=null?it.signal+' dBm ':'')));
       sub.appendChild(bars(it.signal));

@@ -1,9 +1,13 @@
 #!/bin/sh
 set -e
 IF=wlan0
+# 10.42.0.2 отвечает только на два домена проекта по HTTPS (когда есть сертификаты, см. stella tls)
+TLS_IP=10.42.0.2
+TLS_FLAG=/etc/stella/tls/active
 ip link set "$IF" up
 ip addr flush dev "$IF"
 ip addr add 10.42.0.1/24 dev "$IF"
+ip addr add "$TLS_IP/32" dev "$IF" 2>/dev/null || true
 
 sysctl -qw net.ipv4.ip_forward=0
 
@@ -28,5 +32,8 @@ if [ "${STELLA_ADMIN_SSH:-1}" = 1 ]; then
   iptables -A STELLA_IN -p tcp --dport 22 -j ACCEPT
 fi
 iptables -A STELLA_IN -p icmp -j ACCEPT
+if [ -f "$TLS_FLAG" ]; then
+  iptables -A STELLA_IN -d "$TLS_IP" -p tcp --dport 443 -j ACCEPT
+fi
 iptables -A STELLA_IN -p tcp --dport 443 -j REJECT --reject-with tcp-reset
 iptables -A STELLA_IN -j DROP

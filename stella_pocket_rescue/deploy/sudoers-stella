@@ -1,0 +1,4 @@
+# Stella Pocket: сайт (пользователь stella) может вызывать без пароля только помощника настроек.
+# Помощник сам проверяет каждое действие и каждый параметр. Ставится через visudo -cf.
+Defaults!/usr/local/sbin/stella-admin env_reset
+stella ALL=(root) NOPASSWD: /usr/local/sbin/stella-admin

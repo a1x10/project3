@@ -51,12 +51,13 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 
 MIGRATIONS = (
     ("messages", "engine", "TEXT"),
+    ("incidents", "origin", "TEXT"),
 )
 
 INCIDENT_FIELDS = (
     "priority", "score", "tags", "people", "lat", "lon", "accuracy",
     "location_text", "panic", "status", "note",
-    "client_ip", "mac", "device", "device_info", "battery", "charging", "last_seen",
+    "client_ip", "mac", "device", "device_info", "battery", "charging", "last_seen", "origin",
 )
 JSON_FIELDS = {"tags", "device_info"}
 MESSAGE_COLUMNS = "id, role, text, ts, engine"

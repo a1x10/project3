@@ -33,7 +33,15 @@ URL_SMALL="$HF_BASE/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-in
 URL_MAIN="$HF_BASE/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 MIN_SMALL=300000000
 MIN_MAIN=800000000
-PACKAGES=(hostapd dnsmasq nginx iptables iw python3-venv python3-pip git cmake build-essential curl util-linux unzip ca-certificates)
+PACKAGES=(hostapd dnsmasq nginx iptables iw python3-venv python3-pip git cmake build-essential curl util-linux unzip ca-certificates
+          sudo openssh-client openssl avahi-daemon)
+HELPER=/usr/local/sbin/stella-admin
+SUDOERS=/etc/sudoers.d/stella
+TUNNEL_USER=stellatun
+TUNNEL_DIR="$ETC_DIR/tunnel"
+ADMIN_PASS_FILE="$ETC_DIR/admin.pass"
+SSID_RX='^[A-Za-z0-9_.()+-]([A-Za-z0-9 _.()+-]{0,30}[A-Za-z0-9_.()+-])?$'
+NEW_ADMIN_PASS=0
 STEPS=10
 
 MODEL="$(printf '%s' "${MODEL:-0.5b}" | tr '[:upper:]' '[:lower:]')"
@@ -535,7 +543,7 @@ sync_dir() {
 
 fix_line_endings() {
   local f
-  for f in "$1"/*.sh "$1"/stella "$1"/*.conf "$1"/*.example "$1"/systemd/*.service; do
+  for f in "$1"/*.sh "$1"/stella "$1"/*.py "$1"/*.conf "$1"/*.example "$1"/sudoers-stella "$1"/systemd/*.service "$1"/systemd/*.timer; do
     [ -f "$f" ] || continue
     if grep -q $'\r' "$f" 2>/dev/null; then
       sed -i 's/\r$//' "$f" && info "исправлены окончания строк Windows: $(basename "$f")"
@@ -548,13 +556,18 @@ step_files() {
   step "Файлы программы в $DST"
   ensure_user
   mkdir -p "$DST" "$STATE_DIR" "$ETC_DIR" "$MODELS"
-  rm -rf "$DST"/app.new.* "$DST"/app.old.* "$DST"/deploy.new.* "$DST"/deploy.old.*
+  rm -rf "$DST"/app.new.* "$DST"/app.old.* "$DST"/deploy.new.* "$DST"/deploy.old.* "$DST"/site.new.* "$DST"/site.old.*
   if same_dir "$SRC" "$DST"; then
     info "запуск из $DST — копировать нечего"
   else
     for d in app deploy; do
       sync_dir "$SRC/$d" "$DST/$d"
     done
+    if [ -d "$SRC/site" ]; then
+      sync_dir "$SRC/site" "$DST/site"
+      rm -f "$DST/site/verify.html"
+      info "рекламный сайт скопирован в $DST/site (открывается без интернета)"
+    fi
     install -m 644 "$SRC/requirements.txt" "$DST/requirements.txt"
     info "app/ и deploy/ заменены целиком (лишние старые файлы удалены)"
     note "файлы программы обновлены до версии $VERSION"
@@ -598,8 +611,36 @@ step_env() {
       fi
     fi
   fi
+  ensure_admin_secret
   chown root:stella "$ENV_FILE" 2>/dev/null || warn "не удалось сменить владельца $ENV_FILE"
   chmod 640 "$ENV_FILE" 2>/dev/null || true
+}
+
+ensure_admin_secret() {
+  local hash secret pass
+  have python3 || { warn "нет python3: пароль сайта настроек не создан"; return 0; }
+  hash=$(env_value "$ENV_FILE" STELLA_ADMIN_HASH)
+  if [ -z "$hash" ]; then
+    pass=$(python3 -I -c 'import secrets; a="abcdefghjkmnpqrstuvwxyz23456789"; print("-".join("".join(secrets.choice(a) for _ in range(4)) for _ in range(4)))') || pass=""
+    hash=$(printf '%s\n' "$pass" | python3 -I -c '
+import hashlib, secrets, sys
+p = sys.stdin.readline().rstrip("\n").encode("utf-8")
+s = secrets.token_bytes(16)
+print("pbkdf2:200000:%s:%s" % (s.hex(), hashlib.pbkdf2_hmac("sha256", p, s, 200000).hex()))') || hash=""
+    if [ -n "$pass" ] && [ -n "$hash" ] && (umask 077 && printf '%s\n' "$pass" > "$ADMIN_PASS_FILE") \
+        && env_put "$ENV_FILE" STELLA_ADMIN_HASH "$hash"; then
+      chmod 600 "$ADMIN_PASS_FILE"
+      NEW_ADMIN_PASS=1
+      note "создан пароль сайта настроек /admin (показать: sudo stella admin password)"
+    else
+      warn "не удалось создать пароль сайта настроек, потом: sudo stella admin password new"
+    fi
+  fi
+  secret=$(env_value "$ENV_FILE" STELLA_SESSION_SECRET)
+  if [ -z "$secret" ]; then
+    secret=$(python3 -I -c 'import secrets; print(secrets.token_hex(32))') || secret=""
+    [ -n "$secret" ] && env_put "$ENV_FILE" STELLA_SESSION_SECRET "$secret" || warn "не удалось создать секрет входа на сайт"
+  fi
 }
 
 install_uv() {
@@ -877,7 +918,7 @@ step_models() {
   if [ "$found" = 0 ]; then
     warn "нет ни одной модели — локальный ИИ не запустится (облачный и резервный работают). Скачать: sudo stella update с интернетом"
   fi
-  chown -R stella:stella "$MODELS" 2>/dev/null || true
+  chmod -R a+rX "$MODELS" 2>/dev/null || true
 }
 
 install_conf() {
@@ -952,9 +993,22 @@ nm_unmanaged() {
   fi
 }
 
+render_hostapd() {
+  local ssid channel tmp
+  ssid=$(env_value "$ENV_FILE" STELLA_SSID)
+  channel=$(env_value "$ENV_FILE" STELLA_CHANNEL)
+  [[ "$ssid" =~ $SSID_RX ]] || ssid=SOS-STELLA-RESCUE
+  [[ "$channel" =~ ^([1-9]|1[0-3])$ ]] || channel=6
+  tmp=$(mktemp) || { install_conf "$DST/deploy/hostapd.conf" "$HOSTAPD_CONF" hostapd; return 0; }
+  sed -e "s/^ssid=.*/ssid=$ssid/" -e "s/^channel=.*/channel=$channel/" "$DST/deploy/hostapd.conf" > "$tmp"
+  install_conf "$tmp" "$HOSTAPD_CONF" hostapd
+  rm -f "$tmp"
+}
+
 step_network() {
   step "Сеть: точка доступа SOS, DHCP/DNS, веб-сервер"
-  install_conf "$DST/deploy/hostapd.conf" "$HOSTAPD_CONF" hostapd
+  mkdir -p "$ETC_DIR/nginx"
+  render_hostapd
   set_default_var "$HOSTAPD_DEFAULT" DAEMON_CONF '"/etc/hostapd/hostapd.conf"'
   install_conf "$DST/deploy/dnsmasq-stella.conf" "$DNSMASQ_CONF" dnsmasq
   set_default_var "$DNSMASQ_DEFAULT" DNSMASQ_EXCEPT '"lo"'
@@ -979,12 +1033,17 @@ install_cli() {
 step_services() {
   local unit
   step "Службы и команда stella"
-  for unit in "$DST"/deploy/systemd/*.service; do
+  for unit in "$DST"/deploy/systemd/*.service "$DST"/deploy/systemd/*.timer; do
     if [ -f "$unit" ]; then
       install_conf "$unit" "$UNIT_DIR/$(basename "$unit")" units
     fi
   done
   install_cli
+  install_helper
+  ensure_tunnel_user
+  if [ -x "$BIN_DIR/stella" ]; then
+    STELLA_ENV_FILE="$ENV_FILE" "$BIN_DIR/stella" __render > /dev/null 2>&1 || warn "не удалось применить настройки HTTPS (sudo stella tls)"
+  fi
   if ! have systemctl; then
     warn "нет systemctl — службы не настроены"
     return 0
@@ -996,6 +1055,11 @@ step_services() {
   else
     warn "не все службы добавились в автозапуск"
   fi
+  systemctl --quiet enable stella-tls.timer > /dev/null 2>&1 || true
+  if [ -f /lib/systemd/system/avahi-daemon.service ] || [ -f /usr/lib/systemd/system/avahi-daemon.service ]; then
+    systemctl --quiet enable avahi-daemon > /dev/null 2>&1 || true
+    info "по кабелю и USB коробка доступна по имени http://$(hostname 2>/dev/null).local/"
+  fi
   if [ -x "$LLAMA_BIN" ]; then
     systemctl --quiet enable stella-llm || warn "stella-llm не добавилась в автозапуск"
     systemctl reset-failed stella-llm > /dev/null 2>&1 || true
@@ -1004,6 +1068,45 @@ step_services() {
     systemctl --quiet disable stella-llm > /dev/null 2>&1 || true
     info "stella-llm не включена: нет llama-server"
   fi
+}
+
+install_helper() {
+  local tmp
+  if [ ! -f "$DST/deploy/stella_admin.py" ]; then
+    warn "нет deploy/stella_admin.py: сайт настроек не сможет менять настройки"
+    return 0
+  fi
+  mkdir -p "$(dirname "$HELPER")"
+  if install -o root -g root -m 755 "$DST/deploy/stella_admin.py" "$HELPER.new" && mv -f "$HELPER.new" "$HELPER"; then
+    info "помощник сайта настроек: $HELPER"
+  else
+    rm -f "$HELPER.new"
+    warn "не удалось установить $HELPER"
+    return 0
+  fi
+  if ! have visudo || [ ! -d /etc/sudoers.d ]; then
+    warn "нет sudo: сайт настроек сможет только показывать состояние (sudo apt install sudo)"
+    return 0
+  fi
+  tmp=$(mktemp) || return 0
+  sed 's/\r$//' "$DST/deploy/sudoers-stella" > "$tmp"
+  if visudo -cqf "$tmp" > /dev/null 2>&1; then
+    install -o root -g root -m 440 "$tmp" "$SUDOERS.new" && mv -f "$SUDOERS.new" "$SUDOERS"
+    info "sudo: сайту разрешен только помощник $HELPER"
+  else
+    warn "файл sudoers не прошел проверку visudo, не ставлю его"
+  fi
+  rm -f "$tmp"
+}
+
+ensure_tunnel_user() {
+  if ! id "$TUNNEL_USER" > /dev/null 2>&1; then
+    useradd --system --user-group --home-dir "$TUNNEL_DIR" --no-create-home --shell /usr/sbin/nologin "$TUNNEL_USER" \
+      > /dev/null 2>&1 || { warn "не удалось создать пользователя $TUNNEL_USER для туннеля"; return 0; }
+  fi
+  mkdir -p "$TUNNEL_DIR"
+  chown "$TUNNEL_USER:$TUNNEL_USER" "$TUNNEL_DIR" 2>/dev/null || true
+  chmod 700 "$TUNNEL_DIR"
 }
 
 write_manifest() {
@@ -1022,8 +1125,13 @@ write_manifest() {
 
 step_manifest() {
   step "Права доступа и контрольные суммы"
-  chown -R stella:stella "$DST" 2>/dev/null || warn "не удалось сменить владельца $DST"
-  chmod -R a+rX "$DST/app" 2>/dev/null || true
+  # Код и библиотеки принадлежат root: из них запускаются службы с правами root (stella-hw, stella-net),
+  # поэтому сайт (пользователь stella) не должен иметь права их менять. Ему остается только $STATE_DIR.
+  chown -R root:root "$DST" 2>/dev/null || warn "не удалось сменить владельца $DST"
+  chmod -R a+rX,go-w "$DST" 2>/dev/null || true
+  if [ -x "$PY" ]; then
+    "$PY" -m compileall -q "$DST/app" > /dev/null 2>&1 || true
+  fi
   chmod 755 "$DST"/deploy/*.sh "$DST/deploy/stella" 2>/dev/null || true
   chown -R stella:stella "$STATE_DIR" 2>/dev/null || true
   if ! chown root:stella "$ENV_FILE" 2>/dev/null || ! chmod 640 "$ENV_FILE" 2>/dev/null; then
@@ -1066,6 +1174,9 @@ restart_services() {
     systemctl restart nginx || warn "nginx не запустился: sudo stella logs"
   fi
   systemctl restart stella-app || warn "stella-app не запустилась: sudo stella logs app"
+  if systemctl is-active --quiet stella-tunnel; then
+    systemctl restart stella-tunnel || warn "туннель не перезапустился: sudo stella logs tunnel"
+  fi
   if [ -x "$LLAMA_BIN" ]; then
     systemctl restart stella-llm || warn "stella-llm не запустилась: sudo stella logs llm"
     info "локальный ИИ перезапускается — модель загрузится примерно за минуту"
@@ -1117,6 +1228,11 @@ summary() {
     say "  Облачный ИИ: ключ не задан — sudo stella ai key (работает, когда у платы есть интернет)"
   else
     say "  Облачный ИИ: ключ задан — проверить: sudo stella ai test"
+  fi
+  if [ "$NEW_ADMIN_PASS" = 1 ]; then
+    say "  Сайт настроек http://10.42.0.1/admin: пароль создан, показать: sudo stella admin password"
+  else
+    say "  Сайт настроек http://10.42.0.1/admin, пароль: sudo stella admin password"
   fi
   say "  Проверить всё: sudo stella status"
   say "  Журнал установки: $LOG"
