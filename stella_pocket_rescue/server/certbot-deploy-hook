@@ -1,0 +1,9 @@
+#!/bin/sh
+# certbot вызывает это после получения или продления сертификата stella-rescue.
+# Копия лежит у пользователя туннеля: коробка забирает ее командой «stella tls sync».
+set -e
+LINEAGE="${RENEWED_LINEAGE:-/etc/letsencrypt/live/stella-rescue}"
+DEST=/var/lib/stella-tunnel/certs
+install -d -o root -g stella-tunnel -m 750 "$DEST"
+install -o root -g stella-tunnel -m 640 "$LINEAGE/fullchain.pem" "$DEST/fullchain.pem"
+install -o root -g stella-tunnel -m 640 "$LINEAGE/privkey.pem" "$DEST/privkey.pem"
