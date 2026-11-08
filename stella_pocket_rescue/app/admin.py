@@ -27,6 +27,8 @@ WEB_ACTIONS = {
 }
 CONFIRM = {"wifi.ap", "wifi.home", "remote.off", "reboot", "poweroff", "update"}
 LOG_UNITS = ("app", "llm", "hw", "wifi", "dns", "nginx", "install", "home", "tunnel")
+HELPER_INFO_TTL = 60
+_helper_info: dict = {"ts": 0.0, "data": None}
 UPLINK_KINDS = (
     (re.compile(r"^(eth|end|enp|ens|eno)"), "кабель"),
     (re.compile(r"^(usb|rndis|enx)"), "телефон по USB"),
@@ -151,14 +153,24 @@ def _hostname() -> str | None:
         return None
 
 
+async def helper_info(force: bool = False) -> dict:
+    """Сведения от помощника (туннель, HTTPS, пароли SSH). Кэш на минуту: каждый вызов идет через sudo."""
+    now = time.time()
+    if not force and _helper_info["data"] is not None and now - _helper_info["ts"] < HELPER_INFO_TTL:
+        return _helper_info["data"]
+    try:
+        data = await asyncio.to_thread(run_helper, "info", {}, 20)
+    except HTTPException as exc:
+        data = {"error": exc.detail}
+    _helper_info.update(ts=now, data=data)
+    return data
+
+
 async def build_status() -> dict:
     units = await asyncio.gather(*(diagnostics.unit_state(u) for u in UNITS))
     internet = await diagnostics.reach_internet(config.CLOUD_HOST, 443, 4)
     tunnel = _env_file(config.TUNNEL_ENV)
-    try:
-        helper = await asyncio.to_thread(run_helper, "info", {}, 20)
-    except HTTPException as exc:
-        helper = {"error": exc.detail}
+    helper = await helper_info()
     ai = diagnostics.ai_snapshot()
     host = _hostname()
     return diagnostics.json_safe({
@@ -249,6 +261,7 @@ def action(body: ActionIn, request: Request):
     if body.action in CONFIRM and not body.confirm:
         raise HTTPException(409, "Нужно подтверждение")
     log.info("настройки: %s (канал %s)", body.action, access.channel(request))
+    _helper_info["data"] = None
     return run_helper(body.action, body.params, timeout=60)
 
 
