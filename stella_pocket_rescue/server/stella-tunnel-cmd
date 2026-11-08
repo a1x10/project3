@@ -1,0 +1,30 @@
+#!/bin/sh
+# Единственная команда, которую ключ коробки может выполнить на сервере (forced command в authorized_keys).
+# ping  - проверка связи;  reset - снять зависший прежний туннель;  certs - отдать сертификаты для HTTPS без интернета.
+CERTS=/var/lib/stella-tunnel/certs
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  ping)
+    echo pong
+    ;;
+  reset)
+    me=$(id -u)
+    keep=" "
+    p=$$
+    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+      keep="$keep$p "
+      p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    done
+    for pid in $(pgrep -u "$me" '^sshd' 2>/dev/null); do
+      case "$keep" in *" $pid "*) ;; *) kill "$pid" 2>/dev/null ;; esac
+    done
+    echo reset
+    ;;
+  certs)
+    [ -r "$CERTS/fullchain.pem" ] && [ -r "$CERTS/privkey.pem" ] || { echo "сертификатов пока нет" >&2; exit 1; }
+    cd "$CERTS" && exec tar -cf - fullchain.pem privkey.pem
+    ;;
+  *)
+    echo "stella-tunnel: доступны только ping, reset, certs" >&2
+    exit 1
+    ;;
+esac
