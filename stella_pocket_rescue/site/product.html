@@ -6,9 +6,7 @@
 </head>
 <body>
 <title>Stella Pocket</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="vendor/fonts.css">
 <style>
   :root{
     color-scheme: dark;
@@ -500,7 +498,7 @@
   <div class="row"><span>Stella Pocket Rescue · 2026</span><span>Сделано на Orange Pi 4 LTS</span></div>
 </footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="vendor/three.min.js"></script>
 <script>
 (function(){
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -930,5 +928,10 @@
 })();
 </script>
 
+<a id="sosChat" href="http://10.42.0.1/" hidden style="position:fixed;right:16px;bottom:16px;z-index:99;display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border-radius:99px;background:#ff3b30;color:#fff;font:600 15px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;text-decoration:none;box-shadow:0 10px 30px rgba(255,59,48,.35)">SOS-чат</a>
+<script>
+/* Кнопка видна, только когда сайт открыт с самой коробки: там рядом лежит /static/ping.gif */
+(function(){ try{ fetch('/static/ping.gif',{cache:'no-store'}).then(function(r){ if(r.ok){ var a=document.getElementById('sosChat'); a.hidden=false; a.style.display='inline-flex'; } }).catch(function(){}); }catch(e){} })();
+</script>
 </body>
 </html>
