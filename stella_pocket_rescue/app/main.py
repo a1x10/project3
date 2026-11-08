@@ -1,7 +1,7 @@
 import asyncio
-import hmac
 import logging
 import re
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -10,11 +10,11 @@ from pathlib import Path
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, config, diagnostics, mode, stations
+from . import access, admin, ai, config, diagnostics, mode, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 
@@ -25,6 +25,8 @@ STATIC = Path(__file__).parent / "static"
 SESSION_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUSES = ("new", "assigned", "resolved")
 PORTAL_HOSTS = {config.PORTAL_HOST, "stella.rescue", "localhost", "127.0.0.1", "testserver"}
+ADMIN_PATHS = ("/admin", "/api/admin")
+SITE_SKIP = {"verify.html"}
 AI_TEST_SAMPLE = "Нас двое, у мамы кровь из ноги, мы на 3 этаже, дом 12 по улице Абая"
 HELLO_CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS",
               "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Private-Network": "true",
@@ -66,24 +68,83 @@ async def lifespan(_: FastAPI):
         await _guarded("остановка ИИ", ai.stop)
 
 
-app = FastAPI(title="Stella Pocket Rescue", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Stella Pocket Rescue", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(admin.router)
 db = _open_db()
 
 _pending: set[str] = set()
 _busy: set[str] = set()
-_pin_failures: dict[str, list[float]] = {}
+_pin_failures = access.Limiter(5, 300)
+
+
+def allowed_hosts() -> set[str]:
+    hosts = set(PORTAL_HOSTS)
+    if config.BOX_DOMAIN:
+        hosts.add(config.BOX_DOMAIN)
+    try:
+        name = socket.gethostname().lower()
+    except OSError:
+        name = ""
+    if name:
+        hosts.update({name, f"{name}.local"})
+    return hosts
+
+
+def promo_host(host: str) -> bool:
+    return bool(config.PROMO_DOMAIN) and host in (config.PROMO_DOMAIN, "www." + config.PROMO_DOMAIN)
+
+
+def site_file(rel: str) -> Path | None:
+    """Файл рекламного сайта: только внутри SITE_DIR, без скрытых файлов и выхода наверх."""
+    rel = rel.lstrip("/")
+    if not rel or rel.endswith("/"):
+        rel += "index.html"
+    parts = Path(rel).parts
+    if any(part.startswith(".") or part == ".." for part in parts) or parts[-1] in SITE_SKIP:
+        return None
+    root = config.SITE_DIR.resolve()
+    try:
+        target = (root / rel).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if root != target and root not in target.parents:
+        return None
+    if target.is_dir():
+        target = target / "index.html"
+    return target if target.is_file() else None
+
+
+def site_response(rel: str, method: str):
+    if method not in ("GET", "HEAD"):
+        return PlainTextResponse("Method Not Allowed", status_code=405)
+    path = site_file(rel)
+    if not path:
+        return PlainTextResponse("Not Found", status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=600"})
 
 
 @app.middleware("http")
 async def captive_portal(request: Request, call_next):
-    host = (request.headers.get("host") or "").split(":")[0].lower()
+    host = (request.headers.get("host") or "").split(":")[0].lower().rstrip(".")
     is_ip = bool(re.fullmatch(r"[0-9.]+", host)) or host.startswith("[")
-    if host and host not in PORTAL_HOSTS and not is_ip:
+    if promo_host(host):
+        return site_response(request.url.path, request.method)
+    if host and host not in allowed_hosts() and not is_ip:
+        if access.channel(request) == access.REMOTE:
+            return PlainTextResponse("Unknown host", status_code=421)
         return RedirectResponse(config.PORTAL_URL, status_code=302)
     response = await call_next(request)
-    if request.url.path.startswith("/api/"):
+    path = request.url.path
+    if path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    if path == ADMIN_PATHS[0] or path.startswith(ADMIN_PATHS[1]):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.headers["Referrer-Policy"] = "same-origin"
+    if access.channel(request) == access.REMOTE:
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
 
 
@@ -110,6 +171,21 @@ def verify_page():
     return _page("verify.html")
 
 
+@app.get("/admin", include_in_schema=False)
+def admin_page():
+    return _page("admin.html")
+
+
+@app.get("/site", include_in_schema=False)
+def site_root():
+    return RedirectResponse("/site/", status_code=302)
+
+
+@app.api_route("/site/{rel:path}", methods=["GET", "HEAD"], include_in_schema=False)
+def site_page(rel: str, request: Request):
+    return site_response(rel, request.method)
+
+
 @app.get("/generate_204", include_in_schema=False)
 @app.get("/gen_204", include_in_schema=False)
 @app.get("/hotspot-detect.html", include_in_schema=False)
@@ -117,6 +193,8 @@ def verify_page():
 @app.get("/ncsi.txt", include_in_schema=False)
 @app.get("/canonical.html", include_in_schema=False)
 def connectivity_check():
+    if admin.demo_active():
+        return RedirectResponse(config.PORTAL_URL + "site/", status_code=302)
     return RedirectResponse(config.PORTAL_URL, status_code=302)
 
 
@@ -154,7 +232,14 @@ def _check_session(session_id: str) -> str:
 
 
 def _client_ip(request: Request) -> str | None:
-    return request.headers.get("x-real-ip") or (request.client.host if request.client else None)
+    return access.client_ip(request)
+
+
+def _chat_allowed(request: Request) -> str:
+    origin = access.channel(request)
+    if origin == access.REMOTE and not config.REMOTE_CHAT:
+        raise HTTPException(403, "Чат через интернет выключен. Подключитесь к Wi-Fi коробки.")
+    return origin
 
 
 class DeviceInfo(BaseModel):
@@ -203,6 +288,7 @@ def _device_name(ua: str | None) -> str | None:
 
 @app.post("/api/session")
 def new_session(body: SessionIn | None = None, request: Request = None):
+    origin = _chat_allowed(request)
     sid = uuid.uuid4().hex
     info = body.device.model_dump() if body and body.device else {}
     db.upsert_incident(
@@ -213,12 +299,14 @@ def new_session(body: SessionIn | None = None, request: Request = None):
         battery=info.get("battery"),
         charging=None if info.get("charging") is None else int(info["charging"]),
         last_seen=time.time(),
+        origin=origin,
     )
     return {"session_id": sid}
 
 
 @app.post("/api/chat")
 def chat(body: ChatIn, background: BackgroundTasks, request: Request):
+    _chat_allowed(request)
     sid = _check_session(body.session_id)
     last = db.last_message(sid, "user")
     if last and time.time() - last["ts"] < config.MIN_SECONDS_BETWEEN_MESSAGES:
@@ -324,16 +412,7 @@ def heartbeat(body: Heartbeat, request: Request, session_id: str):
 
 
 def rescuer(request: Request):
-    ip = _client_ip(request) or "?"
-    now = time.time()
-    fails = [t for t in _pin_failures.get(ip, []) if now - t < 300]
-    if len(fails) >= 5:
-        raise HTTPException(429, "Слишком много попыток, подождите 5 минут")
-    pin = request.headers.get("x-rescuer-pin", "")
-    if not hmac.compare_digest(pin.encode(), config.RESCUER_PIN.encode()):
-        _pin_failures[ip] = fails + [now]
-        raise HTTPException(401, "Неверный PIN")
-    _pin_failures.pop(ip, None)
+    access.check_rescuer(request, request.headers.get("x-rescuer-pin", ""), config.RESCUER_PIN, _pin_failures)
 
 
 class IncidentPatch(BaseModel):
@@ -552,7 +631,8 @@ def _not_found():
 
 @app.exception_handler(HTTPException)
 async def http_error(_: Request, exc: HTTPException):
-    return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+    body = exc.detail if isinstance(exc.detail, dict) else {"error": exc.detail}
+    return JSONResponse(body, status_code=exc.status_code, headers=getattr(exc, "headers", None))
 
 
 def _validation_message(errors: list) -> str:

@@ -1,0 +1,8 @@
+[Unit]
+Description=Stella Rescue: сертификаты HTTPS для работы без интернета
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/stella tls auto
+TimeoutStartSec=180

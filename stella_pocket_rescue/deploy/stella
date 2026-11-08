@@ -8,6 +8,21 @@ API_URL="${STELLA_API_URL:-http://127.0.0.1:8000}"
 PORTAL_HOST=10.42.0.1
 SOS_SSID=SOS-STELLA-RESCUE
 WLAN=wlan0
+TLS_IP=10.42.0.2
+TUNNEL_ENV=/etc/stella/tunnel.env
+TUNNEL_DIR=/etc/stella/tunnel
+TUNNEL_USER=stellatun
+TUNNEL_SCRIPT="${STELLA_TUNNEL_SCRIPT:-/opt/stella/deploy/stella-tunnel.sh}"
+TLS_DIR=/etc/stella/tls
+NGINX_TLS_CONF=/etc/stella/nginx/tls.conf
+DNSMASQ_DOMAINS=/etc/dnsmasq.d/stella-domains.conf
+HOSTAPD_CONF=/etc/hostapd/hostapd.conf
+ADMIN_PASS_FILE=/etc/stella/admin.pass
+SSID_RX='^[A-Za-z0-9_.()+-]([A-Za-z0-9 _.()+-]{0,30}[A-Za-z0-9_.()+-])?$'
+DOMAIN_RX='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}[a-z0-9]$'
+DEFAULT_REPO=https://github.com/a1x10/project3.git
+DEFAULT_BRANCH=claude/peaceful-dirac-2n2fs6
+DEFAULT_SUBDIR=stella_pocket_rescue
 NM_CONF=/etc/NetworkManager/conf.d/stella-unmanaged.conf
 INSTALL_LOG=/var/log/stella-install.log
 INSTALL_LOCK=/run/stella-install.lock
@@ -187,7 +202,9 @@ env_set() {
     err "неверное имя настройки: $key"
     return 2
   fi
-  if ! [[ "$value" =~ ^[A-Za-z0-9_.,:/@+=-]*$ ]]; then
+  local rx='^[A-Za-z0-9_.,:/@+=-]*$'
+  if [ "$key" = STELLA_SSID ]; then rx='^[A-Za-z0-9 _.()+-]*$'; fi
+  if ! [[ "$value" =~ $rx ]]; then
     err "в значении $key недопустимые символы"
     return 2
   fi
@@ -491,6 +508,7 @@ cmd_status() {
   fi
   row "Адреса платы" "$(hostname -I 2>/dev/null || echo '?')"
   if internet_ok 4; then row "Интернет" "${GRN}есть${R}"; else row "Интернет" "нет (облачный ИИ недоступен — это нормально в поле)"; fi
+  remote_lines
   section "Службы"
   local s
   for s in "${SERVICES[@]}"; do row "$s" "$(svc_text "$s")"; done
@@ -888,6 +906,7 @@ cmd_update() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --quick|-q|quick) quick=1 ;;
+      --github|github) cmd_update_github "$@"; return $? ;;
       --full|full) quick=0 ;;
       --model) shift; model="${1:-}" ;;
       --model=*) model="${1#--model=}" ;;
@@ -1245,11 +1264,12 @@ cmd_logs() {
   case "$what" in
     "") journalctl "${units[@]}" -n 80 --no-pager ;;
     -f|follow) journalctl "${units[@]}" -f -n 20 ;;
-    app|llm|hw) journalctl -u "stella-$what" -n 120 --no-pager ;;
+    app|llm|hw|tunnel) journalctl -u "stella-$what" -n 120 --no-pager ;;
+    tls) journalctl -u stella-tls -n 80 --no-pager ;;
     wifi|hostapd|net) journalctl -u hostapd -u stella-net -n 80 --no-pager ;;
     dns|dnsmasq) journalctl -u dnsmasq -n 80 --no-pager ;;
     nginx|web) journalctl -u nginx -n 80 --no-pager ;;
-    *) fail "журналы: stella logs [app|llm|hw|wifi|dns|nginx|install|home|-f]" ;;
+    *) fail "журналы: stella logs [app|llm|hw|wifi|dns|nginx|tunnel|tls|install|home|-f]" ;;
   esac
 }
 
@@ -1264,6 +1284,592 @@ cmd_restart() {
     systemctl restart stella-llm 2> /dev/null || err "stella-llm не перезапустилась"
   fi
   for s in stella-app stella-llm stella-hw nginx; do row "$s" "$(svc_text "$s")"; done
+}
+
+# ------------------------------------------------------------------ сайт настроек и пароль
+
+read -r -d '' PY_PASSWORD <<'PYEOF'
+import hashlib, secrets, sys
+mode = sys.argv[1]
+if mode == "new":
+    abc = "abcdefghjkmnpqrstuvwxyz23456789"
+    print("-".join("".join(secrets.choice(abc) for _ in range(4)) for _ in range(4)))
+elif mode == "hash":
+    password = sys.stdin.readline().rstrip("\n").encode("utf-8")
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password, salt, 200000)
+    print("pbkdf2:200000:%s:%s" % (salt.hex(), digest.hex()))
+elif mode == "secret":
+    print(secrets.token_hex(32))
+PYEOF
+
+admin_password_new() {
+  local pass hash secret
+  have python3 || fail "нужен python3"
+  pass=$(python3 -I -c "$PY_PASSWORD" new) || fail "не удалось придумать пароль"
+  hash=$(printf '%s\n' "$pass" | python3 -I -c "$PY_PASSWORD" hash) || fail "не удалось посчитать хеш пароля"
+  secret=$(python3 -I -c "$PY_PASSWORD" secret) || fail "не удалось создать секрет"
+  env_set "$ENV_FILE" STELLA_ADMIN_HASH "$hash" || return 1
+  env_set "$ENV_FILE" STELLA_SESSION_SECRET "$secret" || return 1
+  (umask 077 && printf '%s\n' "$pass" > "$ADMIN_PASS_FILE") || fail "не удалось записать $ADMIN_PASS_FILE"
+  chown root:root "$ADMIN_PASS_FILE" 2>/dev/null
+  chmod 600 "$ADMIN_PASS_FILE"
+  restart_app
+  banner "НОВЫЙ ПАРОЛЬ АДМИНИСТРАТОРА:  $pass" "Сайт настроек: http://10.42.0.1/admin или https://ДОМЕН_КОРОБКИ/admin" \
+    "Все прежние входы на сайте сброшены. Показать снова: sudo stella admin password"
+}
+
+cmd_admin() {
+  local sub="${1:-password}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    password|pass|пароль)
+      case "${1:-}" in
+        new|новый) admin_password_new ;;
+        "")
+          if [ -r "$ADMIN_PASS_FILE" ] && [ -n "$(setting STELLA_ADMIN_HASH)" ]; then
+            say "Пароль администратора сайта: ${B}$(head -n 1 "$ADMIN_PASS_FILE")${R}"
+            say "Сайт настроек: http://10.42.0.1/admin (по кабелю: http://$(hostname 2>/dev/null).local/admin)"
+            local box
+            box=$(setting STELLA_BOX_DOMAIN)
+            if [ -n "$box" ]; then say "Из интернета: https://$box/admin"; fi
+            say "Новый пароль: sudo stella admin password new"
+          else
+            say "Пароль еще не задан. Создать: sudo stella admin password new"
+          fi
+          ;;
+        *) fail "пароль придумывается сам, чтобы он был надежным: sudo stella admin password new" ;;
+      esac
+      ;;
+    wifi)
+      case "${1:-}" in
+        on)
+          env_set "$ENV_FILE" STELLA_ADMIN_HTTP_WIFI 1 || return 1
+          say "Вход в настройки по открытой сети SOS без HTTPS разрешен. Пароль в такой сети могут подслушать,"
+          say "поэтому включайте это только на время и потом выключите: sudo stella admin wifi off"
+          restart_app
+          ;;
+        off)
+          env_set "$ENV_FILE" STELLA_ADMIN_HTTP_WIFI 0 || return 1
+          say "Вход в настройки по сети SOS без HTTPS запрещен."
+          restart_app
+          ;;
+        *) say "Сейчас: STELLA_ADMIN_HTTP_WIFI=$(setting STELLA_ADMIN_HTTP_WIFI 0). Изменить: sudo stella admin wifi on|off" ;;
+      esac
+      ;;
+    *) fail "есть: admin password, admin password new, admin wifi on|off" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ сеть SOS: имя и канал
+
+render_hostapd() {
+  local template="$APP_DIR/deploy/hostapd.conf" ssid channel tmp
+  ssid=$(setting STELLA_SSID SOS-STELLA-RESCUE)
+  channel=$(setting STELLA_CHANNEL 6)
+  [[ "$ssid" =~ $SSID_RX ]] || { err "имя сети в настройках неверное, оставляю SOS-STELLA-RESCUE"; ssid=SOS-STELLA-RESCUE; }
+  [[ "$channel" =~ ^([1-9]|1[0-3])$ ]] || channel=6
+  [ -r "$template" ] || { err "нет шаблона $template"; return 2; }
+  tmp=$(mktemp) || return 2
+  sed -e "s/^ssid=.*/ssid=$ssid/" -e "s/^channel=.*/channel=$channel/" "$template" > "$tmp"
+  if [ -f "$HOSTAPD_CONF" ] && cmp -s "$tmp" "$HOSTAPD_CONF"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  install -D -m 644 "$tmp" "$HOSTAPD_CONF"
+  rm -f "$tmp"
+  return 0
+}
+
+wifi_apply() {
+  render_hostapd
+  local rc=$?
+  [ "$rc" = 2 ] && return 1
+  SOS_SSID=$(setting STELLA_SSID SOS-STELLA-RESCUE)
+  if [ "$rc" = 0 ] && svc_active hostapd; then
+    say "Перезапускаю сеть SOS: Wi-Fi пропадет на 5-10 секунд и вернется как «$SOS_SSID»."
+    systemctl restart hostapd 2>/dev/null || err "hostapd не перезапустился: sudo stella logs wifi"
+  elif [ "$rc" = 0 ]; then
+    say "Настройки сети SOS записаны, они заработают при следующем включении сети SOS."
+  else
+    say "Настройки сети SOS не изменились."
+  fi
+  restart_app
+}
+
+cmd_wifi() {
+  local sub="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    "")
+      row "Имя сети SOS" "$(setting STELLA_SSID SOS-STELLA-RESCUE)"
+      row "Канал" "$(setting STELLA_CHANNEL 6)"
+      say "Изменить: sudo stella wifi name \"ИМЯ\" · sudo stella wifi channel 1-13"
+      ;;
+    name|ssid)
+      local ssid="$*"
+      [[ "$ssid" =~ $SSID_RX ]] || fail "имя сети: 1-32 символа (латиница, цифры, пробел, _ . ( ) + -), без пробелов по краям"
+      env_set "$ENV_FILE" STELLA_SSID "$ssid" || return 1
+      wifi_apply
+      ;;
+    channel)
+      [[ "${1:-}" =~ ^([1-9]|1[0-3])$ ]] || fail "канал: число от 1 до 13"
+      env_set "$ENV_FILE" STELLA_CHANNEL "$1" || return 1
+      wifi_apply
+      ;;
+    apply) wifi_apply ;;
+    *) fail "есть: wifi, wifi name \"ИМЯ\", wifi channel N" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ удаленный доступ через сервер
+
+tunnel_setting() {
+  local v
+  v=$(env_get "$TUNNEL_ENV" "$1" 2>/dev/null) || v=""
+  echo "${v:-${2:-}}"
+}
+
+ensure_tunnel_user() {
+  if ! id "$TUNNEL_USER" > /dev/null 2>&1; then
+    useradd --system --user-group --home-dir "$TUNNEL_DIR" --no-create-home --shell /usr/sbin/nologin "$TUNNEL_USER" \
+      || fail "не удалось создать пользователя $TUNNEL_USER"
+  fi
+  mkdir -p "$TUNNEL_DIR"
+  chown "$TUNNEL_USER:$TUNNEL_USER" "$TUNNEL_DIR"
+  chmod 700 "$TUNNEL_DIR"
+}
+
+tunnel_ssh() {
+  set -a
+  # shellcheck disable=SC1090
+  . "$TUNNEL_ENV"
+  set +a
+  timeout "${TUNNEL_TIMEOUT:-30}" runuser -u "$TUNNEL_USER" -- "$TUNNEL_SCRIPT" "$@"
+}
+
+remote_lines() {
+  section "Удаленный доступ"
+  local host box state
+  host=$(tunnel_setting STELLA_TUNNEL_HOST)
+  box=$(setting STELLA_BOX_DOMAIN)
+  if [ -z "$host" ]; then
+    row "Туннель" "не настроен (sudo stella remote)"
+  else
+    state=$(systemctl is-active stella-tunnel 2>/dev/null) || true
+    case "$state" in
+      active) row "Туннель" "${GRN}на связи${R} с сервером $host" ;;
+      activating) row "Туннель" "${YEL}подключается${R} к $host (нужен интернет у коробки)" ;;
+      *) row "Туннель" "выключен или нет связи с $host (sudo stella remote on)" ;;
+    esac
+  fi
+  if [ -n "$box" ]; then row "Домен коробки" "https://$box/  (настройки: /admin)"; fi
+  if [ -f "$TLS_DIR/active" ]; then row "HTTPS без интернета" "${GRN}включен${R}"; fi
+}
+
+remote_key() {
+  have ssh-keygen || fail "нет ssh-keygen: sudo apt install openssh-client (нужен интернет)"
+  ensure_tunnel_user
+  if [ ! -f "$TUNNEL_DIR/id_ed25519" ]; then
+    runuser -u "$TUNNEL_USER" -- ssh-keygen -q -t ed25519 -N "" -C "stella@$(hostname 2>/dev/null)" -f "$TUNNEL_DIR/id_ed25519" \
+      || fail "не удалось создать ключ"
+    say "Создан ключ коробки."
+  fi
+  say ""
+  say "Ключ коробки (его можно показывать, это не секрет):"
+  say ""
+  say "  $(cat "$TUNNEL_DIR/id_ed25519.pub")"
+  say ""
+  say "На сервере выполните (в папке проекта):"
+  say "  sudo bash server/stella-server.sh install --box-domain ДОМЕН_КОРОБКИ --promo-domain ДОМЕН_САЙТА \\"
+  say "       --box-key '$(cat "$TUNNEL_DIR/id_ed25519.pub")'"
+  say "Скрипт напечатает строку STELLA-PAIR. Потом здесь:  sudo stella remote pair 'STELLA-PAIR строка'"
+}
+
+read -r -d '' PY_PAIR <<'PYEOF'
+import base64, json, re, sys
+line = sys.argv[1].strip()
+if line.upper().startswith("STELLA-PAIR"):
+    line = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
+try:
+    data = json.loads(base64.b64decode(line + "=" * (-len(line) % 4), validate=False).decode("utf-8"))
+except Exception:
+    sys.exit("строка не похожа на STELLA-PAIR: скопируйте ее целиком")
+host_rx = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$|^[0-9A-Fa-f:]{2,39}$")
+dom_rx = re.compile(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}[a-z0-9]$")
+key_rx = re.compile(r"^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/=]{40,800}$")
+def num(name, low, high):
+    v = data.get(name)
+    if not isinstance(v, int) or isinstance(v, bool) or not low <= v <= high:
+        sys.exit("в строке неверное поле %s" % name)
+    return v
+host = data.get("host", "")
+if not isinstance(host, str) or not host_rx.match(host):
+    sys.exit("в строке неверный адрес сервера")
+user = data.get("user", "")
+if not isinstance(user, str) or not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", user):
+    sys.exit("в строке неверное имя пользователя")
+box = str(data.get("box", "")).lower()
+promo = str(data.get("promo", "")).lower()
+if not dom_rx.match(box) or (promo and not dom_rx.match(promo)):
+    sys.exit("в строке неверные домены")
+keys = data.get("hostkeys")
+if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and key_rx.match(k) for k in keys):
+    sys.exit("в строке нет ключа сервера")
+print(host)
+print(num("port", 1, 65535))
+print(user)
+print(num("http", 1024, 65535))
+print(num("ssh", 1024, 65535))
+print(box)
+print(promo)
+for k in keys:
+    print(k)
+PYEOF
+
+remote_pair() {
+  local line="${1:-}" host port user http sshp box promo known
+  local -a parsed=()
+  [ -n "$line" ] || fail "использование: sudo stella remote pair 'STELLA-PAIR строка' (строку печатает stella-server.sh на сервере)"
+  have python3 || fail "нужен python3"
+  [ -f "$TUNNEL_DIR/id_ed25519" ] || fail "сначала создайте ключ: sudo stella remote key"
+  mapfile -t parsed < <(python3 -I -c "$PY_PAIR" "$line") || true
+  [ ${#parsed[@]} -ge 8 ] || fail "строка STELLA-PAIR не прошла проверку (см. сообщение выше)"
+  host="${parsed[0]}" port="${parsed[1]}" user="${parsed[2]}" http="${parsed[3]}" sshp="${parsed[4]}"
+  box="${parsed[5]}" promo="${parsed[6]}"
+  if [ ! -f "$TUNNEL_ENV" ]; then
+    (umask 022 && printf 'STELLA_TUNNEL_SSH=0\n' > "$TUNNEL_ENV")
+  fi
+  env_set "$TUNNEL_ENV" STELLA_TUNNEL_HOST "$host" || return 1
+  env_set "$TUNNEL_ENV" STELLA_TUNNEL_PORT "$port" || return 1
+  env_set "$TUNNEL_ENV" STELLA_TUNNEL_USER "$user" || return 1
+  env_set "$TUNNEL_ENV" STELLA_TUNNEL_HTTP_PORT "$http" || return 1
+  env_set "$TUNNEL_ENV" STELLA_TUNNEL_SSH_PORT "$sshp" || return 1
+  chmod 644 "$TUNNEL_ENV"
+  known="$TUNNEL_DIR/known_hosts.new"
+  : > "$known"
+  local i name="$host"
+  [ "$port" = 22 ] || name="[$host]:$port"
+  for ((i = 7; i < ${#parsed[@]}; i++)); do
+    printf '%s %s\n' "$name" "${parsed[$i]}" >> "$known"
+  done
+  chown "$TUNNEL_USER:$TUNNEL_USER" "$known"
+  chmod 600 "$known"
+  mv -f "$known" "$TUNNEL_DIR/known_hosts"
+  env_set "$ENV_FILE" STELLA_BOX_DOMAIN "$box" || return 1
+  env_set "$ENV_FILE" STELLA_PROMO_DOMAIN "$promo" || return 1
+  say "Сервер: $user@$host:$port · домен коробки: $box${promo:+ · домен сайта: $promo}"
+  render_tls_files quiet
+  restart_app
+  say "Связано. Включить туннель: sudo stella remote on"
+}
+
+remote_test() {
+  local out box code ok=0
+  [ -f "$TUNNEL_ENV" ] || fail "удаленный доступ не настроен: sudo stella remote key, потом remote pair"
+  say "Проверяю вход на сервер $(tunnel_setting STELLA_TUNNEL_HOST)"
+  out=$(TUNNEL_TIMEOUT=25 tunnel_ssh ping 2>&1) || true
+  if [ "$out" = pong ]; then
+    say "  ${GRN}сервер пускает коробку по ключу${R}"
+  else
+    err "сервер не ответил: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+    say "  Проверьте интернет у коробки (кабель или телефон по USB) и что ключ добавлен на сервере."
+    ok=1
+  fi
+  say "Туннель: $(systemctl is-active stella-tunnel 2>/dev/null || echo выключен)"
+  box=$(setting STELLA_BOX_DOMAIN)
+  if [ -n "$box" ] && have curl; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$box/api/health" 2>/dev/null) || code=000
+    if [ "$code" = 200 ]; then
+      say "  ${GRN}https://$box/ открывается из интернета${R}"
+    else
+      say "  https://$box/ ответил кодом $code (502/504: туннель еще не поднялся; 000: нет интернета или DNS)"
+      ok=1
+    fi
+  fi
+  return "$ok"
+}
+
+remote_ssh() {
+  [ -f "$TUNNEL_ENV" ] || fail "удаленный доступ не настроен"
+  case "${1:-}" in
+    on)
+      env_set "$TUNNEL_ENV" STELLA_TUNNEL_SSH 1 || return 1
+      say "SSH коробки будет доступен на сервере по адресу 127.0.0.1:$(tunnel_setting STELLA_TUNNEL_SSH_PORT 18022)."
+      say "С компьютера:  ssh -J ВЫ@СЕРВЕР -p $(tunnel_setting STELLA_TUNNEL_SSH_PORT 18022) ${SUDO_USER:-orangepi}@127.0.0.1"
+      if have sshd && sshd -T 2>/dev/null | grep -qi '^passwordauthentication yes'; then
+        err "на коробке включен вход по паролю. Поставьте ключ и выключите пароли, особенно стандартный orangepi:"
+        say "  sudo passwd orangepi  и  sudo passwd root"
+      fi
+      ;;
+    off) env_set "$TUNNEL_ENV" STELLA_TUNNEL_SSH 0 || return 1; say "SSH через сервер выключен." ;;
+    *) fail "есть: remote ssh on | remote ssh off" ;;
+  esac
+  if systemctl is-active --quiet stella-tunnel; then systemctl restart stella-tunnel; fi
+}
+
+cmd_remote() {
+  local sub="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    ""|status)
+      remote_lines
+      say ""
+      say "Настроить: sudo stella remote key → на сервере stella-server.sh install → sudo stella remote pair 'строка' → sudo stella remote on"
+      ;;
+    key) remote_key ;;
+    pair) remote_pair "$*" ;;
+    on)
+      [ -f "$TUNNEL_ENV" ] && [ -f "$TUNNEL_DIR/known_hosts" ] || fail "сначала: sudo stella remote key и sudo stella remote pair"
+      systemctl enable --now stella-tunnel || fail "туннель не запустился: sudo stella logs tunnel"
+      say "Туннель включен и будет подниматься сам, когда у коробки есть интернет."
+      sleep 5
+      remote_test || true
+      ;;
+    off)
+      systemctl disable --now stella-tunnel 2>/dev/null || true
+      say "Туннель выключен: из интернета коробка недоступна."
+      ;;
+    test) remote_test ;;
+    ssh) remote_ssh "$@" ;;
+    domains)
+      local box="${1:-}" promo="${2:-}"
+      box=$(printf '%s' "$box" | tr '[:upper:]' '[:lower:]')
+      promo=$(printf '%s' "$promo" | tr '[:upper:]' '[:lower:]')
+      [[ "$box" =~ $DOMAIN_RX ]] || fail "использование: sudo stella remote domains box.example.com [site.example.com]"
+      if [ -n "$promo" ] && ! [[ "$promo" =~ $DOMAIN_RX ]]; then fail "неверный домен сайта: $promo"; fi
+      env_set "$ENV_FILE" STELLA_BOX_DOMAIN "$box" || return 1
+      env_set "$ENV_FILE" STELLA_PROMO_DOMAIN "$promo" || return 1
+      render_tls_files quiet
+      restart_app
+      ;;
+    *) fail "есть: remote, remote key, remote pair 'строка', remote on|off, remote test, remote ssh on|off, remote domains" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ HTTPS без интернета
+
+tls_cert_ok() {
+  local dir="$1" box="$2" promo="$3" san
+  [ -s "$dir/fullchain.pem" ] && [ -s "$dir/privkey.pem" ] || return 1
+  openssl x509 -noout -checkend 86400 -in "$dir/fullchain.pem" > /dev/null 2>&1 || return 1
+  san=$(openssl x509 -noout -text -in "$dir/fullchain.pem" 2>/dev/null | grep -A1 'Subject Alternative Name' | tail -n 1)
+  [[ "$san" == *"DNS:$box"* ]] || return 1
+  if [ -n "$promo" ] && [[ "$san" != *"DNS:$promo"* ]]; then return 1; fi
+  [ "$(openssl x509 -noout -pubkey -in "$dir/fullchain.pem" 2>/dev/null | sha256sum)" = \
+    "$(openssl pkey -pubout -in "$dir/privkey.pem" 2>/dev/null | sha256sum)" ]
+}
+
+write_tls_conf() {
+  local box="$1" promo="$2"
+  mkdir -p "$(dirname "$NGINX_TLS_CONF")"
+  cat > "$NGINX_TLS_CONF.new" <<EOF
+# Сгенерировано командой stella tls: HTTPS для доменов проекта, когда нет интернета.
+server {
+    listen 443 ssl http2;
+    server_name $box${promo:+ $promo};
+
+    ssl_certificate $TLS_DIR/fullchain.pem;
+    ssl_certificate_key $TLS_DIR/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:stella_tls:1m;
+
+    client_max_body_size 16k;
+    access_log off;
+    limit_req_status 429;
+
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Stella-Via portal-tls;
+    proxy_set_header X-Forwarded-Proto https;
+
+    location /static/ {
+        alias /opt/stella/app/static/;
+        expires 1h;
+    }
+
+    location = /api/admin/login {
+        limit_req zone=stella_login burst=3 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+    }
+
+    location = /api/verify/ai-test {
+        limit_req zone=stella_api burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_read_timeout 120s;
+    }
+
+    location /api/ {
+        limit_req zone=stella_api burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_read_timeout 30s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+    }
+}
+EOF
+  mv -f "$NGINX_TLS_CONF.new" "$NGINX_TLS_CONF"
+}
+
+render_tls_files() {
+  local quiet="${1:-}" box promo active=0 dns_old dns_new changed_dns=0 rule=0
+  if have iptables && iptables -C STELLA_IN -d "$TLS_IP" -p tcp --dport 443 -j ACCEPT 2>/dev/null; then rule=1; fi
+  box=$(setting STELLA_BOX_DOMAIN)
+  promo=$(setting STELLA_PROMO_DOMAIN)
+  if [ -f "$TLS_DIR/active" ] && [ -n "$box" ] && have openssl && tls_cert_ok "$TLS_DIR" "$box" "$promo"; then
+    active=1
+  fi
+  dns_old=$(cat "$DNSMASQ_DOMAINS" 2>/dev/null)
+  if [ "$active" = 1 ]; then
+    write_tls_conf "$box" "$promo"
+    dns_new="address=/$box/$TLS_IP"
+    if [ -n "$promo" ]; then dns_new="$dns_new"$'\n'"address=/$promo/$TLS_IP"; fi
+  else
+    rm -f "$NGINX_TLS_CONF" "$TLS_DIR/active"
+    dns_new=""
+  fi
+  if [ "$dns_old" != "$dns_new" ]; then
+    changed_dns=1
+    if [ -n "$dns_new" ]; then printf '%s\n' "$dns_new" > "$DNSMASQ_DOMAINS"; else rm -f "$DNSMASQ_DOMAINS"; fi
+  fi
+  if have nginx; then
+    if nginx -t > /dev/null 2>&1; then
+      svc_active nginx && { systemctl reload nginx 2>/dev/null || true; }
+    elif [ -f "$NGINX_TLS_CONF" ]; then
+      rm -f "$NGINX_TLS_CONF" "$TLS_DIR/active"
+      err "nginx не принял настройки HTTPS: выключаю HTTPS, сайт работает по HTTP"
+      nginx -t > /dev/null 2>&1 && svc_active nginx && systemctl reload nginx 2>/dev/null
+      active=0
+    fi
+  fi
+  if svc_active hostapd; then
+    if [ "$changed_dns" = 1 ]; then systemctl restart dnsmasq 2>/dev/null || true; fi
+    if [ "$rule" != "$active" ]; then systemctl restart stella-net 2>/dev/null || true; fi
+  fi
+  if [ -z "$quiet" ]; then
+    if [ "$active" = 1 ]; then
+      say "${GRN}HTTPS без интернета включен${R}: https://$box/${promo:+ и https://$promo/} в сети SOS"
+    else
+      say "HTTPS без интернета выключен: в сети SOS сайт открывается по http://10.42.0.1/"
+    fi
+  fi
+}
+
+tls_sync() {
+  local box promo work
+  [ -f "$TUNNEL_ENV" ] || fail "удаленный доступ не настроен: сертификаты берутся с вашего сервера"
+  have openssl || fail "нет openssl: sudo apt install openssl"
+  box=$(setting STELLA_BOX_DOMAIN)
+  promo=$(setting STELLA_PROMO_DOMAIN)
+  [ -n "$box" ] || fail "не задан домен коробки: sudo stella remote domains"
+  work=$(mktemp -d) || fail "нет места во временной папке"
+  chmod 700 "$work"
+  if ! TUNNEL_TIMEOUT=60 tunnel_ssh certs > "$work/certs.tar" 2> "$work/err"; then
+    err "сервер не отдал сертификаты: $(head -c 200 "$work/err")"
+    rm -rf "$work"
+    return 1
+  fi
+  mkdir "$work/x"
+  if ! tar -xf "$work/certs.tar" -C "$work/x" --no-same-owner --no-same-permissions fullchain.pem privkey.pem 2>/dev/null; then
+    err "в ответе сервера нет fullchain.pem и privkey.pem"
+    rm -rf "$work"
+    return 1
+  fi
+  if [ -L "$work/x/fullchain.pem" ] || [ -L "$work/x/privkey.pem" ] || ! tls_cert_ok "$work/x" "$box" "$promo"; then
+    err "сертификат не подходит: истекает, выписан не на $box${promo:+ и $promo} или ключ от другого сертификата"
+    rm -rf "$work"
+    return 1
+  fi
+  mkdir -p "$TLS_DIR"
+  chmod 700 "$TLS_DIR"
+  install -m 600 "$work/x/fullchain.pem" "$TLS_DIR/fullchain.pem"
+  install -m 600 "$work/x/privkey.pem" "$TLS_DIR/privkey.pem"
+  local until
+  until=$(openssl x509 -noout -enddate -in "$TLS_DIR/fullchain.pem" | cut -d= -f2)
+  printf '{"domains": ["%s"%s], "not_after": "%s", "synced": %s}\n' "$box" "${promo:+, \"$promo\"}" "$until" "$(date +%s)" \
+    > "$TLS_DIR/info.json"
+  chmod 644 "$TLS_DIR/info.json"
+  touch "$TLS_DIR/active"
+  rm -rf "$work"
+  say "Сертификаты получены, действуют до $until"
+  render_tls_files
+}
+
+cmd_tls() {
+  case "${1:-}" in
+    ""|status)
+      if [ -f "$TLS_DIR/active" ]; then
+        row "HTTPS без интернета" "${GRN}включен${R}, сертификат до $(openssl x509 -noout -enddate -in "$TLS_DIR/fullchain.pem" 2>/dev/null | cut -d= -f2)"
+      else
+        row "HTTPS без интернета" "выключен (включить: sudo stella tls sync, нужен настроенный удаленный доступ)"
+      fi
+      ;;
+    sync) tls_sync ;;
+    off)
+      rm -f "$TLS_DIR/active"
+      render_tls_files
+      ;;
+    auto)
+      if [ -f "$TUNNEL_ENV" ] && [ -n "$(setting STELLA_BOX_DOMAIN)" ] && internet_ok 8; then
+        tls_sync || true
+      fi
+      render_tls_files quiet
+      ;;
+    *) fail "есть: tls, tls sync, tls off" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ демо для стенда
+
+cmd_demo() {
+  local sd file
+  sd=$(state_dir)
+  file="$sd/demo.json"
+  case "${1:-}" in
+    on)
+      printf '{"until": %s, "by": "cli"}\n' "$(( $(date +%s) + 12 * 3600 ))" > "$file"
+      chown stella:stella "$file" 2>/dev/null
+      say "Демо включено на 12 часов: при подключении к сети SOS сначала откроется рекламный сайт."
+      say "Чат по-прежнему по адресу http://10.42.0.1/ . В режиме ЧС демо не работает."
+      ;;
+    off) rm -f "$file"; say "Демо выключено: при подключении сразу открывается чат." ;;
+    *)
+      if [ -f "$file" ]; then say "Демо: $(cat "$file")"; else say "Демо выключено."; fi
+      say "Включить: sudo stella demo on · выключить: sudo stella demo off"
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------------ обновление из GitHub
+
+cmd_update_github() {
+  local repo branch subdir work rc
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in --github|github) ;; *) rest+=("$1") ;; esac
+    shift
+  done
+  repo=$(setting STELLA_UPDATE_REPO "$DEFAULT_REPO")
+  branch=$(setting STELLA_UPDATE_BRANCH "$DEFAULT_BRANCH")
+  subdir=$(setting STELLA_UPDATE_SUBDIR "$DEFAULT_SUBDIR")
+  [[ "$repo" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+$ ]] || fail "неверный STELLA_UPDATE_REPO: $repo"
+  [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "неверный STELLA_UPDATE_BRANCH: $branch"
+  [[ "$subdir" =~ ^[A-Za-z0-9._/-]*$ ]] && [[ "$subdir" != *..* ]] || fail "неверный STELLA_UPDATE_SUBDIR"
+  have git || fail "нет git: sudo apt install git"
+  work=$(mktemp -d /var/tmp/stella-update.XXXXXX 2>/dev/null) || fail "не могу создать папку в /var/tmp"
+  say "Скачиваю программу из $repo (ветка $branch), без стенда и презентации"
+  if ! timeout 600 git clone -q --depth 1 --filter=blob:none --sparse --branch "$branch" "$repo" "$work/src" 2>"$work/err" \
+      || ! git -C "$work/src" sparse-checkout set "${subdir:+$subdir/}app" "${subdir:+$subdir/}deploy" "${subdir:+$subdir/}site" 2>>"$work/err"; then
+    err "не удалось скачать: $(tail -n 3 "$work/err" | tr '\n' ' ')"
+    rm -rf "$work"
+    return 1
+  fi
+  cmd_update "$work/src${subdir:+/$subdir}" "${rest[@]}"
+  rc=$?
+  if ! detached_running; then rm -rf "$work"; fi
+  return "$rc"
 }
 
 usage() {
@@ -1303,6 +1909,25 @@ stella — управление коробкой Stella Pocket. Все кома�
 PIN спасателя
   sudo stella pin                          показать PIN консоли http://10.42.0.1/rescuer
   sudo stella pin new                      новый случайный PIN
+
+Сайт настроек http://10.42.0.1/admin и удаленный доступ
+  sudo stella admin password               показать пароль администратора сайта
+  sudo stella admin password new           новый пароль (все входы на сайте сбросятся)
+  sudo stella admin wifi on|off            разрешить вход в настройки по открытой сети SOS без HTTPS
+  sudo stella wifi                         сеть SOS: имя и канал
+  sudo stella wifi name "SOS-STELLA"       новое имя сети SOS (латиница, цифры, пробел, _ . ( ) + -)
+  sudo stella wifi channel 6               канал 1-13
+  sudo stella remote                       удаленный доступ через ваш сервер: состояние
+  sudo stella remote key                   создать ключ коробки и показать его для сервера
+  sudo stella remote pair 'STELLA-PAIR строка'  связать с сервером (строку печатает stella-server.sh)
+  sudo stella remote on|off                включить или выключить туннель
+  sudo stella remote test                  проверить связь с сервером и сайт через домен
+  sudo stella remote ssh on|off            открыть SSH коробки через сервер (выключено по умолчанию)
+  sudo stella remote domains КОРОБКА САЙТ  задать домены вручную
+  sudo stella tls                          HTTPS без интернета: состояние
+  sudo stella tls sync | off               забрать сертификаты с сервера | выключить HTTPS
+  sudo stella demo on|off                  демо для стенда: сеть SOS сначала открывает рекламный сайт (12 ч)
+  sudo stella update --github              обновиться из GitHub (нужен интернет)
 EOF
 }
 
@@ -1324,6 +1949,7 @@ main() {
     fail "нужны права администратора: запустите через sudo"
   fi
   [ $# -gt 0 ] && shift
+  SOS_SSID=$(setting STELLA_SSID "$SOS_SSID")
   case "$cmd" in
     status) cmd_status ;;
     home) cmd_home "$@" ;;
@@ -1334,6 +1960,12 @@ main() {
     pin) cmd_pin "$@" ;;
     logs|log) cmd_logs "$@" ;;
     restart) cmd_restart ;;
+    admin) cmd_admin "$@" ;;
+    wifi) cmd_wifi "$@" ;;
+    remote) cmd_remote "$@" ;;
+    tls) cmd_tls "$@" ;;
+    demo) cmd_demo "$@" ;;
+    __render) render_tls_files quiet ;;
     __home-worker) home_worker "$@" ;;
     __sos-worker) sos_worker ;;
     *) err "не знаю команду «$cmd»"; usage; return 1 ;;

@@ -1047,6 +1047,9 @@ a.demo:hover{filter:brightness(1.08)}
         error: aborted ? "Узел не ответил вовремя" : "Нет связи с узлом" };
     }).then(function (r) {
       clearTimeout(timer);
+      if (r.status === 403 && r.data && r.data.admin) {
+        location.href = "/admin?next=" + encodeURIComponent("/verify");
+      }
       return r;
     });
   }

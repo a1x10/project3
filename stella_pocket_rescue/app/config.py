@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 
@@ -16,6 +17,11 @@ def _num(name: str, default: float, low: float, high: float) -> float:
     except ValueError:
         return default
     return min(max(value, low), high)
+
+
+def _domain(name: str) -> str:
+    value = os.getenv(name, "").strip().lower().rstrip(".")
+    return value if re.fullmatch(r"([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}[a-z0-9]", value) else ""
 
 
 def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
@@ -68,3 +74,23 @@ DHCP_LEASES = os.getenv("STELLA_LEASES", "/var/lib/misc/stella.leases")
 RSSI_REF_DBM = float(os.getenv("STELLA_RSSI_REF", "-40"))
 RSSI_PATH_LOSS = float(os.getenv("STELLA_RSSI_N", "3.0"))
 ONLINE_WINDOW = float(os.getenv("STELLA_ONLINE_WINDOW", "20"))
+
+CHANNEL = int(_num("STELLA_CHANNEL", 6, 1, 13))
+
+# Удаленный доступ и сайт настроек
+BOX_DOMAIN = _domain("STELLA_BOX_DOMAIN")
+PROMO_DOMAIN = _domain("STELLA_PROMO_DOMAIN")
+SITE_DIR = Path(os.getenv("STELLA_SITE_DIR", "") or str(APP_ROOT / "site"))
+ADMIN_HASH = os.getenv("STELLA_ADMIN_HASH", "").strip()
+SESSION_SECRET = os.getenv("STELLA_SESSION_SECRET", "").strip()
+ADMIN_SESSION_HOURS = _num("STELLA_ADMIN_SESSION_H", 12, 0.1, 168)
+ADMIN_HTTP_WIFI = os.getenv("STELLA_ADMIN_HTTP_WIFI", "0") == "1"
+REMOTE_CHAT = os.getenv("STELLA_REMOTE_CHAT", "1") == "1"
+ADMIN_HELPER = os.getenv("STELLA_ADMIN_HELPER", "/usr/local/sbin/stella-admin")
+JOBS_DIR = Path(os.getenv("STELLA_JOBS_DIR", "/run/stella-admin"))
+DEMO_FILE = Path(os.getenv("STELLA_DEMO_FILE", str(STATE_DIR / "demo.json")))
+DEMO_MAX_HOURS = 12
+TUNNEL_ENV = Path(os.getenv("STELLA_TUNNEL_ENV", "/etc/stella/tunnel.env"))
+TLS_INFO = Path(os.getenv("STELLA_TLS_INFO", "/etc/stella/tls/info.json"))
+UPDATE_REPO = os.getenv("STELLA_UPDATE_REPO", "https://github.com/a1x10/project3.git")
+UPDATE_BRANCH = os.getenv("STELLA_UPDATE_BRANCH", "claude/peaceful-dirac-2n2fs6")
