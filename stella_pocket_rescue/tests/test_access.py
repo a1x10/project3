@@ -446,3 +446,18 @@ def test_limiter_memory_is_bounded():
         lim.fail("x")
     assert lim.blocked("x") and not lim.blocked("y")
     assert not lim.blocked("x", now=time.time() + 61)
+
+
+def test_helper_info_is_cached_between_status_polls(app_mod, monkeypatch):
+    fake = FakeRun({"ok": True, "tunnel": {"active": "active"}})
+    monkeypatch.setattr(app_mod.admin.subprocess, "run", fake)
+    app_mod.admin._helper_info.update(ts=0.0, data=None)
+    c = client(app_mod)
+    login(c, LAN)
+    for _ in range(3):
+        assert c.get("/api/admin/status", headers=LAN).status_code == 200
+    info_calls = [call for call in fake.calls if call[0][-1] == "info"]
+    assert len(info_calls) == 1
+    c.post("/api/admin/action", json={"action": "restart"}, headers={**LAN, "X-Stella-CSRF": csrf_of(c, LAN)})
+    c.get("/api/admin/status", headers=LAN)
+    assert len([call for call in fake.calls if call[0][-1] == "info"]) == 2
