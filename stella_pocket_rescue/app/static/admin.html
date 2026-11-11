@@ -392,12 +392,13 @@
   function renderRemote(d){
     var r=isObj(d.remote)?d.remote:{}, h=isObj(d.helper)?d.helper:{}, k=$('rmKv'), n=$('rmNotes');
     k.textContent=''; n.textContent='';
+    if(h.demo) n.appendChild(el('div',{'class':'note b'},'Это тестовая версия на вашем сервере. Настоящая коробка сейчас не подключена: вызовы учебные, кнопки только показываются.'));
     if(r.box_domain){ var a=el('a',{href:'https://'+r.box_domain+'/admin',target:'_blank',rel:'noopener'},r.box_domain); kv(k,'Домен коробки',a); }
     else kv(k,'Домен коробки','не задан');
     if(r.promo_domain){ var b=el('a',{href:'https://'+r.promo_domain+'/',target:'_blank',rel:'noopener'},r.promo_domain); kv(k,'Домен сайта',b); }
     kv(k,'Сервер',r.server||'не подключен');
     var t=isObj(h.tunnel)?h.tunnel:{};
-    var ts=t.active==='active'?'на связи':t.active==='activating'?'подключается':t.enabled==='enabled'?'нет связи (нужен интернет у коробки)':'выключен';
+    var ts=h.demo?'не нужен (тестовая версия работает на сервере)':t.active==='active'?'на связи':t.active==='activating'?'подключается':t.enabled==='enabled'?'нет связи (нужен интернет у коробки)':'выключен';
     kv(k,'Туннель',ts,t.active==='active'?'ok':'');
     var tls=isObj(h.tls)?h.tls:{};
     kv(k,'HTTPS без интернета',tls.active?('включен'+(tls.not_after?', до '+tls.not_after:'')):'выключен');
@@ -439,6 +440,7 @@
   function act(name,params,errBox,confirmed){
     return api('POST','/api/admin/action',{action:name,params:params||{},confirm:!!confirmed},undefined).then(function(r){
       if(r.job) watchJob(r.job,r.title||name);
+      else if(r.demo) showInfo(r.message);
       return r;
     }).catch(function(e){ if(!guard(e)){ if(errBox) $(errBox).textContent=e.message; else showJobError(e.message); } throw e; });
   }
@@ -490,6 +492,7 @@
   // ---------------------------------------------------------------- ход задачи
   var STATE={queued:'в очереди',running:'выполняется',ok:'готово',fail:'не получилось'};
   var RESTARTS={'restart-app':1,'ai-mode':1,'ai-model':1,'restart':1,'wifi':1,'update':1,'reboot':1,'poweroff':1,'remote-off':1};
+  function showInfo(msg){ clearTimeout(jobTimer); $('job').hidden=false; $('jobSpin').hidden=true; $('jobTitle').textContent='Тестовая версия'; $('jobState').textContent=msg; $('jobLog').textContent=''; }
   function showJobError(msg){ $('job').hidden=false; $('jobSpin').hidden=true; $('jobTitle').textContent='Не получилось'; $('jobState').textContent=msg; $('jobLog').textContent=''; }
   function watchJob(id,title){
     clearTimeout(jobTimer); var misses=0, kind='';

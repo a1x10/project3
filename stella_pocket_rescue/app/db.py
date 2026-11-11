@@ -165,6 +165,12 @@ class Database:
         )
         return [_decode(r) for r in rows]
 
+    def backdate(self, session_id: str, seconds: float) -> None:
+        """Сдвигает вызов в прошлое (только для учебных вызовов тестовой версии)."""
+        self._exec("UPDATE incidents SET created = created - ?, updated = updated - ?, last_seen = last_seen - ? "
+                   "WHERE session_id = ?", (seconds, seconds, seconds, session_id))
+        self._exec("UPDATE messages SET ts = ts - ? WHERE session_id = ?", (seconds, session_id))
+
     def add_broadcast(self, text: str) -> int:
         return self._exec(
             "INSERT INTO broadcasts(text, ts) VALUES (?, ?)", (text, time.time())

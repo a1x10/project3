@@ -27,6 +27,7 @@ WEB_ACTIONS = {
 }
 CONFIRM = {"wifi.ap", "wifi.home", "remote.off", "reboot", "poweroff", "update"}
 LOG_UNITS = ("app", "llm", "hw", "wifi", "dns", "nginx", "install", "home", "tunnel")
+DEMO_NOTE = "Тестовая версия на сервере: здесь настройки только показываются, на настоящей коробке кнопка сработает."
 HELPER_INFO_TTL = 60
 _helper_info: dict = {"ts": 0.0, "data": None}
 UPLINK_KINDS = (
@@ -155,6 +156,8 @@ def _hostname() -> str | None:
 
 async def helper_info(force: bool = False) -> dict:
     """Сведения от помощника (туннель, HTTPS, пароли SSH). Кэш на минуту: каждый вызов идет через sudo."""
+    if config.DEMO:
+        return {"demo": True}
     now = time.time()
     if not force and _helper_info["data"] is not None and now - _helper_info["ts"] < HELPER_INFO_TTL:
         return _helper_info["data"]
@@ -167,7 +170,10 @@ async def helper_info(force: bool = False) -> dict:
 
 
 async def build_status() -> dict:
-    units = await asyncio.gather(*(diagnostics.unit_state(u) for u in UNITS))
+    if config.DEMO:
+        units = ["active"] + [None] * (len(UNITS) - 1)  # на сервере работает только сам сайт
+    else:
+        units = await asyncio.gather(*(diagnostics.unit_state(u) for u in UNITS))
     internet = await diagnostics.reach_internet(config.CLOUD_HOST, 443, 4)
     tunnel = _env_file(config.TUNNEL_ENV)
     helper = await helper_info()
@@ -201,6 +207,7 @@ async def build_status() -> dict:
         "helper": helper,
         "demo": demo_state(),
         "update": {"repo": config.UPDATE_REPO, "branch": config.UPDATE_BRANCH},
+        "test_version": config.DEMO,
     })
 
 
@@ -213,7 +220,8 @@ def session(request: Request):
     return {"logged_in": bool(current), "csrf": access.csrf_token(current) if current else None,
             "expires": current["exp"] if current else None, "channel": access.channel(request),
             "https": access.is_https(request), "login_allowed": allowed, "reason": reason,
-            "configured": access.password_configured(), "box_domain": config.BOX_DOMAIN or None}
+            "configured": access.password_configured(), "box_domain": config.BOX_DOMAIN or None,
+            "demo": config.DEMO}
 
 
 @router.post("/login")
@@ -260,6 +268,8 @@ def action(body: ActionIn, request: Request):
         raise HTTPException(400, "Это действие с сайта недоступно")
     if body.action in CONFIRM and not body.confirm:
         raise HTTPException(409, "Нужно подтверждение")
+    if config.DEMO:
+        return {"demo": True, "message": DEMO_NOTE, "text": DEMO_NOTE if body.action == "remote.test" else None}
     log.info("настройки: %s (канал %s)", body.action, access.channel(request))
     _helper_info["data"] = None
     return run_helper(body.action, body.params, timeout=60)
@@ -285,6 +295,8 @@ def job(job_id: str):
 def logs(unit: str = "app"):
     if unit not in LOG_UNITS:
         raise HTTPException(400, "Нет такого журнала")
+    if config.DEMO:
+        return {"text": "Тестовая версия на сервере: журналы есть только на настоящей коробке."}
     return run_helper("logs", {"unit": unit}, timeout=40)
 
 

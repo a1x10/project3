@@ -227,7 +227,8 @@ def require_admin_write(request: Request) -> dict:
 def check_rescuer(request: Request, pin: str, expected: str, failures: Limiter) -> None:
     """Консоль спасателя: из интернета сначала вход администратора, потом PIN."""
     ch = channel(request)
-    if ch == REMOTE and not read_session(request):
+    # в тестовой версии на сервере вызовы учебные, жюри входит в консоль сразу по PIN
+    if ch == REMOTE and not config.DEMO and not read_session(request):
         raise HTTPException(403, {"error": "Из интернета консоль открывается после входа администратора",
                                   "admin": True})
     key = f"{ch}:{client_ip(request) or '?'}"
