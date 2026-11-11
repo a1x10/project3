@@ -2,6 +2,8 @@
 # certbot вызывает это после получения или продления сертификата stella-rescue.
 # Копия лежит у пользователя туннеля: коробка забирает ее командой «stella tls sync».
 set -e
+# Коробка еще не подключена (нет пользователя туннеля): копировать некому, сделаем при «stella-server.sh key»
+getent group stella-tunnel > /dev/null 2>&1 || exit 0
 LINEAGE="${RENEWED_LINEAGE:-/etc/letsencrypt/live/stella-rescue}"
 DEST=/var/lib/stella-tunnel/certs
 install -d -o root -g stella-tunnel -m 750 "$DEST"

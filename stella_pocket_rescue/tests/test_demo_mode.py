@@ -94,7 +94,7 @@ def test_normal_mode_has_no_bar(monkeypatch, tmp_path):
 def test_server_demo_parts():
     text = SERVER.read_text(encoding="utf-8")
     assert "proxy_set_header X-Stella-Via tunnel;" in text
-    assert 'sshd*) die "к адресу $BOX сейчас подключена настоящая коробка' in text
+    assert 'box) die "к адресу $BOX сейчас подключена настоящая коробка' in text
     assert "STELLA_DEMO=1" in text and "RuntimeMaxSec=1d" in text and "ProtectSystem=strict" in text
     assert "--port $HTTP_PORT" in text and 'User=$DEMO_USER' in text
     r = subprocess.run(["bash", str(SERVER), "install", "--box-domain", BOX, "--promo-domain", "example.org",

@@ -128,13 +128,17 @@ check_key() {
 # ---------------------------------------------------------------- проверки
 
 claimed_by_others() {
-  # Какие конфиги nginx, кроме наших, уже отвечают на этот домен
-  local domain="$1"
-  nginx -T 2>/dev/null | awk -v d="$domain" -v mine="$NGINX_FILE" '
+  # Какие конфиги nginx, кроме наших (файл и ссылка на него), уже отвечают на этот домен
+  local domain="$1" file mine=""
+  [ -n "$NGINX_FILE" ] && mine=$(readlink -f "$NGINX_FILE" 2>/dev/null)
+  nginx -T 2>/dev/null | awk -v d="$domain" '
     /^# configuration file / { file = $4; sub(/:$/, "", file); next }
     $1 == "server_name" {
-      for (i = 2; i <= NF; i++) { n = $i; sub(/;$/, "", n); if (n == d && file != mine) print file }
-    }' | sort -u
+      for (i = 2; i <= NF; i++) { n = $i; sub(/;$/, "", n); if (n == d) print file }
+    }' | sort -u | while IFS= read -r file; do
+      [ -n "$mine" ] && [ "$(readlink -f "$file" 2>/dev/null)" = "$mine" ] && continue
+      printf '%s\n' "$file"
+    done
 }
 
 pick_nginx_file() {
@@ -436,7 +440,8 @@ print_pair() {
 # ---------------------------------------------------------------- команды
 
 cmd_install() {
-  local tls=1
+  local tls=1 port
+  load_conf || true
   parse_args "$@"
   if [ -n "$BOX_KEY" ]; then check_key; NEED_TUNNEL=1; fi
   [ "$NO_TLS" = 1 ] && tls=0
@@ -448,6 +453,12 @@ cmd_install() {
   fi
   need_root
   checks || die "исправьте замечания выше и запустите снова (ничего не изменено)"
+  port=$(pick_port "$HTTP_PORT") || die "не нашел свободный порт рядом с $HTTP_PORT, задайте --http-port"
+  if [ "$port" != "$HTTP_PORT" ]; then
+    warn "порт $HTTP_PORT уже занят ($(port_info "$HTTP_PORT")), коробке отдаю порт $port"
+    HTTP_PORT="$port"
+  fi
+  SSH_FWD_PORT=$(pick_port 18022 "$HTTP_PORT") || die "не нашел свободный порт для SSH коробки"
   install_files
   if [ -n "$BOX_KEY" ]; then
     ensure_user
@@ -484,6 +495,9 @@ cmd_key() {
   install_files
   ensure_user
   install_key
+  if [ -d "/etc/letsencrypt/live/$CERT_NAME" ]; then
+    RENEWED_LINEAGE="/etc/letsencrypt/live/$CERT_NAME" "$LIB/deploy-hook" && ok "сертификат приготовлен для коробки"
+  fi
   say "Ключ заменен. На коробке: sudo stella remote on"
 }
 
@@ -491,8 +505,9 @@ cmd_status() {
   load_conf || { say "Не настроено. См.: sudo bash $0 help"; return 1; }
   say "Домен коробки: $BOX   домен сайта: ${PROMO:-нет}   порт туннеля: 127.0.0.1:$HTTP_PORT"
   case "$(port_owner)" in
-    sshd*) ok "коробка на связи (туннель открыт)" ;;
-    python*|uvicorn*) ok "работает тестовая версия (sudo bash $0 demo status)" ;;
+    box) ok "коробка на связи (туннель открыт)" ;;
+    demo) ok "работает тестовая версия (sudo bash $0 demo status)" ;;
+    other*) warn "порт $HTTP_PORT занят чужой программой: sudo bash $0 install с теми же доменами выберет другой" ;;
     *) warn "коробка сейчас не подключена" ;;
   esac
   if [ -r "$TUNNEL_HOME/certs/fullchain.pem" ] && have openssl; then
@@ -528,10 +543,45 @@ demo_python_ok() {
   have python3 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
 }
 
-port_owner() {
-  # Кто слушает 127.0.0.1:ПОРТ: stella-demo, туннель коробки (sshd) или никто
+port_info() {
+  # Кто слушает порт на любом адресе: «программа пользователь», пусто если порт свободен
+  local port="$1" line pid prog
   have ss || return 0
-  ss -ltnpH 2>/dev/null | awk -v p="127.0.0.1:$HTTP_PORT" '$4 == p { print $6 }' | sed -n 's/.*(("\([^"]*\)".*/\1/p' | head -n 1
+  line=$(ss -ltnpH 2>/dev/null | awk -v p=":$port" 'substr($4, length($4) - length(p) + 1) == p { print $6; exit }')
+  [ -n "$line" ] || return 0
+  prog=$(printf '%s' "$line" | sed -n 's/.*(("\([^"]*\)".*/\1/p')
+  pid=$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+  printf '%s %s\n' "${prog:-?}" "$( [ -n "$pid" ] && ps -o user= -p "$pid" 2>/dev/null | tr -d ' ')"
+}
+
+port_owner() {
+  # Для HTTP_PORT: demo (наша тестовая версия), box (туннель коробки), other (чужая программа) или пусто
+  local info
+  info=$(port_info "$HTTP_PORT")
+  [ -n "$info" ] || return 0
+  case "${info#* }" in
+    "$DEMO_USER") echo demo ;;
+    "$TUNNEL_USER") echo box ;;
+    *) echo "other ${info% *}" ;;
+  esac
+}
+
+port_ok_for_us() {
+  local info
+  info=$(port_info "$1")
+  [ -z "$info" ] && return 0
+  case "${info#* }" in "$DEMO_USER"|"$TUNNEL_USER") return 0 ;; esac
+  return 1
+}
+
+pick_port() {
+  local start="$1" avoid="${2:-}" i p
+  for i in $(seq 0 60); do
+    p=$((start + i))
+    [ "$p" = "$avoid" ] && continue
+    if port_ok_for_us "$p"; then echo "$p"; return 0; fi
+  done
+  return 1
 }
 
 demo_env() {
@@ -626,9 +676,9 @@ demo_on() {
   [ -f "$src/app/main.py" ] && [ -f "$src/requirements.txt" ] || die "рядом со скриптом нет папок app/ и requirements.txt: запускайте из папки проекта"
   owner=$(port_owner)
   case "$owner" in
-    ""|python*|uvicorn*) ;;
-    sshd*) die "к адресу $BOX сейчас подключена настоящая коробка (туннель). Тестовая версия не нужна, она заняла бы ее место" ;;
-    *) die "порт 127.0.0.1:$HTTP_PORT занят программой $owner" ;;
+    ""|demo) ;;
+    box) die "к адресу $BOX сейчас подключена настоящая коробка (туннель). Тестовая версия не нужна, она заняла бы ее место" ;;
+    *) die "порт $HTTP_PORT занят программой ${owner#other }. Запустите install еще раз с теми же доменами: он выберет свободный порт" ;;
   esac
   if ! demo_python_ok; then
     die "нужен Python 3.10 или новее (Ubuntu 22.04+, Debian 12+). Сейчас: $(python3 --version 2>&1)"

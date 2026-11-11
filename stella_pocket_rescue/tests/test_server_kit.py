@@ -151,3 +151,41 @@ def test_ssh_allow_rolls_back_when_sshd_refuses(tmp_path):
     r = run_lib(fake_sshd(fail_test=True) + "cmd_ssh_allow", {"STELLA_SSHD_CONFIG": str(conf)})
     assert r.returncode != 0 and "вернул файл как был" in r.stderr
     assert conf.read_text(encoding="utf-8") == "AllowTcpForwarding no\n"
+
+
+SS_LINE = 'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("docker-proxy",pid=4242,fd=4))'
+
+
+@pytest.mark.parametrize("user,expected", [("root", "18081"), ("stella-demo", "18080"), ("stella-tunnel", "18080")])
+def test_busy_port_is_skipped_unless_it_is_ours(user, expected):
+    r = run_lib(f"ss() {{ echo '{SS_LINE}'; }}\nps() {{ echo '{user}'; }}\npick_port 18080")
+    assert r.stdout.strip() == expected, r.stderr
+    r = run_lib(f"ss() {{ echo '{SS_LINE}'; }}\nps() {{ echo '{user}'; }}\nHTTP_PORT=18080; port_owner")
+    assert r.stdout.strip() == {"root": "other docker-proxy", "stella-demo": "demo", "stella-tunnel": "box"}[user]
+    r = run_lib(f"ss() {{ echo '{SS_LINE}'; }}\nps() {{ echo root; }}\npick_port 18022 18023; port_info 118080; echo end")
+    assert r.stdout.split() == ["18022", "end"]
+
+
+def test_own_nginx_file_is_not_a_conflict_even_via_symlink(tmp_path):
+    avail = tmp_path / "sites-available"
+    enabled = tmp_path / "sites-enabled"
+    avail.mkdir()
+    enabled.mkdir()
+    (avail / "stella-rescue.conf").write_text("server_name box.example.org;\n", encoding="utf-8")
+    (enabled / "stella-rescue.conf").symlink_to(avail / "stella-rescue.conf")
+    dump = (f"# configuration file {enabled}/stella-rescue.conf:\\nserver_name box.example.org;\\n"
+            f"# configuration file {tmp_path}/other.conf:\\nserver_name site.example.org www.site.example.org;\\n")
+    # STUBS заглушает claimed_by_others, здесь нужна настоящая: подключаю скрипт еще раз
+    script = (f'STELLA_SERVER_LIB=1 source "$SCRIPT"\nnginx() {{ printf "{dump}"; }}\n'
+              f'NGINX_FILE={avail}/stella-rescue.conf\n')
+    r = run_lib(script + 'echo "box=[$(claimed_by_others box.example.org)]"; echo "site=[$(claimed_by_others site.example.org)]"')
+    assert "box=[]" in r.stdout and f"site=[{tmp_path}/other.conf]" in r.stdout, r.stdout + r.stderr
+
+
+def test_cert_hook_waits_for_the_box_user():
+    env = {"PATH": "/usr/bin:/bin", "RENEWED_LINEAGE": "/nonexistent"}
+    hook = SERVER / "certbot-deploy-hook"
+    text = hook.read_text(encoding="utf-8")
+    assert "getent group stella-tunnel" in text.split("install -d", 1)[0]
+    if subprocess.run(["getent", "group", "stella-tunnel"], capture_output=True).returncode != 0:
+        assert subprocess.run(["sh", str(hook)], env=env, capture_output=True).returncode == 0
