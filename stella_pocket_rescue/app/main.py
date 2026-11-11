@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import access, admin, ai, config, diagnostics, mode, stations
+from . import access, admin, ai, config, demo, diagnostics, mode, stations
 from .db import Database
 from .triage import PRIORITY_RANK, assess, fallback_reply, first_aid
 
@@ -62,6 +62,11 @@ async def _guarded(what: str, action, timeout: float = 15) -> None:
 async def lifespan(_: FastAPI):
     log.info("Stella Pocket %s · узел %s", config.VERSION, diagnostics.node_id())
     await _guarded("запуск ИИ", ai.start)
+    if config.DEMO:
+        try:
+            seed_demo()
+        except Exception as exc:
+            log.warning("учебные вызовы не добавлены: %r", exc)
     try:
         yield
     finally:
@@ -151,6 +156,9 @@ async def captive_portal(request: Request, call_next):
 def _page(name: str):
     path = STATIC / name
     if path.is_file():
+        if config.DEMO:
+            return HTMLResponse(demo.inject_bar(name, path.read_text(encoding="utf-8")),
+                                headers={"Cache-Control": "no-store"})
         return FileResponse(path)
     log.error("нет страницы %s", path)
     return HTMLResponse(FALLBACK_PAGE, status_code=503)
@@ -167,7 +175,10 @@ def rescuer_page():
 
 
 @app.get("/verify", include_in_schema=False)
-def verify_page():
+def verify_page(request: Request):
+    if config.DEMO and request.query_params.get("demo") != "1":
+        # на сервере нет Wi-Fi и датчиков коробки: проверка показывает смоделированный узел
+        return RedirectResponse("/verify?demo=1", status_code=302)
     return _page("verify.html")
 
 
@@ -207,7 +218,7 @@ def _active_engine(snap: dict) -> str:
 async def status():
     m = diagnostics.mode_state()
     return {"mode": m["mode"], "source": m.get("source"), "since": m.get("since"), "note": m.get("note"),
-            "ai": _active_engine(diagnostics.ai_snapshot())}
+            "ai": _active_engine(diagnostics.ai_snapshot()), "demo": config.DEMO}
 
 
 @app.get("/api/health")
@@ -623,6 +634,29 @@ async def verify_ai_test(body: AiTestIn | None = None):
     if not isinstance(result, dict):
         raise HTTPException(502, "ИИ вернул некорректный ответ")
     return diagnostics.json_safe(result)
+
+
+def seed_demo() -> int:
+    """Учебные вызовы для тестовой версии: только если база пустая."""
+    if not config.DEMO or db.incidents():
+        return 0
+    hub = diagnostics.hub_location()
+    for minutes, device, battery, texts, shift in demo.SCENARIOS:
+        sid = uuid.uuid4().hex
+        db.upsert_incident(sid, device=device, battery=battery, charging=0, last_seen=time.time(),
+                           client_ip=None, origin="demo", device_info={"demo": True})
+        for text in texts:
+            db.add_message(sid, "user", text)
+        lat = lon = None
+        if shift and hub["lat"] is not None:
+            lat, lon = demo.offset(hub["lat"], hub["lon"], *shift)
+        result = update_incident(sid, lat, lon, 15 if lat is not None else None)
+        for tip in first_aid(result.tags):
+            db.add_message(sid, "advice", tip)
+        db.add_message(sid, "assistant", fallback_reply(result), engine="reserve")
+        db.backdate(sid, minutes * 60)
+    log.info("тестовая версия: добавлено %d учебных вызовов", len(demo.SCENARIOS))
+    return len(demo.SCENARIOS)
 
 
 def _not_found():

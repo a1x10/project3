@@ -558,6 +558,7 @@
       c.appendChild(el('div',{'class':'id'},'#'+it.id+' · '+LABEL[p]));
       c.appendChild(el('div',{'class':'nm'}, it.device||'устройство'));
       if(it.origin==='remote') c.appendChild(el('div',{'class':'net'},'через интернет'));
+      else if(it.origin==='demo') c.appendChild(el('div',{'class':'net'},'учебный вызов'));
       var sub=el('div',{'class':'sub'});
       sub.appendChild(document.createTextNode((it.proximity?it.proximity+' · ':'')+(it.signal!=null?it.signal+' dBm ':'')));
       sub.appendChild(bars(it.signal));

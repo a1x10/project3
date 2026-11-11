@@ -43,12 +43,14 @@ stella-server.sh: доступ к коробке Stella Pocket через ваш
 
 Команды:
   check   --box-domain Д --promo-domain Д   только проверить сервер, ничего не менять
-  install --box-domain Д --promo-domain Д --box-key 'КЛЮЧ' [--email E] [--http-port 18080]
+  install --box-domain Д --promo-domain Д [--box-key 'КЛЮЧ'] [--email E] [--http-port 18080]
           [--ssh-host ИМЯ] [--ssh-port ПОРТ]  (куда коробка подключается по SSH, если не box-domain:22)
           [--no-tls]   (без HTTPS, только для проверки) [--dry-run] (показать конфиг и выйти)
   key 'КЛЮЧ'      заменить ключ коробки (например, после переустановки коробки)
   promo           обновить рекламный сайт из папки site/ рядом со скриптом
   pair            снова напечатать строку STELLA-PAIR
+  demo on|off     тестовая версия на сервере без коробки: учебные вызовы, ИИ по правилам
+  demo status     адреса, PIN консоли и пароль настроек тестовой версии
   status          что настроено и на связи ли коробка
   uninstall       убрать все, что поставил этот скрипт (сертификат остается)
 EOF
@@ -250,6 +252,7 @@ $ssl
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-Proto $proto;
+    proxy_set_header X-Stella-Via tunnel;
     proxy_connect_timeout 5s;
     proxy_read_timeout 130s;
 
@@ -395,7 +398,7 @@ print_pair() {
 cmd_install() {
   local tls=1
   parse_args "$@"
-  check_key
+  [ -n "$BOX_KEY" ] && check_key
   [ "$NO_TLS" = 1 ] && tls=0
   if [ "$DRY" = 1 ]; then
     pick_nginx_file
@@ -406,8 +409,10 @@ cmd_install() {
   need_root
   checks || die "исправьте замечания выше и запустите снова (ничего не изменено)"
   install_files
-  ensure_user
-  install_key
+  if [ -n "$BOX_KEY" ]; then
+    ensure_user
+    install_key
+  fi
   deploy_promo
   save_conf
   if [ "$tls" = 1 ]; then
@@ -420,7 +425,14 @@ cmd_install() {
     write_nginx plain
     warn "без HTTPS: коробка на http://$BOX/ (вход администратора из интернета работать не будет)"
   fi
-  print_pair
+  if [ -n "$BOX_KEY" ]; then
+    print_pair
+  else
+    say ""
+    say "Домены настроены. Тестовая версия без коробки:  sudo bash server/stella-server.sh demo on"
+    say "Настоящую коробку потом подключите так: на коробке sudo stella remote key, здесь"
+    say "  sudo bash server/stella-server.sh key 'КЛЮЧ_КОРОБКИ'  и  sudo bash server/stella-server.sh pair"
+  fi
 }
 
 cmd_key() {
@@ -428,6 +440,8 @@ cmd_key() {
   load_conf || die "сначала: stella-server.sh install"
   BOX_KEY="${1:-}"
   check_key
+  install_files
+  ensure_user
   install_key
   say "Ключ заменен. На коробке: sudo stella remote on"
 }
@@ -435,8 +449,11 @@ cmd_key() {
 cmd_status() {
   load_conf || { say "Не настроено. См.: sudo bash $0 help"; return 1; }
   say "Домен коробки: $BOX   домен сайта: ${PROMO:-нет}   порт туннеля: 127.0.0.1:$HTTP_PORT"
-  if have ss && ss -ltn 2>/dev/null | grep -q "127.0.0.1:$HTTP_PORT "; then ok "коробка на связи (туннель открыт)"
-  else warn "коробка сейчас не подключена"; fi
+  case "$(port_owner)" in
+    sshd*) ok "коробка на связи (туннель открыт)" ;;
+    python*|uvicorn*) ok "работает тестовая версия (sudo bash $0 demo status)" ;;
+    *) warn "коробка сейчас не подключена" ;;
+  esac
   if [ -r "$TUNNEL_HOME/certs/fullchain.pem" ] && have openssl; then
     ok "сертификат для коробки до $(openssl x509 -noout -enddate -in "$TUNNEL_HOME/certs/fullchain.pem" | cut -d= -f2)"
   fi
@@ -445,6 +462,7 @@ cmd_status() {
 cmd_uninstall() {
   need_root
   load_conf || true
+  demo_remove > /dev/null 2>&1 || true
   [ -n "$NGINX_LINK" ] && rm -f "$NGINX_LINK"
   [ -n "$NGINX_FILE" ] && rm -f "$NGINX_FILE"
   if have nginx && nginx -t > /dev/null 2>&1; then systemctl reload nginx 2>/dev/null || nginx -s reload; fi
@@ -452,6 +470,210 @@ cmd_uninstall() {
   id "$TUNNEL_USER" > /dev/null 2>&1 && userdel -r "$TUNNEL_USER" 2>/dev/null
   rm -rf "$LIB" "$ACME_ROOT" "$BOX_ROOT" "$SITE_ROOT" "$TUNNEL_HOME" "$CONF"
   say "Убрано. Сертификат остался: удалить можно командой certbot delete --cert-name $CERT_NAME"
+}
+
+# ---------------------------------------------------------------- тестовая версия на сервере
+
+DEMO_USER=stella-demo
+DEMO_DIR=/opt/stella-demo
+DEMO_STATE=/var/lib/stella-demo
+DEMO_ENV=/etc/stella-demo.env
+DEMO_PASS=/etc/stella-demo.pass
+DEMO_UNIT=/etc/systemd/system/stella-demo.service
+DEMO_LAT=43.2389
+DEMO_LON=76.8897
+
+demo_python_ok() {
+  have python3 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null
+}
+
+port_owner() {
+  # Кто слушает 127.0.0.1:ПОРТ: stella-demo, туннель коробки (sshd) или никто
+  have ss || return 0
+  ss -ltnpH 2>/dev/null | awk -v p="127.0.0.1:$HTTP_PORT" '$4 == p { print $6 }' | sed -n 's/.*(("\([^"]*\)".*/\1/p' | head -n 1
+}
+
+demo_env() {
+  local pin pass hash secret
+  if [ -s "$DEMO_ENV" ] && [ -s "$DEMO_PASS" ]; then
+    sed -i "s/^STELLA_BOX_DOMAIN=.*/STELLA_BOX_DOMAIN=$BOX/" "$DEMO_ENV"
+    return 0
+  fi
+  pin=$(python3 -I -c 'import secrets; print("%06d" % (100000 + secrets.randbelow(900000)))')
+  pass=$(python3 -I -c 'import secrets; a="abcdefghjkmnpqrstuvwxyz23456789"; print("-".join("".join(secrets.choice(a) for _ in range(4)) for _ in range(4)))')
+  hash=$(printf '%s\n' "$pass" | python3 -I -c '
+import hashlib, secrets, sys
+p = sys.stdin.readline().rstrip("\n").encode("utf-8")
+s = secrets.token_bytes(16)
+print("pbkdf2:200000:%s:%s" % (s.hex(), hashlib.pbkdf2_hmac("sha256", p, s, 200000).hex()))')
+  secret=$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')
+  [ -n "$pin" ] && [ -n "$hash" ] && [ -n "$secret" ] || die "не удалось создать пароль тестовой версии"
+  umask 027
+  cat > "$DEMO_ENV" <<EOF
+# Тестовая версия Stella Pocket на сервере (stella-server.sh demo). Не секрет только STELLA_BOX_DOMAIN.
+STELLA_DEMO=1
+STELLA_BOX_DOMAIN=$BOX
+STELLA_DB=$DEMO_STATE/stella.db
+STELLA_STATE_DIR=$DEMO_STATE
+STELLA_MODE_FILE=$DEMO_STATE/mode.json
+STELLA_HW_STATE=$DEMO_STATE/hw.json
+STELLA_SITE_DIR=$DEMO_DIR/site
+STELLA_RESCUER_PIN=$pin
+STELLA_ADMIN_HASH=$hash
+STELLA_SESSION_SECRET=$secret
+STELLA_AI_MODE=offline
+STELLA_LLM_ENABLED=0
+STELLA_HUB_LAT=$DEMO_LAT
+STELLA_HUB_LON=$DEMO_LON
+STELLA_HUB_MODE=demo
+STELLA_ADMIN_HELPER=/nonexistent
+STELLA_TUNNEL_ENV=/nonexistent
+STELLA_REMOTE_CHAT=1
+EOF
+  chown root:"$DEMO_USER" "$DEMO_ENV"
+  chmod 640 "$DEMO_ENV"
+  (umask 077 && printf '%s\n' "$pass" > "$DEMO_PASS")
+  umask 022
+}
+
+demo_unit() {
+  cat > "$DEMO_UNIT" <<EOF
+[Unit]
+Description=Stella Pocket: тестовая версия на сервере (учебные вызовы, без коробки)
+After=network.target
+
+[Service]
+User=$DEMO_USER
+Group=$DEMO_USER
+WorkingDirectory=$DEMO_DIR
+EnvironmentFile=$DEMO_ENV
+# каждый запуск с чистой базой: учебные вызовы появляются заново, чужие сообщения исчезают
+ExecStartPre=/bin/sh -c 'rm -f $DEMO_STATE/stella.db $DEMO_STATE/stella.db-wal $DEMO_STATE/stella.db-shm $DEMO_STATE/mode.json $DEMO_STATE/demo.json'
+ExecStart=$DEMO_DIR/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port $HTTP_PORT --workers 1
+Restart=always
+RestartSec=3
+RuntimeMaxSec=1d
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=$DEMO_STATE
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+demo_links() {
+  say "  Чат:            https://$BOX/"
+  say "  Консоль:        https://$BOX/rescuer    PIN: $(sed -n 's/^STELLA_RESCUER_PIN=//p' "$DEMO_ENV" 2>/dev/null)"
+  say "  Настройки:      https://$BOX/admin      пароль: $(head -n 1 "$DEMO_PASS" 2>/dev/null)"
+  say "  Проверка узла:  https://$BOX/verify"
+  [ -n "$PROMO" ] && say "  Рекламный сайт: https://$PROMO/"
+}
+
+demo_on() {
+  local src="$HERE/.." owner code
+  need_root
+  load_conf || die "сначала настройте домены: sudo bash server/stella-server.sh install --box-domain ДОМЕН --promo-domain ДОМЕН"
+  [ -f "$src/app/main.py" ] && [ -f "$src/requirements.txt" ] || die "рядом со скриптом нет папок app/ и requirements.txt: запускайте из папки проекта"
+  owner=$(port_owner)
+  case "$owner" in
+    ""|python*|uvicorn*) ;;
+    sshd*) die "к адресу $BOX сейчас подключена настоящая коробка (туннель). Тестовая версия не нужна, она заняла бы ее место" ;;
+    *) die "порт 127.0.0.1:$HTTP_PORT занят программой $owner" ;;
+  esac
+  if ! demo_python_ok; then
+    die "нужен Python 3.10 или новее (Ubuntu 22.04+, Debian 12+). Сейчас: $(python3 --version 2>&1)"
+  fi
+  if ! python3 -c 'import ensurepip, venv' 2>/dev/null; then
+    have apt-get || die "нет модуля venv: поставьте python3-venv"
+    say "Ставлю python3-venv"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-venv > /dev/null || die "не удалось поставить python3-venv"
+  fi
+  if ! id "$DEMO_USER" > /dev/null 2>&1; then
+    useradd --system --user-group --home-dir "$DEMO_STATE" --no-create-home --shell /usr/sbin/nologin "$DEMO_USER" \
+      || die "не удалось создать пользователя $DEMO_USER"
+  fi
+  install -d -o "$DEMO_USER" -g "$DEMO_USER" -m 750 "$DEMO_STATE"
+  say "Копирую программу в $DEMO_DIR"
+  rm -rf "$DEMO_DIR.new"
+  mkdir -p "$DEMO_DIR.new"
+  cp -a "$src/app" "$src/requirements.txt" "$DEMO_DIR.new/"
+  [ -d "$src/site" ] && cp -a "$src/site" "$DEMO_DIR.new/"
+  rm -f "$DEMO_DIR.new/site/verify.html"
+  find "$DEMO_DIR.new" -name __pycache__ -prune -exec rm -rf {} +
+  if [ -x "$DEMO_DIR/venv/bin/python" ]; then mv "$DEMO_DIR/venv" "$DEMO_DIR.new/venv"; fi
+  rm -rf "$DEMO_DIR"
+  mv "$DEMO_DIR.new" "$DEMO_DIR"
+  if [ ! -x "$DEMO_DIR/venv/bin/python" ]; then
+    python3 -m venv "$DEMO_DIR/venv" || die "не удалось создать окружение Python"
+  fi
+  say "Ставлю библиотеки Python (1-2 минуты)"
+  "$DEMO_DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$DEMO_DIR/requirements.txt" \
+    || die "не удалось поставить библиотеки (нужен интернет у сервера)"
+  "$DEMO_DIR/venv/bin/python" -m compileall -q "$DEMO_DIR/app" > /dev/null 2>&1 || true
+  chown -R root:root "$DEMO_DIR"
+  chmod -R a+rX,go-w "$DEMO_DIR"
+  demo_env
+  demo_unit
+  systemctl daemon-reload
+  systemctl enable --now stella-demo > /dev/null 2>&1 || systemctl restart stella-demo
+  systemctl restart stella-demo
+  for _ in $(seq 1 30); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 3 -H "Host: $BOX" "http://127.0.0.1:$HTTP_PORT/api/health" 2>/dev/null) || code=000
+    [ "$code" = 200 ] && break
+    sleep 1
+  done
+  [ "$code" = 200 ] || die "тестовая версия не запустилась: journalctl -u stella-demo -n 50"
+  ok "тестовая версия работает (4 учебных вызова, ИИ отвечает по правилам, каждые сутки начинается заново)"
+  say ""
+  demo_links
+  say ""
+  say "Когда подключите настоящую коробку, сначала выключите тест: sudo bash server/stella-server.sh demo off"
+}
+
+demo_off() {
+  need_root
+  if [ -f "$DEMO_UNIT" ]; then
+    systemctl disable --now stella-demo > /dev/null 2>&1 || true
+  fi
+  ok "тестовая версия выключена. Пока коробка не подключена, домен показывает страницу «коробка не в сети»"
+}
+
+demo_remove() {
+  demo_off
+  rm -f "$DEMO_UNIT"
+  systemctl daemon-reload 2>/dev/null || true
+  if id "$DEMO_USER" > /dev/null 2>&1; then
+    pkill -u "$DEMO_USER" 2>/dev/null && sleep 2
+    userdel "$DEMO_USER" 2>/dev/null
+  fi
+  rm -rf "$DEMO_DIR" "$DEMO_STATE" "$DEMO_ENV" "$DEMO_PASS"
+}
+
+cmd_demo() {
+  case "${1:-status}" in
+    on|install|update) demo_on ;;
+    off|stop) demo_off ;;
+    remove) need_root; demo_remove; ok "тестовая версия удалена" ;;
+    status)
+      load_conf || die "сначала install"
+      if systemctl is-active --quiet stella-demo 2>/dev/null; then
+        ok "тестовая версия работает"
+        demo_links
+      else
+        say "Тестовая версия выключена. Включить: sudo bash server/stella-server.sh demo on"
+      fi
+      ;;
+    *) die "есть: demo on, demo off, demo status, demo remove" ;;
+  esac
 }
 
 main() {
@@ -466,6 +688,7 @@ main() {
     pair) need_root; load_conf || die "сначала install"; print_pair ;;
     status) cmd_status ;;
     uninstall) cmd_uninstall ;;
+    demo) cmd_demo "$@" ;;
     *) usage; return 1 ;;
   esac
 }

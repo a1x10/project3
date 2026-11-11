@@ -94,3 +94,6 @@ TUNNEL_ENV = Path(os.getenv("STELLA_TUNNEL_ENV", "/etc/stella/tunnel.env"))
 TLS_INFO = Path(os.getenv("STELLA_TLS_INFO", "/etc/stella/tls/info.json"))
 UPDATE_REPO = os.getenv("STELLA_UPDATE_REPO", "https://github.com/a1x10/project3.git")
 UPDATE_BRANCH = os.getenv("STELLA_UPDATE_BRANCH", "claude/peaceful-dirac-2n2fs6")
+
+# Тестовая версия на сервере: учебные вызовы, плашка «не служба спасения», настройки только показываются
+DEMO = os.getenv("STELLA_DEMO", "0") == "1"
