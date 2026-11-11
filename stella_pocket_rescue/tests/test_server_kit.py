@@ -89,3 +89,65 @@ def test_forced_command_refuses_everything_else(command, tmp_path):
 
 def test_forced_command_ping(tmp_path):
     assert run_cmd("ping", tmp_path).stdout.strip() == "pong"
+
+
+STUBS = r"""
+set -u
+STELLA_SERVER_LIB=1 source "$SCRIPT"
+need_root() { :; }
+nginx() { return 0; }
+ssh() { echo "OpenSSH_9.6p1 Ubuntu"; }
+getent() { return 1; }
+hostname() { echo; }
+have() { case "$1" in docker|certbot) return 1 ;; *) return 0 ;; esac; }
+pick_nginx_file() { :; }
+claimed_by_others() { :; }
+systemctl() { echo "systemctl $*"; }
+BOX=box.example.org
+"""
+
+
+def run_lib(script, env=None, timeout=30):
+    full = {"PATH": "/usr/bin:/bin", "SCRIPT": str(SCRIPT), **(env or {})}
+    return subprocess.run(["bash", "-c", STUBS + script], capture_output=True, text=True, env=full, timeout=timeout)
+
+
+@pytest.mark.parametrize("need,code", [(0, 0), (1, 1)])
+def test_forwarding_off_only_blocks_the_real_tunnel(need, code):
+    r = run_lib(f'sshd() {{ echo "allowtcpforwarding no"; }}\nNEED_TUNNEL={need}; checks; echo "rc=$?"')
+    assert f"rc={code}" in r.stdout, r.stdout + r.stderr
+    assert "ssh-allow" in r.stdout
+
+
+def fake_sshd(fail_test=False):
+    return f"""
+sshd() {{
+  case " $* " in
+    *" -t "*) {"return 1" if fail_test else "return 0"} ;;
+    *) if grep -q "Match User stella-tunnel" "$SSHD_CONFIG"; then echo "allowtcpforwarding remote"; else echo "allowtcpforwarding no"; fi ;;
+  esac
+}}
+"""
+
+
+def test_ssh_allow_appends_one_block_at_the_end(tmp_path):
+    conf = tmp_path / "sshd_config"
+    original = "AllowTcpForwarding no\nPasswordAuthentication no\n"
+    conf.write_text(original, encoding="utf-8")
+    env = {"STELLA_SSHD_CONFIG": str(conf)}
+    r = run_lib(fake_sshd() + "cmd_ssh_allow; cmd_ssh_allow", env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = conf.read_text(encoding="utf-8")
+    assert text.startswith(original) and text.count("Match User stella-tunnel") == 1
+    tail = text[len(original):]
+    assert "AllowTcpForwarding remote" in tail and "PermitTTY no" in tail and "X11Forwarding no" in tail
+    assert "systemctl reload ssh" in r.stdout and "уже разрешен" in r.stdout
+    assert list(tmp_path.glob("sshd_config.stella-backup.*"))
+
+
+def test_ssh_allow_rolls_back_when_sshd_refuses(tmp_path):
+    conf = tmp_path / "sshd_config"
+    conf.write_text("AllowTcpForwarding no\n", encoding="utf-8")
+    r = run_lib(fake_sshd(fail_test=True) + "cmd_ssh_allow", {"STELLA_SSHD_CONFIG": str(conf)})
+    assert r.returncode != 0 and "вернул файл как был" in r.stderr
+    assert conf.read_text(encoding="utf-8") == "AllowTcpForwarding no\n"

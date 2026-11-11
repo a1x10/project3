@@ -102,6 +102,17 @@ location / {
 **Оператор связи блокирует порт 22.** Добавьте в `/etc/ssh/sshd_config` вторую строку `Port 2222`,
 перезапустите sshd (`sudo systemctl restart ssh`) и запустите `install` с `--ssh-port 2222`.
 
+**sshd настроен строго (проброс портов запрещен).** Тестовой версии это не мешает: `check` покажет
+предупреждение, `install` и `demo on` пройдут. Настоящей коробке проброс нужен, его можно включить
+только для пользователя `stella-tunnel`, остальным ничего не изменится:
+
+```
+sudo bash server/stella-server.sh ssh-allow
+```
+
+Команда дописывает в конец `/etc/ssh/sshd_config` блок `Match User stella-tunnel`, проверяет его
+(`sshd -t`) и только потом перезагружает sshd. Если что-то не так, файл возвращается как был.
+
 **В sshd задан AllowUsers или AllowGroups.** Добавьте туда `stella-tunnel`.
 
 **nginx работает в Docker.** Скрипт рассчитан на nginx прямо на сервере. В Docker укажите в своем
