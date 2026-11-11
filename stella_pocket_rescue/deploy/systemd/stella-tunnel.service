@@ -1,0 +1,31 @@
+[Unit]
+Description=Stella Rescue: удаленный доступ через сервер (обратный SSH-туннель)
+After=network-online.target nginx.service
+Wants=network-online.target
+ConditionPathExists=/etc/stella/tunnel.env
+ConditionPathExists=/etc/stella/tunnel/id_ed25519
+ConditionPathExists=/etc/stella/tunnel/known_hosts
+StartLimitIntervalSec=0
+
+[Service]
+User=stellatun
+Group=stellatun
+EnvironmentFile=/etc/stella/tunnel.env
+ExecStartPre=-/usr/bin/timeout 25 /opt/stella/deploy/stella-tunnel.sh reset
+ExecStart=/opt/stella/deploy/stella-tunnel.sh
+Restart=always
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
