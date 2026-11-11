@@ -22,6 +22,9 @@ BOX_ROOT=/var/www/stella-box
 DOMAIN_RX='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}[a-z0-9]$'
 KEY_RX='^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/=]{40,800}( [^[:cntrl:]]{0,100})?$'
 
+SSHD_CONFIG="${STELLA_SSHD_CONFIG:-/etc/ssh/sshd_config}"
+ALLOW_MARK="# Stella Pocket: туннель коробки"
+NEED_TUNNEL=0
 BOX="" PROMO="" BOX_KEY="" EMAIL="" HTTP_PORT=18080 SSH_FWD_PORT=18022 SSH_HOST="" SSH_PORT="" NO_TLS=0 DRY=0
 NGINX_FILE="" NGINX_LINK=""
 
@@ -49,6 +52,7 @@ stella-server.sh: доступ к коробке Stella Pocket через ваш
   key 'КЛЮЧ'      заменить ключ коробки (например, после переустановки коробки)
   promo           обновить рекламный сайт из папки site/ рядом со скриптом
   pair            снова напечатать строку STELLA-PAIR
+  ssh-allow       разрешить в sshd проброс портов только пользователю stella-tunnel (нужно коробке)
   demo on|off     тестовая версия на сервере без коробки: учебные вызовы, ИИ по правилам
   demo status     адреса, PIN консоли и пароль настроек тестовой версии
   status          что настроено и на связи ли коробка
@@ -146,7 +150,7 @@ pick_nginx_file() {
 
 sshd_value() {
   local key="$1"
-  sshd -T -C "user=$TUNNEL_USER,host=$BOX,addr=127.0.0.1" 2>/dev/null | awk -v k="$key" '$1 == k { $1 = ""; sub(/^ /, ""); print; exit }'
+  sshd -T -f "$SSHD_CONFIG" -C "user=$TUNNEL_USER,host=${BOX:-localhost},addr=127.0.0.1" 2>/dev/null | awk -v k="$key" '$1 == k { $1 = ""; sub(/^ /, ""); print; exit }'
 }
 
 checks() {
@@ -185,11 +189,15 @@ checks() {
     v=$(ssh -V 2>&1 | sed -n 's/^OpenSSH_\([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
     if [ -n "$v" ] && { [ "${v% *}" -gt 7 ] || { [ "${v% *}" = 7 ] && [ "${v#* }" -ge 8 ]; }; }; then ok "OpenSSH ${v/ /.}"
     else warn "нужен OpenSSH 7.8 или новее (permitlisten)"; errors=$((errors + 1)); fi
-    case "$(sshd_value allowtcpforwarding)" in
-      no|local) warn "в sshd запрещен проброс портов (AllowTcpForwarding). Разрешите хотя бы для пользователя $TUNNEL_USER, см. README"; errors=$((errors + 1)) ;;
-      *) ok "sshd разрешает обратный проброс" ;;
-    esac
-    if [ "$(sshd_value disableforwarding)" = yes ]; then warn "в sshd включен DisableForwarding"; errors=$((errors + 1)); fi
+    if sshd_tunnel_ok; then
+      ok "sshd разрешает туннель коробки"
+    elif [ "$NEED_TUNNEL" = 1 ]; then
+      warn "в sshd запрещен проброс портов: включите его только для $TUNNEL_USER командой: sudo bash $0 ssh-allow"
+      errors=$((errors + 1))
+    else
+      warn "в sshd запрещен проброс портов. Тестовой версии это не мешает."
+      warn "  Для настоящей коробки потом: sudo bash $0 ssh-allow (только для $TUNNEL_USER)"
+    fi
     if sshd -T 2>/dev/null | grep -qE '^(allowusers|allowgroups) '; then
       warn "в sshd задан AllowUsers или AllowGroups: добавьте туда $TUNNEL_USER, иначе коробка не войдет"
     fi
@@ -198,6 +206,38 @@ checks() {
   fi
   if [ "$NO_TLS" = 0 ] && ! have certbot; then warn "нет certbot: поставлю его (apt install certbot)"; fi
   return "$errors"
+}
+
+sshd_tunnel_ok() {
+  case "$(sshd_value allowtcpforwarding)" in no|local|"") return 1 ;; esac
+  [ "$(sshd_value disableforwarding)" != yes ]
+}
+
+cmd_ssh_allow() {
+  local backup
+  need_root
+  have sshd || die "на сервере нет sshd"
+  [ -f "$SSHD_CONFIG" ] || die "нет файла $SSHD_CONFIG"
+  if grep -qF "$ALLOW_MARK" "$SSHD_CONFIG"; then
+    if sshd_tunnel_ok; then ok "туннель коробки в sshd уже разрешен"; return 0; fi
+    die "блок Stella в $SSHD_CONFIG есть, но проброс все равно запрещен: проверьте файлы в /etc/ssh/sshd_config.d"
+  fi
+  backup="$SSHD_CONFIG.stella-backup.$(date +%Y%m%d%H%M%S)"
+  cp -p "$SSHD_CONFIG" "$backup" || die "не удалось сделать копию $SSHD_CONFIG"
+  # Match действует до конца файла, поэтому блок только в самом конце: общие настройки выше не меняются
+  printf '\n%s, только этому пользователю (stella-server.sh ssh-allow)\nMatch User %s\n    AllowTcpForwarding remote\n    DisableForwarding no\n    X11Forwarding no\n    PermitTTY no\n' \
+    "$ALLOW_MARK" "$TUNNEL_USER" >> "$SSHD_CONFIG"
+  if ! sshd -t -f "$SSHD_CONFIG" 2>/dev/null || ! sshd_tunnel_ok; then
+    cp -p "$backup" "$SSHD_CONFIG"
+    sshd -t -f "$SSHD_CONFIG" 2>&1 | sed 's/^/    /'
+    die "sshd не принял настройку, вернул файл как был (копия: $backup)"
+  fi
+  if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null; then
+    ok "проброс портов разрешен только для $TUNNEL_USER, остальным пользователям ничего не изменилось"
+  else
+    warn "настройка записана, но sshd не перезагрузился: sudo systemctl reload ssh"
+  fi
+  say "  копия прежнего файла: $backup"
 }
 
 # ---------------------------------------------------------------- файлы
@@ -398,7 +438,7 @@ print_pair() {
 cmd_install() {
   local tls=1
   parse_args "$@"
-  [ -n "$BOX_KEY" ] && check_key
+  if [ -n "$BOX_KEY" ]; then check_key; NEED_TUNNEL=1; fi
   [ "$NO_TLS" = 1 ] && tls=0
   if [ "$DRY" = 1 ]; then
     pick_nginx_file
@@ -440,6 +480,7 @@ cmd_key() {
   load_conf || die "сначала: stella-server.sh install"
   BOX_KEY="${1:-}"
   check_key
+  sshd_tunnel_ok || die "в sshd запрещен проброс портов, коробка не сможет держать туннель. Сначала: sudo bash $0 ssh-allow"
   install_files
   ensure_user
   install_key
@@ -685,7 +726,13 @@ main() {
     install) cmd_install "$@" ;;
     key) cmd_key "$@" ;;
     promo) need_root; load_conf || die "сначала install"; deploy_promo ;;
-    pair) need_root; load_conf || die "сначала install"; print_pair ;;
+    pair)
+      need_root
+      load_conf || die "сначала install"
+      sshd_tunnel_ok || warn "в sshd запрещен проброс портов: сначала sudo bash $0 ssh-allow"
+      print_pair
+      ;;
+    ssh-allow) load_conf || true; cmd_ssh_allow ;;
     status) cmd_status ;;
     uninstall) cmd_uninstall ;;
     demo) cmd_demo "$@" ;;
