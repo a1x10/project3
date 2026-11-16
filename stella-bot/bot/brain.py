@@ -276,6 +276,10 @@ class Brain:
 
         KEYS.db = self.db  # ключи Groq и др. из панели
         await KEYS.load()
+        from .style_examples import STORE as STYLE
+
+        STYLE.db = self.db  # «как общаются ребята» — примеры из панели
+        await STYLE.load()
         self._custom_server()
         await load_overrides(self)  # настройки, изменённые в панели, важнее .env
         from .admin import LOCKS_KV
@@ -1077,6 +1081,11 @@ class Brain:
             outreach = await note_for(self, chat["id"])
             if outreach:
                 extra_hint = (extra_hint + " " + context_hint(self, outreach)).strip()
+        from .style_examples import STORE as STYLE
+
+        style = STYLE.hint(self.rng)
+        if style:  # живые примеры переписок, словечек и мемов — для тона
+            extra_hint = (extra_hint + "\n\n" + style).strip()
         if limit:  # спросит про лимит или подписку — знает, что ответить
             extra_hint = (extra_hint + " " + limit_hint(self.s, limit, used)).strip()
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)

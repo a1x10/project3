@@ -380,6 +380,11 @@ class ActiveBody(BaseModel):
     model: str = Field(default="", max_length=120)
 
 
+class StyleBody(BaseModel):
+    kind: str = Field(pattern="^(chat|slang|meme)$")
+    text: str = Field(min_length=3, max_length=20000)
+
+
 class PlanBody(BaseModel):
     kind: str = Field(pattern="^(free|unlimited|limit)$")  # бесплатно / подписка без лимита / свой лимит
     days: int = Field(default=0, ge=0, le=3650)  # 0 — навсегда
@@ -759,6 +764,31 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         await load_overrides(brain)
         log.warning("панель: модель теперь %s %s", body.backend, body.model or "")
         return {"ok": True, "active": active_info(brain.s)}
+
+    # ---------- как общаются ребята: примеры переписок, словечки, мемы ----------
+    @router.get("/style")
+    async def style_list(_: str = Depends(require_session)) -> dict[str, Any]:
+        from .style_examples import KINDS, STORE as STYLE
+
+        return {"items": STYLE.public(), "kinds": KINDS}
+
+    @router.post("/style")
+    async def style_add(body: StyleBody, _: str = Depends(require_session)) -> dict[str, Any]:
+        from .style_examples import STORE as STYLE
+
+        try:
+            item = await STYLE.add(body.kind, body.text)
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        return {"ok": True, "item": next(i for i in STYLE.public() if i["id"] == item["id"])}
+
+    @router.delete("/style/{item_id}")
+    async def style_delete(item_id: str, _: str = Depends(require_session)) -> dict[str, Any]:
+        from .style_examples import STORE as STYLE
+
+        if not await STYLE.remove(item_id):
+            raise HTTPException(404, detail="нет такого примера")
+        return {"ok": True}
 
     @router.get("/settings")
     async def get_settings(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:

@@ -502,7 +502,7 @@
     else if (name === "chats") { if (S.chat) loadMessages(); else loadChats(); }
     else if (name === "people") loadPeopleTab();
     else if (name === "keys") loadKeys(false);
-    else if (name === "settings") { if (!S.settingsDirty) loadSettings(); }
+    else if (name === "settings") { if (!S.settingsDirty) loadSettings(); loadStyle(); }
     else if (name === "log") loadLog(false);
   }
   function onTabKey(e) {
@@ -1297,6 +1297,52 @@
   function setDirty(v) {
     S.settingsDirty = v;
     $("settings-dirty").hidden = !v;
+  }
+  // ---------- как общаются ребята: примеры переписок, словечек и мемов ----------
+  async function loadStyle() {
+    const box = $("style-body");
+    try {
+      const r = await api("GET", "/style");
+      renderStyle(Array.isArray(r.items) ? r.items : [], r.kinds && typeof r.kinds === "object" ? r.kinds : {});
+    } catch (e) {
+      if (e.handled) return;
+      if (e.status === 404) setKids(box, h("h3", { class: "card-title", text: "Как общаются ребята" }),
+        h("p", { class: "muted small", text: "Обнови бота на сервере — этот раздел появится." }));
+      else showError(e);
+    }
+  }
+  function renderStyle(items, kinds) {
+    const box = $("style-body");
+    const kindSel = h("select", { id: "style-kind", "aria-label": "Что добавить" },
+      Object.entries(kinds).map(([v, t]) => h("option", { value: v, text: valueText(t) })));
+    const text = h("textarea", { id: "style-text", rows: 6, maxLength: 20000,
+      placeholder: "Вставь кусок переписки, словечки с объяснением или мемы/шутки. Номера телефонов скроются сами, имена лучше убрать." });
+    const add = h("button", { type: "button", class: "btn primary", text: "Добавить" });
+    add.addEventListener("click", () => busy(add, async () => {
+      const t = text.value.trim();
+      if (t.length < 3) { toast("Сначала вставь текст", "bad"); text.focus(); return; }
+      await api("POST", "/style", { kind: kindSel.value, text: t });
+      text.value = "";
+      toast("Добавлено — Стелла будет так общаться");
+      await loadStyle();
+    }));
+    const list = items.length ? h("ul", { class: "facts" }, items.slice().reverse().map((it) => {
+      const del = h("button", { type: "button", class: "btn small ghost", text: "Удалить", "aria-label": "Удалить пример" });
+      del.addEventListener("click", () => {
+        if (!confirm("Удалить этот пример?")) return;
+        busy(del, async () => { await api("DELETE", `/style/${encodeURIComponent(String(it.id))}`); await loadStyle(); });
+      });
+      const preview = valueText(it.text);
+      return h("li", {}, h("div", { class: "muted small", text: `${valueText(it.kind_name || it.kind)} · ${Number(it.chars) || 0} симв.` }),
+        h("div", { text: preview.length > 280 ? preview.slice(0, 280) + "…" : preview }), del);
+    })) : h("p", { class: "muted small", text: "Пока пусто — добавь примеры, и Стелла заговорит как ребята из них." });
+    setKids(box,
+      h("h3", { class: "card-title", text: "Как общаются ребята" }),
+      h("p", { class: "muted small", text: "Переписки, словечки, мемы. К каждому ответу Стелла берёт немного случайных примеров и пишет в том же духе (дословно не копирует)." }),
+      h("label", { for: "style-kind", text: "Что добавить" }), kindSel,
+      h("label", { for: "style-text", text: "Текст" }), text,
+      h("div", { class: "btn-row" }, add),
+      h("h4", { class: "sub-title", text: `Примеры (${items.length})` }), list);
   }
   async function loadSettings() {
     const box = $("settings-body");
