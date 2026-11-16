@@ -50,7 +50,9 @@ DEFAULT_LIMIT_MESSAGE = ("Вы достигли лимита сообщений 
 @dataclass
 class Settings:
     # --- модель ---
-    llm_backend: str = field(default_factory=lambda: _str("LLM_BACKEND", "agent_sdk"))
+    # openrouter — по ключу OpenRouter (панель «Ключи» или OPENROUTER_API_KEY), модель ALT_MODEL (по умолчанию
+    # ~deepseek/deepseek-flash-latest); agent_sdk / messages_api — Anthropic
+    llm_backend: str = field(default_factory=lambda: _str("LLM_BACKEND", "openrouter"))
     llm_model: str = field(default_factory=lambda: _str("LLM_MODEL", "claude-opus-5-5"))
     # high — умно и всё ещё быстро для чата; xhigh/max — ещё глубже, но ответ в чате может идти минуты
     llm_effort: str = field(default_factory=lambda: _str("LLM_EFFORT", "high"))
@@ -62,13 +64,11 @@ class Settings:
     llm_switch_at: date | None = field(default_factory=lambda: _date("LLM_SWITCH_AT"))
     # off — с этой даты модель выключена: ни одного запроса к Anthropic, свой баланс не тратится (команды,
     # казино, напоминания работают); messages_api — дальше работать за свой баланс API
-    llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "off"))
-    # что она отвечает, когда к ней обращаются, а модель выключена (одному чату — не чаще раза в 6 часов)
-    # модель у Groq / OpenRouter / Gemini / OpenAI (ключи — в панели, «Ключи»); пусто — модель провайдера по умолчанию
+    llm_backend_after: str = field(default_factory=lambda: _str("LLM_BACKEND_AFTER", "openrouter"))
+    # модель у OpenRouter; пусто — ~deepseek/deepseek-flash-latest
     alt_model: str = field(default_factory=lambda: _str("ALT_MODEL"))
-    # «Свой сервер» (LLM_BACKEND=custom): любой OpenAI-совместимый адрес вида https://…/v1 и ключ к нему
-    custom_base_url: str = field(default_factory=lambda: _str("CUSTOM_BASE_URL"))
-    custom_api_key: str = field(default_factory=lambda: _str("CUSTOM_API_KEY"))
+    openrouter_api_key: str = field(default_factory=lambda: _str("OPENROUTER_API_KEY"))
+    # что она отвечает, когда к ней обращаются, а модель выключена (одному чату — не чаще раза в 6 часов)
     model_off_message: str = field(default_factory=lambda: _str("MODEL_OFF_MESSAGE", "Я пока на паузе 🙏"))
     llm_model_after: str = field(default_factory=lambda: _str("LLM_MODEL_AFTER", "claude-opus-5-5"))
     # Opus думает дольше, а презентация или видео — это длинный ответ: даём до 3 минут
@@ -276,8 +276,8 @@ class Settings:
             kind, model = self.llm_backend_after, self.llm_model_after
         else:
             kind, model = self.llm_backend, self.llm_model
-        if kind not in ANTHROPIC_BACKENDS and kind != "off":  # Groq и др. — своя модель
-            model = self.alt_model
+        if kind not in ANTHROPIC_BACKENDS and kind != "off":  # OpenRouter (Groq, свой сервер и др. убраны — туда же)
+            kind, model = "openrouter", self.alt_model
         return kind, model
 
     def model_off(self, today: date | None = None) -> bool:
@@ -286,7 +286,7 @@ class Settings:
         return self.backend_for(today or self.local_today())[0] == "off"
 
     def anthropic_off(self, today: date | None = None) -> bool:
-        """Сейчас не Anthropic (выключено или Groq и т. п.): страницы и песочница — только Anthropic, их не зовём."""
+        """Сейчас не Anthropic (выключено или OpenRouter): страницы и песочница — только Anthropic, их не зовём."""
         return self.backend_for(today or self.local_today())[0] not in ANTHROPIC_BACKENDS
 
     def local_today(self) -> date:

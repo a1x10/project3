@@ -38,7 +38,7 @@ def make_backend(kind: str, model: str, settings: Settings) -> LLM:
         return MessagesApiLLM(default_model=model, effort=settings.llm_effort, timeout=settings.llm_timeout)
     from ..keys import PROVIDERS, STORE
 
-    if kind in PROVIDERS:  # Groq, OpenRouter, Gemini, OpenAI — ключи из панели
+    if kind in PROVIDERS:  # OpenRouter — ключи из панели или OPENROUTER_API_KEY
         from .openai_compat import OpenAICompatLLM
 
         return OpenAICompatLLM(kind, model, STORE, effort=settings.llm_effort, timeout=settings.llm_timeout)

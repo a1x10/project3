@@ -274,13 +274,13 @@ class Brain:
         await self.db.init()
         from .keys import STORE as KEYS
 
-        KEYS.db = self.db  # ключи Groq и др. из панели
+        KEYS.db = self.db  # ключи OpenRouter из панели
         await KEYS.load()
         from .style_examples import STORE as STYLE
 
         STYLE.db = self.db  # «как общаются ребята» — примеры из панели
         await STYLE.load()
-        self._custom_server()
+        self._env_keys()
         await load_overrides(self)  # настройки, изменённые в панели, важнее .env
         from .admin import LOCKS_KV
 
@@ -313,14 +313,13 @@ class Brain:
         """Настройки поменяли в панели: пересобрать то, что от них зависит."""
         self.system = system_prompt(self.s)
         self._make_voice()
-        self._custom_server()
+        self._env_keys()
 
-    def _custom_server(self) -> None:
-        """Адрес и ключ «своего сервера» (OpenAI-совместимого) — из настроек в общий список ключей."""
-        from .keys import CUSTOM
+    def _env_keys(self) -> None:
+        """Ключ OpenRouter из .env (OPENROUTER_API_KEY) — в общий список ключей."""
+        from .keys import ENV_KEYS
 
-        CUSTOM["base_url"] = self.s.custom_base_url.strip()
-        CUSTOM["env_key"] = self.s.custom_api_key.strip()
+        ENV_KEYS["openrouter"] = self.s.openrouter_api_key.strip()
 
     def _make_voice(self) -> None:
         """Создаёт распознавание и озвучку; при смене модели в панели старая выгружается из памяти."""

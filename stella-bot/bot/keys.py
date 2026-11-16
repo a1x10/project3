@@ -1,4 +1,4 @@
-"""Ключи других провайдеров (Groq, OpenRouter, Gemini, OpenAI) — добавляются в панели, их может быть несколько.
+"""Ключи OpenRouter — добавляются в панели (или OPENROUTER_API_KEY в .env), их может быть несколько.
 
 - Ключи хранятся в БД (kv «api_keys»), наружу — только в замаскированном виде (gsk_…9f3A).
 - Несколько ключей одного провайдера работают по очереди: упёрся в лимит (429) — пауза этому ключу, берём
@@ -35,30 +35,19 @@ class Provider:
     hint: str
 
 
+DEFAULT_MODEL = "~deepseek/deepseek-flash-latest"  # «~…-latest» — всегда последняя модель DeepSeek Flash
+
 PROVIDERS: dict[str, Provider] = {p.id: p for p in (
-    Provider("groq", "Groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b",
-             ("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "llama-3.1-8b-instant"),
-             "https://console.groq.com/keys", "Бесплатно с лимитами в минуту и в сутки; очень быстрый"),
-    Provider("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto",
-             ("openrouter/auto",), "https://openrouter.ai/keys",
-             "Сотни моделей по одному ключу; есть бесплатные (с «:free» в названии)"),
-    Provider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-             "gemini-2.5-flash", ("gemini-2.5-flash", "gemini-2.5-pro"), "https://aistudio.google.com/apikey",
-             "Бесплатный уровень с лимитами"),
-    Provider("custom", "Свой сервер", "", "auto", ("auto",), "",
-             "Любой OpenAI-совместимый адрес (Base URL — в Настройках: «Свой сервер: Base URL»)"),
-    Provider("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini", ("gpt-4.1-mini", "gpt-4.1"),
-             "https://platform.openai.com/api-keys", "Платно, по балансу аккаунта"),
+    Provider("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", DEFAULT_MODEL,
+             (DEFAULT_MODEL, "~deepseek/deepseek-pro-latest", "deepseek/deepseek-v4-flash", "openrouter/auto"),
+             "https://openrouter.ai/keys", "Сотни моделей по одному ключу; по умолчанию — DeepSeek Flash (дёшево)"),
 )}
 
-
-# «Свой сервер»: адрес и ключ из .env (CUSTOM_BASE_URL, CUSTOM_API_KEY) или панели — brain обновляет при старте
-CUSTOM: dict[str, str] = {"base_url": "", "env_key": ""}
+# ключ из .env (OPENROUTER_API_KEY) — в базе не хранится, в панели только в маске; brain обновляет при старте
+ENV_KEYS: dict[str, str] = {"openrouter": ""}
 
 
 def base_url_of(provider: str) -> str:
-    if provider == "custom":
-        return CUSTOM["base_url"].rstrip("/")
     return PROVIDERS[provider].base_url
 
 
@@ -116,21 +105,23 @@ class KeyStore:
 
     def public(self) -> list[dict[str, Any]]:
         items = list(self.keys)
-        if CUSTOM["env_key"] and not any(k.key == CUSTOM["env_key"] for k in items):
-            items.append(self._env_key())
+        for provider, env in ENV_KEYS.items():
+            if env and not any(k.key == env for k in items):
+                items.append(self._env_key(provider))
         return [k.public(self.cooldown.get(k.id)) for k in items]
 
     def has(self, provider: str) -> bool:
-        if provider == "custom" and CUSTOM["env_key"]:
+        if ENV_KEYS.get(provider):
             return True
         return any(k.provider == provider and not k.disabled for k in self.keys)
 
-    def _env_key(self) -> ApiKey:
-        """Ключ из .env (CUSTOM_API_KEY): в базе не хранится, в панели не показывается целиком."""
-        item = getattr(self, "_env_item", None)
-        if item is None or item.key != CUSTOM["env_key"]:
-            item = ApiKey(id="k_env", provider="custom", key=CUSTOM["env_key"], label="из .env")
-            self._env_item = item
+    def _env_key(self, provider: str) -> ApiKey:
+        """Ключ из .env (OPENROUTER_API_KEY): в базе не хранится, в панели не показывается целиком."""
+        cache = self.__dict__.setdefault("_env_items", {})
+        item = cache.get(provider)
+        if item is None or item.key != ENV_KEYS[provider]:
+            item = ApiKey(id=f"k_env_{provider}", provider=provider, key=ENV_KEYS[provider], label="из .env")
+            cache[provider] = item
         return item
 
     async def save(self) -> None:
@@ -160,8 +151,9 @@ class KeyStore:
     def candidates(self, provider: str) -> list[ApiKey]:
         """Ключи провайдера в порядке очереди: сначала свободные (по кругу), на паузе — в конце."""
         pool = [k for k in self.keys if k.provider == provider and not k.disabled]
-        if provider == "custom" and CUSTOM["env_key"] and not any(k.key == CUSTOM["env_key"] for k in pool):
-            pool.append(self._env_key())
+        env = ENV_KEYS.get(provider, "")
+        if env and not any(k.key == env for k in pool):
+            pool.append(self._env_key(provider))
         if not pool:
             return []
         start = self._turn.get(provider, 0) % len(pool)

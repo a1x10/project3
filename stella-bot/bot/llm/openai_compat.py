@@ -1,4 +1,4 @@
-"""Бэкенд для Groq, OpenRouter, Gemini, OpenAI — у всех один формат (OpenAI Chat Completions).
+"""Бэкенд для OpenRouter (формат OpenAI Chat Completions).
 
 Ключи берутся из панели (bot/keys.py): несколько ключей одного провайдера — по очереди; лимит (429) или
 перегрузка — пауза ключу и сразу следующий; ключ не принят (401/403) — следующий.
@@ -60,6 +60,12 @@ def _fit_prompt(prompt: str, budget_tokens: int) -> str:
     return "…(начало переписки не поместилось)\n" + prompt[-keep:]
 
 
+def _alias(model: str) -> str:
+    """У OpenRouter «последние версии» пишутся с тильдой: deepseek/deepseek-flash-latest → ~deepseek/…-latest."""
+    model = model.strip()
+    return "~" + model if model.endswith("-latest") and not model.startswith("~") else model
+
+
 class _TooLarge(Exception):
     pass
 
@@ -90,8 +96,8 @@ class OpenAICompatLLM:
 
         self.provider = PROVIDERS[provider]
         self.name = provider
-        self.default_model = (default_model if default_model and not default_model.startswith("claude")
-                              else self.provider.default_model)
+        self.default_model = (_alias(default_model) if default_model and default_model != "auto"
+                              and not default_model.startswith("claude") else self.provider.default_model)
         self.store = store
         self.effort = effort
         self.timeout = timeout
@@ -99,9 +105,9 @@ class OpenAICompatLLM:
 
     def _model(self, model: str | None) -> str:
         # модели Anthropic (память, страницы) этим провайдерам не подходят — тогда своя модель по умолчанию
-        if not model or model.startswith("claude"):
+        if not model or model.startswith("claude") or model == "auto":
             return self.default_model
-        return model
+        return _alias(model)
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         if not base_url_of(self.provider.id):
@@ -142,7 +148,7 @@ class OpenAICompatLLM:
         model = self._model(model)
         by_name = {t.name: t for t in tools}
         budget = MAX_INPUT_TOKENS
-        small = self.provider.id == "groq"  # у бесплатного Groq крошечный лимит токенов в минуту — ужимаем
+        small = False  # ужимать запрос (короткие описания, переписка с конца) — было нужно для бесплатного Groq
         if small:
             tool_defs = _slim_tools(tools, 300)
             if _tokens(system) + _tokens(tool_defs) > budget * 0.7:

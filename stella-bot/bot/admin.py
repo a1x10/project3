@@ -230,24 +230,22 @@ def install_ring_log() -> None:
 
 # ---------- настройки, которые можно менять из панели ----------
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
-BACKENDS = ["agent_sdk", "messages_api", "custom", "groq", "openrouter", "gemini", "openai"]
+BACKENDS = ["openrouter", "agent_sdk", "messages_api"]
 EDITABLE: list[dict[str, Any]] = [
     {"key": "llm_model", "label": "Модель", "type": "select", "options": MODELS,
      "hint": "Opus — самая умная (дороже Sonnet в 2 раза), Haiku — самая дешёвая"},
     {"key": "llm_effort", "label": "Сколько думать перед ответом", "type": "select",
      "options": ["low", "medium", "high"], "hint": "low — быстро и коротко; high — дольше и дороже"},
     {"key": "llm_backend", "label": "Где работает модель сейчас", "type": "select", "options": BACKENDS,
-     "hint": "agent_sdk — бонусные кредиты Anthropic; groq / openrouter / gemini / openai — по ключам из вкладки "
-             "«Ключи»; messages_api — платный баланс Anthropic"},
-    {"key": "custom_base_url", "label": "Свой сервер: Base URL", "type": "text", "max_len": 200,
-     "hint": "OpenAI-совместимый адрес, например https://example.org/v1; ключ — во вкладке «Ключи» → «Свой сервер»"},
-    {"key": "alt_model", "label": "Модель у своего сервера / Groq / OpenRouter / Gemini / OpenAI", "type": "text",
+     "hint": "openrouter — по ключу OpenRouter (вкладка «Ключи»); agent_sdk — бонусные кредиты Anthropic; "
+             "messages_api — платный баланс Anthropic"},
+    {"key": "alt_model", "label": "Модель OpenRouter", "type": "text",
      "max_len": 120,
-     "hint": "пусто — модель провайдера по умолчанию (у Groq — openai/gpt-oss-120b)"},
+     "hint": "пусто — ~deepseek/deepseek-flash-latest (DeepSeek Flash, дёшево); можно любую с openrouter.ai/models"},
     {"key": "llm_backend_after", "label": "После окончания бонусных кредитов", "type": "select",
-     "options": ["off", *BACKENDS[1:]],
-     "hint": "off — Стелла выключает модель и не тратит твой баланс (команды и казино работают); groq и др. — "
-             "дальше по ключам из «Ключей»; messages_api — за твой баланс Anthropic"},
+     "options": ["openrouter", "off", "messages_api"],
+     "hint": "openrouter — дальше по ключу OpenRouter; off — выключить модель (команды и казино работают); "
+             "messages_api — за твой баланс Anthropic"},
     {"key": "llm_model_after", "label": "Модель после окончания бонусных кредитов", "type": "select",
      "options": MODELS, "hint": "работает за твои деньги на API — Opus быстро съест баланс"},
     {"key": "daily_budget_usd", "label": "Лимит расходов в день, $", "type": "number", "min": 0, "max": 200,
@@ -365,7 +363,7 @@ class ProfileBody(BaseModel):
 
 
 class KeyBody(BaseModel):
-    provider: str = Field(pattern="^(custom|groq|openrouter|gemini|openai)$")
+    provider: str = Field(pattern="^(openrouter)$")
     key: str = Field(min_length=16, max_length=300)
     label: str = Field(default="", max_length=40)
 
@@ -376,7 +374,7 @@ class KeyPatch(BaseModel):
 
 
 class ActiveBody(BaseModel):
-    backend: str = Field(pattern="^(agent_sdk|messages_api|custom|groq|openrouter|gemini|openai)$")
+    backend: str = Field(pattern="^(openrouter|agent_sdk|messages_api)$")
     model: str = Field(default="", max_length=120)
 
 
@@ -675,7 +673,7 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
         n = await brain.db.forget_facts(person_id, chat_id, None)
         return {"ok": True, "deleted": n}
 
-    # ---------- ключи Groq / OpenRouter / Gemini / OpenAI ----------
+    # ---------- ключи OpenRouter ----------
     def active_info(s: Settings) -> dict[str, Any]:
         kind, model = s.backend_for(s.local_today())
         if kind in PROVIDERS and not model:
