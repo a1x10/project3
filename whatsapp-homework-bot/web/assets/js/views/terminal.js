@@ -3,7 +3,7 @@
 import { clock, h, on, post } from '../lib.js';
 
 const COMMANDS = ['help', 'status', 'logs', 'logs -f', 'dz', 'week', 'lessons', 'check', 'digest preview', 'digest send', 'plan', 'pause', 'resume', 'skip', 'groups', 'queue',
-  'wa status', 'wa reconnect', 'bilim status', 'bilim relogin', 'ai ask', 'ai keys', 'send', 'get', 'set', 'settings', 'alerts', 'uptime', 'whoami', 'date', 'clear', 'restart'];
+  'wa status', 'wa reconnect', 'bilim status', 'bilim relogin', 'ai ask', 'ai understand', 'ai brain', 'ai keys', 'say', 'notes', 'send', 'get', 'set', 'settings', 'alerts', 'uptime', 'whoami', 'date', 'clear', 'restart'];
 const BANNER = [
   '  ____   ___ _____   ____ _____',
   ' | __ ) / _ \\_   _| |  _ \\__  /',

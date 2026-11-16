@@ -45,6 +45,10 @@ const HELP = [
   ['wa status|reconnect|relink', 'WhatsApp: состояние, переподключение, новая привязка'],
   ['bilim status|relogin', 'BilimClass: вход, способ получения дневника'],
   ['ai ask <вопрос>', 'спросить ИИ (проверка)'],
+  ['ai understand <сообщение>', 'что бот поймёт из сообщения и что сделает'],
+  ['ai brain', 'кто думает: провайдеры и модели по ролям'],
+  ['say <текст>', 'написать в группу от имени бота'],
+  ['notes', 'заметки для ИИ'],
   ['ai keys', 'ключи ИИ'],
   ['send <номер|id> <текст>', 'написать от имени бота'],
   ['get <настройка> · set <настройка> <значение> · settings', 'настройки'],
@@ -121,6 +125,19 @@ export class Terminal {
       wa: (r) => this.wa(r[0]),
       bilim: (r) => this.bilim(r[0]),
       ai: (r) => this.ai(r),
+      say: async (r) => {
+        const text = r.join(' ').trim();
+        if (!text) return line('Формат: say <текст>', 'err');
+        const targets = a.core.targets();
+        if (!targets.length) return line('Нет подключённых групп', 'err');
+        for (const jid of targets) a.wa.sendText(jid, text, { meta: { by: 'admin' } }).catch(() => {});
+        return line(`✓ Отправлено в группы: ${targets.length}`, 'ok');
+      },
+      notes: () => {
+        const notes = a.core.store.data.notes || [];
+        if (!notes.length) return line('Заметок нет. Добавить: в панели («Мозг» → «Заметки») или командой !заметка в WhatsApp', 'dim');
+        return notes.map((n) => line(`№${n.id}  ${n.subject ? `${n.subject}: ` : ''}${n.text}${n.until ? `  (до ${n.until})` : ''}`));
+      },
       send: (r) => this.send(r),
       get: (r) => {
         const row = a.settings.describe().find((f) => f.path === r[0]);
@@ -312,7 +329,24 @@ export class Terminal {
       const answer = await a.assistant.answer({ question, senderName: 'Админ', isPrivate: true });
       return answer.split('\n').map((t) => line(t, 'acc'));
     }
-    return line('ai ask <вопрос> · ai keys', 'dim');
+    if (sub === 'understand') {
+      const text = rest.join(' ');
+      if (!text) return line('Формат: ai understand <сообщение из чата>', 'err');
+      const d = await a.assistant.understand({ text, senderName: 'Ученик' });
+      const what = { send_homework: 'пришлёт ДЗ', send_schedule: 'пришлёт расписание', ask_task: 'попросит прислать пример', answer: 'ответит', react: 'поставит реакцию', ignore: 'промолчит' }[d.action] || d.action;
+      return [
+        line(`Решение: ${what}`, d.action === 'ignore' ? 'dim' : 'ok'),
+        line(`  к боту: ${d.toBot} · уверенность ${Math.round(d.confidence * 100)}% · ${d.by === 'ai' ? `${d.provider}: ${d.model}, ${d.ms} мс` : 'по правилам'}`),
+        d.day || d.subject || d.task ? line(`  день: ${d.day || '—'} · предмет: ${d.subject || '—'} · задание: ${d.task || '—'}`) : null,
+        line(`  почему: ${d.reason || '—'}`, 'dim'),
+      ].filter(Boolean);
+    }
+    if (sub === 'brain') {
+      const st = a.ai.status();
+      const names = { chat: 'ответы', understand: 'понимание', vision: 'фото' };
+      return Object.entries(st.roles).map(([role, r]) => line(`${names[role].padEnd(10)} ${r.provider ? `${r.provider}: ${r.model}` : 'нет ключа'}${r.fallback.length ? `  (запас: ${r.fallback.join(', ')})` : ''}`, r.provider ? 'ok' : 'err'));
+    }
+    return line('ai ask <вопрос> · ai understand <сообщение> · ai brain · ai keys', 'dim');
   }
 
   async send(args) {

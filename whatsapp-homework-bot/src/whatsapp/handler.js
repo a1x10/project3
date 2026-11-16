@@ -1,5 +1,6 @@
 // Обработка входящих сообщений: команды и ответы ИИ на вопросы по ДЗ.
 import { downloadMediaMessage } from 'baileys';
+import { askTaskText, dayArg, heuristicDecision, isThanks, looksLikeStudyQuestion, mentionsStudy } from '../ai/assistant.js';
 import { BilimAuthError } from '../bilimclass/client.js';
 import { errText } from '../logger.js';
 import { RateLimiter } from '../utils/ratelimit.js';
@@ -10,6 +11,8 @@ import { parseMessage } from './message.js';
 
 const MAX_MESSAGE_AGE_MS = 3 * 60 * 1000; // старые сообщения (пришедшие после переподключения) не обрабатываем
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const AWAIT_TASK_MS = 15 * 60 * 1000; // сколько ждать пример, который бот попросил прислать
+const THANKS_REACTIONS = ['❤️', '🥰', '🙏', '👍', '🔥'];
 const GREETING = /^(привет\S*|здравствуй\S*|здрасьте|салам\S*|салем\S*|сәлем\S*|қайырлы\s+\S+|добр\S+\s+(утро|день|вечер)|хай|hi|hello|hey|ку|йо)[\s!.,)]*$/i;
 
 // Длинный ответ — несколькими сообщениями, как пишут люди (не больше трёх)
@@ -37,8 +40,10 @@ export function splitHuman(text, { max = 3, minSize = 450 } = {}) {
 export const typingMs = (text, random = Math.random) => Math.min(7000, Math.max(1000, String(text).length * 28)) + Math.round(random() * 500);
 
 export class MessageHandler {
-  constructor({ config, core, wa, homework, assistant, commands, logger, inbox = null }) {
+  constructor({ config, core, wa, homework, assistant, commands, logger, inbox = null, journal = null }) {
     this.inbox = inbox; // журнал переписки для панели
+    this.journal = journal; // что бот понял из сообщений — для панели
+    this.awaiting = new Map(); // «чат|отправитель» → { until, task, subject }: ждём от ученика полный пример
     this.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     this.config = config;
     this.core = core;
@@ -222,15 +227,76 @@ export class MessageHandler {
     return { explicit: false, question: ctx.text };
   }
 
+  // Последнее сообщение бота в чате было недавно (тогда «спасибо» скорее всего ему)
+  botRepliedRecently(chat, ms = 5 * 60 * 1000) {
+    const list = this.history.get(chat) || [];
+    const last = [...list].reverse().find((m) => m.fromBot);
+    return Boolean(last && Date.now() - last.at < ms);
+  }
+
+  // Стоит ли вообще отдавать сообщение ИИ на понимание (экономия лимитов на болтовне)
+  async isCandidate(ctx, text) {
+    if (this.config.ai.mode === 'all') return text.length >= 2;
+    const subjects = await this.homework.knownSubjects();
+    return mentionsStudy(text, subjects) || looksLikeStudyQuestion(text, subjects) || (isThanks(text) && this.botRepliedRecently(ctx.chat));
+  }
+
+  takeAwaiting(key) {
+    const state = this.awaiting.get(key);
+    if (!state) return null;
+    this.awaiting.delete(key);
+    return state.until > Date.now() ? state : null;
+  }
+
+  logDecision(ctx, text, decision, extra = {}) {
+    this.journal?.add({
+      chat: ctx.chat,
+      isGroup: ctx.isGroup,
+      name: ctx.name || '',
+      text: String(text || (ctx.hasImage ? '[фото]' : '')).slice(0, 240),
+      decision: {
+        action: decision.action, toBot: decision.toBot, confidence: decision.confidence, reason: decision.reason, by: decision.by,
+        provider: decision.provider || null, model: decision.model || null, ms: decision.ms || null, day: decision.day || null, subject: decision.subject || null, task: decision.task || null,
+      },
+      ...extra,
+    });
+  }
+
+  async react(ctx, emoji) {
+    try {
+      await this.wa.react?.(ctx.chat, ctx.raw.key, emoji);
+    } catch (error) {
+      this.logger.debug({ err: errText(error) }, 'Реакция не отправлена');
+    }
+  }
+
+  // «Скинь сюда весь пример — помогу»: отвечаем на сообщение (с цитатой) и ждём пример от этого ученика
+  async askForTask(ctx, decision) {
+    if (this.config.ai.humanLike) await this.wa.markRead(ctx.raw.key);
+    await this.wa.typing(ctx.chat, true);
+    await this.sleep(this.config.ai.humanLike ? 900 + Math.round(Math.random() * 900) : 0);
+    const text = askTaskText(decision);
+    if (ctx.isGroup) this.inbox?.record(ctx.chat, { dir: 'in', text: ctx.text, name: ctx.name, id: ctx.id });
+    await this.reply(ctx, text, { quote: ctx.isGroup });
+    await this.wa.typing(ctx.chat, false);
+    this.remember(ctx.chat, { name: this.config.ai.botName, text, fromBot: true });
+    this.awaiting.set(`${ctx.chat}|${ctx.sender || ctx.chat}`, { until: Date.now() + AWAIT_TASK_MS, task: decision.task, subject: decision.subject });
+  }
+
+  // Сообщение без команды: понять, о чём оно и кому, и сделать нужное — прислать ДЗ, расписание,
+  // попросить пример, ответить, поставить реакцию или промолчать
   async maybeAnswer(ctx) {
     if (!this.assistant.enabled) {
       if (!ctx.isGroup && ctx.text) await this.reply(ctx, 'ИИ-помощник сейчас выключен. Команды: !помощь');
       return;
     }
     const groupAi = !ctx.isGroup || this.core.groupSettings(ctx.chat).ai !== false;
-    let { explicit, question } = this.explicitCall(ctx);
-    const auto = groupAi && this.config.ai.mode === 'smart';
-    if (!explicit && !auto) return;
+    const mode = this.config.ai.mode;
+    let { explicit, question, replyToBot } = this.explicitCall(ctx);
+    // ученик прислал пример, который бот просил, — это обращение к боту
+    const awaiting = this.takeAwaiting(`${ctx.chat}|${ctx.sender || ctx.chat}`);
+    if (awaiting) explicit = true;
+    if (!explicit && (!groupAi || mode === 'mention')) return;
 
     // Голосовое: расшифровываем и дальше работаем как с текстом
     if (ctx.isVoice) {
@@ -254,19 +320,79 @@ export class MessageHandler {
       if (!question) return;
     }
 
+    // Что сделать с сообщением
+    let decision;
+    if (awaiting) {
+      decision = { action: 'answer', toBot: 'yes', confidence: 1, by: 'ждала пример', reason: `ученик прислал задание${awaiting.task ? ` ${awaiting.task}` : ''}` };
+    } else if (!question) {
+      if (!ctx.hasImage && !(ctx.quoted?.hasImage && explicit)) {
+        if (explicit) await this.reply(ctx, 'Слушаю 🙂 Напишите вопрос по домашке.');
+        return;
+      }
+      if (!explicit) return; // фото без подписи в группе — не наше дело
+      decision = { action: 'answer', toBot: 'yes', confidence: 1, by: 'фото', reason: 'прислали фото задания' };
+    } else {
+      if (!explicit && !(await this.isCandidate(ctx, question))) return;
+      const quotedInfo = ctx.quoted?.text ? { text: ctx.quoted.text, fromBot: Boolean(replyToBot) } : null;
+      if (this.core.usage('understand') >= (this.config.ai.understandDailyLimit ?? 800)) {
+        const subjects = await this.homework.knownSubjects();
+        decision = { ...heuristicDecision(question, { subjects, explicit, today: this.homework.today() }), reason: 'суточный лимит «понимания» исчерпан — решаю по правилам' };
+      } else {
+        this.core.countUsage('understand');
+        decision = await this.assistant.understand({
+          text: question, recent: this.recent(ctx.chat).slice(0, -1), explicit, isPrivate: !ctx.isGroup, quoted: quotedInfo, hasImage: ctx.hasImage, senderName: ctx.name,
+        });
+      }
+    }
+
+    const actions = this.config.ai.actions || {};
+    let action = decision.action;
+    if (!explicit) {
+      // сам вмешивается в разговор, только если уверен, что это к нему или общий вопрос по учёбе
+      const sure = decision.confidence >= 0.55 && decision.toBot !== 'no';
+      if (!sure || action === 'ignore') {
+        this.logDecision(ctx, question, decision, { done: 'промолчала' });
+        return;
+      }
+      if (action === 'react' && !this.botRepliedRecently(ctx.chat)) {
+        this.logDecision(ctx, question, decision, { done: 'промолчала (спасибо не ей)' });
+        return;
+      }
+    } else if (action === 'ignore') {
+      action = 'answer'; // к боту обратились — отвечает
+    }
+    const today = this.homework.today();
+    if (action === 'send_homework' && actions.sendHomework !== false) {
+      this.logDecision(ctx, question, decision, { done: 'прислала ДЗ' });
+      await this.runCommand(ctx, { name: 'homework', args: decision.day ? dayArg(decision.day, today) : decision.subject || '' });
+      return;
+    }
+    if (action === 'send_schedule' && actions.sendSchedule !== false) {
+      this.logDecision(ctx, question, decision, { done: 'прислала расписание' });
+      await this.runCommand(ctx, { name: 'schedule', args: dayArg(decision.day, today) });
+      return;
+    }
+    if (action === 'ask_task' && actions.askTask !== false && !ctx.hasImage && !decision.hasTaskText) {
+      this.logDecision(ctx, question, decision, { done: 'попросила пример' });
+      await this.askForTask(ctx, decision);
+      return;
+    }
+    if (action === 'react') {
+      this.logDecision(ctx, question, decision, { done: actions.react !== false ? 'реакция' : 'промолчала' });
+      if (actions.react !== false) await this.react(ctx, THANKS_REACTIONS[Math.floor(Math.random() * THANKS_REACTIONS.length)]);
+      return;
+    }
+    if (actions.answer === false && !explicit) {
+      this.logDecision(ctx, question, decision, { done: 'промолчала (ответы выключены)' });
+      return;
+    }
+    this.logDecision(ctx, question, decision, { done: 'ответила' });
+
     // Фото: своё или в сообщении, на которое отвечают
     let image = null;
     // ответ на фото с ДЗ от самого бота — картинку не скачиваем: всё ДЗ у ИИ и так есть из дневника
     const quotedFromBot = Boolean(ctx.quoted && (isBotJid(ctx.quoted.participant, this.wa.me) || this.botMessageIds.has(ctx.quoted.id)));
     const wantsImage = this.config.ai.images && (ctx.hasImage || (ctx.quoted?.hasImage && explicit && !quotedFromBot));
-    if (!explicit && auto) {
-      if (!question) return; // фото без подписи в группе — не наше дело
-      if (this.core.usage('classifier') >= this.config.ai.dailyLimit * 3) return;
-      this.core.countUsage('classifier');
-      const decision = await this.assistant.shouldRespond(question, this.recent(ctx.chat).slice(0, -1));
-      if (!decision.respond) return;
-      this.logger.debug({ reason: decision.reason }, 'ИИ решил ответить');
-    }
     if (wantsImage) {
       try {
         const source = ctx.hasImage
@@ -280,10 +406,13 @@ export class MessageHandler {
       }
     }
     if (!question && !image) {
-      if (explicit) await this.reply(ctx, 'Слушаю 🙂 Напишите вопрос по домашке.');
+      await this.reply(ctx, 'Не получилось открыть фото 😔 Напиши задание текстом — помогу.');
       return;
     }
-    await this.answer(ctx, { question, explicit, image });
+    const finalQuestion = awaiting
+      ? `Ученик прислал задание${awaiting.task ? ` ${awaiting.task}` : ''}${awaiting.subject ? ` (${awaiting.subject})` : ''}, которое ты просила прислать. Помоги решить и объясни:\n${question || '(задание на фото)'}`
+      : question;
+    await this.answer(ctx, { question: finalQuestion, explicit, image });
   }
 
   async answer(ctx, { question, explicit, image = null, fromCommand = false }) {

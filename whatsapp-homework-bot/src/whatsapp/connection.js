@@ -318,6 +318,12 @@ export class WhatsAppConnection extends EventEmitter {
     }
   }
 
+  // Реакция на сообщение (❤️ на «спасибо») — не через очередь: это мгновенный жест, а не сообщение
+  async react(jid, key, emoji) {
+    if (!this.isOpen || !key) return;
+    await this.sock.sendMessage(jid, { react: { text: emoji, key } });
+  }
+
   // Отметить сообщение прочитанным (синие галочки) — как живой человек, прежде чем ответить
   async markRead(key) {
     if (!this.isOpen || !key) return;

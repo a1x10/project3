@@ -17,6 +17,9 @@ const DEFAULT_STATE = () => ({
   usage: {}, // 'YYYY-MM-DD' -> { ai: n, voice: n, vision: n }
   alerts: {}, // ключ -> timestamp последнего уведомления админу
   alertLog: [], // журнал технических уведомлений для панели (последние 200)
+  notes: [], // заметки админа для ИИ: { id, text, subject, until, createdAt }
+  scheduled: [], // отложенные сообщения в группу: { id, text, kind: once|weekly, at, days, time, jids, enabled, lastRun }
+  nextNoteId: 1,
   nextManualId: 1,
 });
 
@@ -99,6 +102,8 @@ export class Store {
       }
       s.outbox = s.outbox.filter((m) => m.createdAt > Date.now() - 2 * DAY);
       s.alertLog = (s.alertLog || []).filter((a) => a.at > Date.now() - 30 * DAY);
+      s.notes = (s.notes || []).filter((n) => !n.until || Date.parse(`${n.until}T00:00:00Z`) >= today - 7 * DAY);
+      s.scheduled = (s.scheduled || []).filter((m) => m.kind !== 'once' || m.enabled || (m.createdAt || 0) > Date.now() - 14 * DAY);
     });
   }
 }

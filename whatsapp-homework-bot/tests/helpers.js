@@ -84,6 +84,10 @@ export class FakeWA extends EventEmitter {
 
   async typing() {}
 
+  async react(jid, key, emoji) {
+    this.reactions = [...(this.reactions || []), { jid, id: key?.id, emoji }];
+  }
+
   async markRead(key) {
     this.read = [...(this.read || []), key?.id];
   }

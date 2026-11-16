@@ -281,7 +281,7 @@ export class HomeworkService {
       days = await this.days(from, to);
       entries = await this.entriesDue(from, to);
     } catch (error) {
-      return `Дневник BilimClass сейчас недоступен (${error.message}). Не выдумывай ДЗ — скажи, что дневник временно недоступен.`;
+      return [`Дневник BilimClass сейчас недоступен (${error.message}). Не выдумывай ДЗ — скажи, что дневник временно недоступен.`, ...this.notesForAi()].join('\n');
     }
     const session = this.client.session || {};
     const lines = [
@@ -313,7 +313,19 @@ export class HomeworkService {
         lines.push(`[${WEEKDAYS_SHORT[weekdayOf(day.date) - 1]} ${toDM(day.date)}] ${lessons.join('; ')}`);
       }
     }
+    lines.push(...this.notesForAi());
     return lines.filter((l, i) => l || lines[i - 1]).join('\n');
+  }
+
+  // Заметки админа для ИИ (учебники, СОР, особые правила класса), которые ещё не истекли
+  activeNotes(today = this.today()) {
+    return (this.store.data.notes || []).filter((n) => !n.until || n.until >= today);
+  }
+
+  notesForAi() {
+    const notes = this.activeNotes();
+    if (!notes.length) return [];
+    return ['', 'Заметки админа класса (это правда, учитывай их):', ...notes.slice(0, 40).map((n) => `- ${n.subject ? `${n.subject}: ` : ''}${truncate(n.text, 400)}${n.until ? ` (до ${toDM(n.until)})` : ''}`)];
   }
 
   // Предметы, которые встречаются в расписании (для распознавания вопросов про ДЗ)

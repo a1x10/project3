@@ -125,6 +125,17 @@ export function buildConfig(env = process.env) {
       timeoutMs: int(env, 'GROQ_TIMEOUT_SECONDS', 60, { min: 10, max: 300 }) * 1000,
     },
 
+    // OpenRouter — сотни моделей по одному ключу (есть бесплатные). Модели можно сменить в панели («Мозг»).
+    openrouter: {
+      apiKey: str(env, 'OPENROUTER_API_KEY'),
+      baseUrl: str(env, 'OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
+      // openrouter/free — бесплатный роутер OpenRouter: сам выбирает доступную бесплатную модель
+      model: str(env, 'OPENROUTER_MODEL', 'openrouter/free'),
+      understandModel: str(env, 'OPENROUTER_UNDERSTAND_MODEL', 'openrouter/free'),
+      visionModel: str(env, 'OPENROUTER_VISION_MODEL', 'openrouter/free'),
+      timeoutMs: int(env, 'OPENROUTER_TIMEOUT_SECONDS', 60, { min: 10, max: 300 }) * 1000,
+    },
+
     schedule: {
       // after_lessons — рассылка, когда закончился последний урок (по расписанию из дневника);
       // fixed — каждый день в DIGEST_TIME; off — без ежедневной рассылки
@@ -167,7 +178,28 @@ export function buildConfig(env = process.env) {
     },
 
     ai: {
-      mode: oneOf(env, 'AI_MODE', 'smart', ['smart', 'mention', 'off']),
+      // all — ИИ читает каждое сообщение группы; smart — только похожие на учёбу/ДЗ (экономит лимиты);
+      // mention — только когда к боту обращаются; off — ИИ выключен
+      mode: oneOf(env, 'AI_MODE', 'smart', ['all', 'smart', 'mention', 'off']),
+      // кто отвечает: auto — OpenRouter, если есть его ключ, иначе Groq. Для каждой роли можно выбрать своё
+      routing: {
+        chat: { provider: oneOf(env, 'AI_PROVIDER', 'auto', ['auto', 'groq', 'openrouter']), model: '' },
+        understand: { provider: oneOf(env, 'AI_UNDERSTAND_PROVIDER', 'auto', ['auto', 'groq', 'openrouter']), model: '' },
+        vision: { provider: oneOf(env, 'AI_VISION_PROVIDER', 'auto', ['auto', 'groq', 'openrouter']), model: '' },
+      },
+      // «характер»: род (о себе), тон, эмодзи (0–3), длина ответов, свои указания
+      persona: {
+        gender: oneOf(env, 'BOT_GENDER', 'female', ['female', 'male']),
+        tone: oneOf(env, 'BOT_TONE', 'friendly', ['friendly', 'chill', 'tutor', 'strict', 'fun']),
+        emoji: int(env, 'BOT_EMOJI', 1, { min: 0, max: 3 }),
+        length: oneOf(env, 'BOT_LENGTH', 'normal', ['short', 'normal', 'detailed']),
+        custom: str(env, 'BOT_INSTRUCTIONS').slice(0, 1500),
+      },
+      // что бот делает сам, когда понял сообщение
+      actions: { sendHomework: true, sendSchedule: true, askTask: true, answer: true, react: true },
+      temperature: 0.6,
+      // сколько сообщений в сутки ИИ «читает» для понимания (защита лимитов бесплатных моделей)
+      understandDailyLimit: int(env, 'AI_UNDERSTAND_DAILY_LIMIT', 800, { min: 10, max: 100000 }),
       style: oneOf(env, 'AI_STYLE', 'tutor', ['tutor', 'hints']),
       voice: oneOf(env, 'AI_VOICE', 'all', ['all', 'direct', 'off']),
       images: bool(env, 'AI_IMAGES', true),

@@ -29,7 +29,7 @@ export const WEEKS = {
 export class FakeGroq {
   constructor() {
     this.calls = [];
-    this.classifierAnswer = '{"respond": true, "reason": "вопрос по ДЗ"}';
+    this.classifierAnswer = '{"action": "answer", "to_bot": "yes", "about_study": true, "confidence": 0.9, "reason": "вопрос по ДЗ"}';
     this.fail = null;
   }
 
@@ -38,6 +38,11 @@ export class FakeGroq {
     if (this.fail) throw this.fail;
     if (req.json) return { text: this.classifierAnswer, model: req.model };
     return { text: '**Ответ:** реши уравнение по шагам', model: req.model };
+  }
+
+  // только ответы (без запросов «понимания»)
+  get answers() {
+    return this.calls.filter((c) => !c.json);
   }
 
   async transcribe() {

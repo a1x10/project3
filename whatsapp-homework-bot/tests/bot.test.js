@@ -64,14 +64,14 @@ describe('обработка сообщений', () => {
 
   it('болтовня не тратит запросы к ИИ', async () => {
     await t.handler.handle(incoming({ chat: GROUP, text: 'всем привет' }));
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
     assert.equal(t.wa.sent.length, 0);
   });
 
   it('упоминание бота — ответ без классификатора', async () => {
     await t.handler.handle(incoming({ chat: GROUP, text: '@77000000000 привет, объясни дроби', contextInfo: { mentionedJid: ['77000000000@s.whatsapp.net'] } }));
-    assert.equal(t.groq.calls.length, 1);
-    assert.ok(!t.groq.calls[0].json, 'без классификатора');
+    assert.equal(t.groq.answers.length, 1);
+    assert.ok(!t.groq.answers[0].json);
     assert.equal(t.wa.sent.length, 1);
   });
 
@@ -80,29 +80,29 @@ describe('обработка сообщений', () => {
       chat: GROUP, text: 'а второй номер?',
       contextInfo: { stanzaId: 'X1', participant: '111111111111111@lid', quotedMessage: { conversation: 'ДЗ: № 250, 251' } },
     }));
-    assert.equal(t.groq.calls.length, 1);
-    assert.match(t.groq.calls[0].messages[1].content, /№ 250, 251/);
+    assert.equal(t.groq.answers.length, 1);
+    assert.match(t.groq.answers[0].messages[1].content, /№ 250, 251/);
   });
 
   it('обращение «бот, ...» в начале сообщения', async () => {
     await t.handler.handle(incoming({ chat: GROUP, text: 'бот, что такое фотосинтез' }));
-    assert.equal(t.groq.calls.length, 1);
-    assert.match(t.groq.calls[0].messages[1].content, /что такое фотосинтез/);
+    assert.equal(t.groq.answers.length, 1);
+    assert.match(t.groq.answers[0].messages[1].content, /что такое фотосинтез/);
   });
 
   it('режим mention: без явного обращения не отвечает', async () => {
     t = setup({ AI_MODE: 'mention' });
     await t.handler.handle(incoming({ chat: GROUP, text: 'как решить номер 250 по алгебре?' }));
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
   });
 
   it('!автоответ выкл отключает автоответы, но !спросить работает', async () => {
     await t.handler.handle(incoming({ chat: GROUP, sender: ADMIN, text: '!автоответ выкл' }));
     t.wa.sent = [];
     await t.handler.handle(incoming({ chat: GROUP, text: 'как решить номер 250 по алгебре?' }));
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
     await t.handler.handle(incoming({ chat: GROUP, text: '!спросить как решить номер 250?' }));
-    assert.equal(t.groq.calls.length, 1);
+    assert.equal(t.groq.answers.length, 1);
   });
 
   it('чужая группа: игнор всего, кроме привязки', async () => {
@@ -139,7 +139,7 @@ describe('обработка сообщений', () => {
     for (let i = 0; i < 4; i += 1) {
       await t.handler.handle(incoming({ chat: GROUP, text: `бот, вопрос ${i}` }));
     }
-    const answers = t.groq.calls.length;
+    const answers = t.groq.answers.length;
     assert.equal(answers, 2);
     assert.match(t.wa.texts()[2], /Слишком много вопросов/);
     assert.equal(t.wa.sent.length, 3, 'предупреждение о лимите — один раз');
@@ -153,10 +153,10 @@ describe('обработка сообщений', () => {
 
   it('личка: участнику класса отвечает, постороннему — нет', async () => {
     await t.handler.handle(incoming({ chat: STUDENT, text: 'объясни теорему Пифагора' }));
-    assert.equal(t.groq.calls.length, 1);
+    assert.equal(t.groq.answers.length, 1);
     await t.handler.handle(incoming({ chat: '79990000000@s.whatsapp.net', text: 'привет' }));
     assert.match(t.wa.texts().at(-1), /отвечаю только участникам/);
-    assert.equal(t.groq.calls.length, 1);
+    assert.equal(t.groq.answers.length, 1);
   });
 
   it('команды владельца номера с телефона работают, остальные свои сообщения — игнор', async () => {
@@ -167,7 +167,7 @@ describe('обработка сообщений', () => {
     const chatter = incoming({ chat: GROUP, text: 'как решить номер 250 по алгебре?' });
     chatter.key.fromMe = true;
     await t.handler.handle(chatter);
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
   });
 
   it('добавление и удаление ДЗ вручную', async () => {
@@ -445,9 +445,9 @@ describe('ДЗ фотографией', () => {
       chat: GROUP, text: 'как решить алгебру?',
       contextInfo: { stanzaId: 'BOTPHOTO', participant: '77000000000@s.whatsapp.net', quotedMessage: { imageMessage: { caption: '📚 Домашнее задание на завтра', mimetype: 'image/jpeg' } } },
     }));
-    assert.equal(t.groq.calls.length, 1);
-    assert.equal(typeof t.groq.calls[0].messages[1].content, 'string', 'без картинки — текстовый запрос');
-    assert.match(t.groq.calls[0].messages[1].content, /Домашнее задание на завтра/);
+    assert.equal(t.groq.answers.length, 1);
+    assert.equal(typeof t.groq.answers[0].messages[1].content, 'string', 'без картинки — текстовый запрос');
+    assert.match(t.groq.answers[0].messages[1].content, /Домашнее задание на завтра/);
     assert.ok(!t.warnings.some((w) => String(w[1]).includes('фото')), 'попытки скачать фото не было');
   });
 });

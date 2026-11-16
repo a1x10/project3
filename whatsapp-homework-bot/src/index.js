@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Assistant } from './ai/assistant.js';
 import { GroqClient } from './ai/groq.js';
+import { UnderstandJournal } from './ai/journal.js';
 import { BackupAi, KeyRing } from './ai/keys.js';
+import { AiRouter } from './ai/router.js';
 import { BilimAuthError, BilimClassClient } from './bilimclass/client.js';
 import { ResilientBilimClient } from './bilimclass/resilient.js';
 import { DiaryScreenshotter } from './bilimclass/screenshot.js';
@@ -66,24 +68,35 @@ async function main() {
   });
   const homework = new HomeworkService({ client: diary, store, config, logger: logger.child({ module: 'homework' }) });
 
-  // ИИ: ключи Groq (с автозаменой нерабочего) + запасной провайдер
+  // ИИ: ключи Groq и OpenRouter (с автозаменой нерабочего), роутер ролей (ответы / понимание / фото) + запасной провайдер
   const keys = new KeyRing({ secrets, envKey: config.groq.apiKey, logger: logger.child({ module: 'keys' }) }).load();
+  const orKeys = new KeyRing({
+    secrets, section: 'openrouter', provider: 'OpenRouter', keyHint: 'OpenRouter: начинается с sk-or-', envKey: config.openrouter.apiKey, logger: logger.child({ module: 'keys' }),
+  }).load();
   const backup = new BackupAi({ secrets, logger: logger.child({ module: 'backup-ai' }), timeoutMs: config.groq.timeoutMs });
   const groq = new GroqClient({ ...config.groq, keys, logger: logger.child({ module: 'groq' }) });
-  const assistant = new Assistant({ groq, homework, config, backup, logger: logger.child({ module: 'ai' }) });
+  const openrouter = new GroqClient({
+    keys: orKeys, baseUrl: config.openrouter.baseUrl, timeoutMs: config.openrouter.timeoutMs, flavor: 'openrouter', logger: logger.child({ module: 'openrouter' }),
+    headers: { 'HTTP-Referer': config.panel.publicUrl || 'https://github.com/a1x10/project3', 'X-Title': 'Bot DZ (WhatsApp homework bot)' },
+  });
+  const ai = new AiRouter({ config, clients: { groq, openrouter }, backup, logger: logger.child({ module: 'ai' }) });
+  const assistant = new Assistant({ ai, groq, homework, config, backup, logger: logger.child({ module: 'ai' }) });
+  const journal = new UnderstandJournal();
 
   const wa = new WhatsAppConnection({ config, store, logger: logger.child({ module: 'wa' }) });
   core = new BotCore({ config, store, wa, logger });
   core.assistant = assistant;
-  keys.on('invalid', ({ label, next }) => {
+  const onInvalidKey = ({ label, next, provider }) => {
     core.notifyAdmins(
-      `groq-key-${label}`,
+      `${provider}-key-${label}`,
       next
-        ? `Ключ Groq «${label}» перестал работать — бот сам переключился на «${next}». Замените ключ в панели («Ключи и доступ»).`
-        : `Ключ Groq «${label}» не работает, рабочих ключей больше нет — ИИ молчит${backup.client() ? ' (отвечает запасной ИИ)' : ''}. Добавьте ключ в панели («Ключи и доступ»).`,
+        ? `Ключ ${provider} «${label}» перестал работать — бот сам переключился на «${next}». Замените ключ в панели («Ключи и доступ»).`
+        : `Ключ ${provider} «${label}» не работает, рабочих ключей ${provider} больше нет${ai.anyKey ? ' — отвечает другой ИИ' : ' — ИИ молчит'}. Добавьте ключ в панели («Ключи и доступ»).`,
       24 * 3600 * 1000,
     );
-  });
+  };
+  keys.on('invalid', onInvalidKey);
+  orKeys.on('invalid', onInvalidKey);
 
   // Переписка для панели: личка целиком, в группах — сообщения бота и обращения к нему
   const inbox = Inbox.fromDataDir(config.dataDir, logger.child({ module: 'inbox' })).load();
@@ -116,7 +129,7 @@ async function main() {
   };
   const auth = new PanelAuth({ config, secrets, core, logger: logger.child({ module: 'panel' }) });
   const commands = new Commands({ core, homework, wa, scheduler, config, settings, panel: config.panel.enabled ? auth : null, logger: logger.child({ module: 'commands' }) });
-  const handler = new MessageHandler({ config, core, wa, homework, assistant, commands, inbox, logger: logger.child({ module: 'handler' }) });
+  const handler = new MessageHandler({ config, core, wa, homework, assistant, commands, inbox, journal, logger: logger.child({ module: 'handler' }) });
 
   // Изменения настроек на ходу
   settings.on('change', (paths) => {
@@ -128,7 +141,8 @@ async function main() {
       digest: scheduler.weekPlanLines(),
       poll: `каждые ${config.schedule.pollIntervalMinutes} мин`,
       ai: assistant.enabled ? config.ai.mode : 'выкл',
-      keys: keys.list().length,
+      keys: { groq: keys.list().length, openrouter: orKeys.list().length },
+      brain: Object.fromEntries(Object.entries(ai.status().roles).map(([role, r]) => [role, r.provider ? `${r.provider}: ${r.model}` : 'нет ключа'])),
       panel: config.panel.enabled ? (auth.methods().password || auth.methods().whatsapp ? 'вкл' : 'нет способа входа — задайте ADMIN_PANEL_PASSWORD или ADMIN_NUMBERS') : 'выкл',
       timezone: config.timezone,
     },
@@ -159,8 +173,8 @@ async function main() {
   });
 
   const server = startWebServer({
-    config, logger: logger.child({ module: 'web' }), wa, homework, core, auth, settings, secrets, scheduler, inbox, keys, backup, groq,
-    assistant, diary, bilim, siteBrowser, logBuffer, restart: supervised ? restart : null,
+    config, logger: logger.child({ module: 'web' }), wa, homework, core, auth, settings, secrets, scheduler, inbox, keys, orKeys, backup, groq, openrouter, ai,
+    assistant, journal, photos, commands, diary, bilim, siteBrowser, logBuffer, restart: supervised ? restart : null,
   });
   await wa.start();
   scheduler.start();

@@ -39,7 +39,7 @@ describe('личные сообщения', () => {
     assert.match(t.wa.texts()[0], /^Привет, Аня! 👋/);
     assert.match(t.wa.texts()[0], /Переписку с ботом может видеть админ класса/);
     assert.equal(t.wa.sent[0].options.quoted, undefined, 'в личке без цитаты');
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
     // второе сообщение — уже без приветствия
     await t.handler.handle(incoming({ chat: STUDENT, text: 'объясни теорему Пифагора' }));
     assert.equal(t.wa.texts().length, 2);
@@ -50,7 +50,7 @@ describe('личные сообщения', () => {
     const t = setup({}, { withInbox: true });
     t.inbox.record(STUDENT, { dir: 'in', text: 'был разговор' }); // не первый раз
     await t.handler.handle(incoming({ chat: STUDENT, text: 'скинь дз на завтра' }));
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
     assert.match(t.wa.texts()[0], /№ 250/);
     assert.ok(t.wa.read?.length, 'сообщение отмечено прочитанным');
   });
@@ -70,15 +70,15 @@ describe('личные сообщения', () => {
     t.inbox.record(STUDENT, { dir: 'in', text: 'привет' });
     t.inbox.takeover(STUDENT);
     await t.handler.handle(incoming({ chat: STUDENT, text: 'объясни теорему Пифагора' }));
-    assert.equal(t.groq.calls.length, 0);
+    assert.equal(t.groq.answers.length, 0);
     assert.equal(t.wa.sent.length, 0);
     assert.equal(t.inbox.get(STUDENT).unread, 2, 'сообщение видно в панели');
     t.inbox.setAi(STUDENT, 'on');
     await t.handler.handle(incoming({ chat: STUDENT, text: 'объясни теорему Пифагора' }));
-    assert.equal(t.groq.calls.length, 1);
+    assert.equal(t.groq.answers.length, 1);
     t.inbox.setAi(STUDENT, 'off');
     await t.handler.handle(incoming({ chat: STUDENT, text: 'а косинус?' }));
-    assert.equal(t.groq.calls.length, 1);
+    assert.equal(t.groq.answers.length, 1);
     // команды работают всегда
     await t.handler.handle(incoming({ chat: STUDENT, text: '!дз завтра' }));
     assert.match(t.wa.texts().at(-1), /№ 250/);
@@ -89,7 +89,7 @@ describe('личные сообщения', () => {
     t.inbox.record(STUDENT, { dir: 'in', text: 'что такое катет?' });
     t.inbox.record(STUDENT, { dir: 'out', text: 'Катет — сторона прямоугольного треугольника у прямого угла.' });
     await t.handler.handle(incoming({ chat: STUDENT, text: 'а гипотенуза?' }));
-    const { messages } = t.groq.calls[0];
+    const { messages } = t.groq.answers[0];
     assert.deepEqual(messages.slice(1).map((m) => m.role), ['user', 'assistant', 'user']);
     assert.equal(messages.at(-1).content, 'а гипотенуза?');
     assert.match(messages[0].content, /личной переписке/);
@@ -142,7 +142,7 @@ describe('ключи ИИ', () => {
     const result = await groq.chat({ model: 'm', messages: [] });
     assert.equal(result.text, 'ок');
     assert.deepEqual(used, ['Bearer gsk_env_key_000000000000', 'Bearer gsk_second_key_11111111111']);
-    assert.deepEqual(switched, [{ label: 'Ключ из .env', next: 'Запасной' }]);
+    assert.deepEqual(switched, [{ label: 'Ключ из .env', next: 'Запасной', provider: 'Groq' }]);
     const list = keys.list();
     assert.equal(list.find((k) => k.source === 'env').status, 'invalid');
     assert.equal(list.find((k) => k.label === 'Запасной').inUse, true);

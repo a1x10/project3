@@ -15,7 +15,8 @@ import { ConfigError } from '../config.js';
 import { HomeworkPhotos } from '../homework/message.js';
 import { isPrivateJid } from '../inbox.js';
 import { mask } from '../secrets.js';
-import { isPaused } from '../settings.js';
+import { FIELDS, isPaused } from '../settings.js';
+import { formatSchedule } from '../homework/format.js';
 import { addDays, formatClock, mondayOf, parseDayArg } from '../utils/dates.js';
 import { Terminal } from './console.js';
 
@@ -263,7 +264,9 @@ export function startWebServer(app) {
       },
       ai: {
         enabled: app.assistant.enabled, mode: config.ai.mode, provider: app.assistant.lastProvider, key: keyInUse?.label || null,
-        keys: app.keys.list().length, backup: app.backup.describe().enabled, today: usage[today]?.ai || 0, dailyLimit: config.ai.dailyLimit,
+        keys: app.keys.list().length + (app.orKeys?.list().length || 0), backup: app.backup.describe().enabled, today: usage[today]?.ai || 0, dailyLimit: config.ai.dailyLimit,
+        brain: Object.fromEntries(Object.entries(app.ai?.status().roles || {}).map(([role, r]) => [role, r.provider ? { provider: r.provider, model: r.model } : null])),
+        understood: usage[today]?.understand || 0,
       },
       digest: {
         today: plan?.date === today ? { at: plan.at != null ? formatClock(plan.at) : null, lessonsEnd: plan.lessonsEnd != null ? formatClock(plan.lessonsEnd) : null, source: plan.source, quiet: plan.quiet, scope: plan.scope } : null,
@@ -325,14 +328,228 @@ export function startWebServer(app) {
   route('GET', /^\/api\/logs$/, ({ url }) => ({ items: app.logBuffer.recent(Math.min(Number(url.searchParams.get('limit')) || 200, 1500), url.searchParams.get('level') || 'info') }));
   route('POST', /^\/api\/console$/, async ({ body, session }) => ({ output: await terminal.run(String(body.command || '').slice(0, 2000), { session }) }));
 
-  // проверка ИИ из панели
+  // «Мозг»: кто думает, модели, понимание, проверка, черновики
+  let modelsCache = { at: 0, list: [] };
+  async function openrouterModels(refresh) {
+    if (!refresh && modelsCache.list.length && Date.now() - modelsCache.at < 3600 * 1000) return modelsCache.list;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch(`${config.openrouter.baseUrl}/models`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`OpenRouter: HTTP ${res.status}`);
+      const data = await res.json();
+      const price = (v) => Math.round(Number(v || 0) * 1e8) / 100; // $ за 1 млн токенов
+      const list = (data.data || []).map((m) => ({
+        id: m.id,
+        name: m.name || m.id,
+        prompt: price(m.pricing?.prompt),
+        completion: price(m.pricing?.completion),
+        free: m.id.endsWith(':free') || m.id === 'openrouter/free' || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0),
+        vision: (m.architecture?.input_modalities || []).includes('image'),
+        json: (m.supported_parameters || []).includes('response_format'),
+        context: m.context_length || null,
+      })).filter((m) => !m.id.endsWith(':batch') && !/lyria|image-|imagen|tts|whisper|embed/i.test(m.id));
+      modelsCache = { at: Date.now(), list };
+      return list;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  route('GET', /^\/api\/ai\/status$/, () => {
+    const today = homework.today();
+    const usage = core.store.data.usage[today] || {};
+    return {
+      router: app.ai.status(),
+      config: { mode: config.ai.mode, routing: config.ai.routing, persona: config.ai.persona, actions: config.ai.actions, temperature: config.ai.temperature },
+      defaults: {
+        groq: { chat: config.groq.model, understand: config.groq.fastModel, vision: config.groq.visionModel },
+        openrouter: { chat: config.openrouter.model, understand: config.openrouter.understandModel, vision: config.openrouter.visionModel },
+      },
+      usage: { understand: usage.understand || 0, understandLimit: config.ai.understandDailyLimit, answers: usage.ai || 0, answersLimit: config.ai.dailyLimit },
+      journal: app.journal?.summary() || {},
+      voice: Boolean(app.groq?.hasKey),
+    };
+  });
+  route('GET', /^\/api\/ai\/models$/, async ({ url }) => {
+    const provider = url.searchParams.get('provider') || 'openrouter';
+    if (provider === 'groq') {
+      const test = await app.groq.testKey();
+      if (!test.ok) throw new HttpError(400, `Groq: ${test.message || 'нет ключа'}`);
+      return { models: test.models.filter((id) => !/whisper|tts|guard/i.test(id)).sort().map((id) => ({ id, name: id, free: true, vision: /vision|qwen3|llama-4|scout|maverick/i.test(id) })) };
+    }
+    try {
+      return { models: await openrouterModels(url.searchParams.get('refresh') === '1') };
+    } catch (error) {
+      throw new HttpError(502, `Не удалось получить список моделей OpenRouter: ${error.message}`);
+    }
+  });
+  route('POST', /^\/api\/ai\/understand$/, async ({ body }) => {
+    const text = String(body.text || '').trim().slice(0, 1000);
+    if (!text) throw new HttpError(400, 'Напишите сообщение');
+    if (!app.ai.anyKey) throw new HttpError(400, 'Нет ни одного ключа ИИ — добавьте OpenRouter или Groq в «Ключи и доступ»');
+    const decision = await app.assistant.understand({ text, explicit: Boolean(body.explicit), isPrivate: Boolean(body.isPrivate), senderName: 'Ученик' });
+    return { decision };
+  });
   route('POST', /^\/api\/ai\/ask$/, async ({ body }) => {
     const question = String(body.question || '').trim().slice(0, 2000);
     if (!question) throw new HttpError(400, 'Напишите вопрос');
-    if (!app.assistant.enabled) throw new HttpError(400, 'ИИ выключен или нет рабочего ключа — проверьте «Ключи и доступ»');
+    if (!app.ai.anyKey) throw new HttpError(400, 'Нет ни одного ключа ИИ — добавьте OpenRouter или Groq в «Ключи и доступ»');
+    let persona = null;
+    if (body.persona) {
+      try {
+        persona = FIELDS['ai.persona'].type.parse(body.persona);
+      } catch (error) {
+        throw new HttpError(400, error.message);
+      }
+    }
     const started = Date.now();
-    const answer = await app.assistant.answer({ question, senderName: 'Админ', isPrivate: true });
-    return { answer, ms: Date.now() - started, provider: app.assistant.lastProvider };
+    const answer = await app.assistant.answer({ question, senderName: 'Ученик', isPrivate: Boolean(body.isPrivate), persona });
+    return { answer, ms: Date.now() - started, provider: app.ai.last.chat?.provider || null, model: app.ai.last.chat?.model || null };
+  });
+  route('POST', /^\/api\/ai\/ping$/, async ({ body }) => {
+    const role = ['chat', 'understand', 'vision'].includes(body.role) ? body.role : 'chat';
+    const started = Date.now();
+    try {
+      const r = await app.ai.chat(role, { messages: [{ role: 'user', content: 'Ответь одним словом по-русски: работаешь?' }], maxTokens: 30, temperature: 0, reasoningEffort: 'low' });
+      return { ok: true, text: r.text.slice(0, 80), provider: r.provider, model: r.model, ms: Date.now() - started };
+    } catch (error) {
+      return { ok: false, message: error.message, ms: Date.now() - started };
+    }
+  });
+  route('POST', /^\/api\/ai\/draft$/, async ({ body }) => {
+    const about = String(body.about || '').trim();
+    if (!about) throw new HttpError(400, 'Напишите, о чём сообщение');
+    if (!app.ai.anyKey) throw new HttpError(400, 'Нет ни одного ключа ИИ');
+    return { text: await app.assistant.draft(about) };
+  });
+  route('GET', /^\/api\/ai\/journal$/, ({ url }) => ({ items: app.journal?.recent(Math.min(Number(url.searchParams.get('limit')) || 100, 300)) || [] }));
+
+  // заметки для ИИ
+  const notesOut = () => ({ notes: [...(core.store.data.notes || [])].sort((a, b) => b.id - a.id) });
+  route('GET', /^\/api\/notes$/, () => notesOut());
+  route('POST', /^\/api\/notes$/, ({ body }) => {
+    const text = String(body.text || '').trim().slice(0, 1000);
+    if (!text) throw new HttpError(400, 'Пустая заметка');
+    const subject = String(body.subject || '').trim().slice(0, 40);
+    const until = /^\d{4}-\d{2}-\d{2}$/.test(String(body.until || '')) ? body.until : null;
+    core.store.update((s) => {
+      s.notes = s.notes || [];
+      const id = s.nextNoteId || 1;
+      s.nextNoteId = id + 1;
+      s.notes.push({ id, text, subject, until, createdAt: Date.now(), author: 'панель' });
+    });
+    return notesOut();
+  });
+  route('DELETE', /^\/api\/notes\/(\d+)$/, ({ params }) => {
+    core.store.update((s) => {
+      s.notes = (s.notes || []).filter((n) => n.id !== Number(params[0]));
+    });
+    return notesOut();
+  });
+
+  // отложенные сообщения в группу
+  const scheduledOut = () => ({ items: [...(core.store.data.scheduled || [])].sort((a, b) => b.id - a.id) });
+  route('GET', /^\/api\/scheduled$/, () => scheduledOut());
+  route('POST', /^\/api\/scheduled$/, ({ body }) => {
+    const text = String(body.text || '').trim().slice(0, 4000);
+    if (!text) throw new HttpError(400, 'Пустое сообщение');
+    const kind = body.kind === 'weekly' ? 'weekly' : 'once';
+    const item = { text, kind, enabled: true, lastRun: null, createdAt: Date.now(), jids: Array.isArray(body.jids) ? body.jids.filter((j) => /@g\.us$/.test(j)) : [] };
+    if (kind === 'once') {
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(body.at || ''))) throw new HttpError(400, 'Укажите дату и время');
+      item.at = body.at;
+    } else {
+      const days = (Array.isArray(body.days) ? body.days : []).map(Number).filter((d) => d >= 1 && d <= 7);
+      if (!days.length || !/^\d{2}:\d{2}$/.test(String(body.time || ''))) throw new HttpError(400, 'Укажите дни недели и время');
+      item.days = [...new Set(days)].sort();
+      item.time = body.time;
+    }
+    core.store.update((s) => {
+      s.scheduled = s.scheduled || [];
+      const id = s.nextScheduledId || 1;
+      s.nextScheduledId = id + 1;
+      s.scheduled.push({ id, ...item });
+    });
+    return scheduledOut();
+  });
+  route('POST', /^\/api\/scheduled\/(\d+)\/toggle$/, ({ params }) => {
+    core.store.update((s) => {
+      const m = (s.scheduled || []).find((x) => x.id === Number(params[0]));
+      if (m) m.enabled = !m.enabled;
+    });
+    return scheduledOut();
+  });
+  route('DELETE', /^\/api\/scheduled\/(\d+)$/, ({ params }) => {
+    core.store.update((s) => {
+      s.scheduled = (s.scheduled || []).filter((m) => m.id !== Number(params[0]));
+    });
+    return scheduledOut();
+  });
+
+  // пульт: действия в группе от имени бота
+  const groupTargets = (jid) => {
+    const targets = core.targets();
+    if (!targets.length) throw new HttpError(400, 'Бот не привязан ни к одной группе — напишите в группе класса !привязать');
+    if (jid) {
+      if (!targets.includes(jid)) throw new HttpError(400, 'Эта группа не подключена');
+      return [jid];
+    }
+    return targets;
+  };
+  const dateFrom = async (value) => {
+    const today = homework.today();
+    if (!value) return (await homework.nextSchoolDay(today)) || addDays(today, 1);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value;
+    return parseDayArg(String(value), today);
+  };
+  route('GET', /^\/api\/today$/, async () => {
+    const today = homework.today();
+    const next = (await homework.nextSchoolDay(today)) || addDays(today, 1);
+    const view = async (date) => {
+      const d = await homework.dayView(date);
+      return { date, lessons: d.lessons.map(lessonOut), entries: d.entries.map(entryOut) };
+    };
+    return { today: await view(today), next: await view(next) };
+  });
+  route('POST', /^\/api\/group\/message$/, ({ body }) => {
+    const text = String(body.text || '').trim();
+    if (!text) throw new HttpError(400, 'Пустое сообщение');
+    if (text.length > 4000) throw new HttpError(400, 'Сообщение слишком длинное');
+    const targets = groupTargets(body.jid);
+    for (const jid of targets) wa.sendText(jid, text, { persist: true, meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
+    return { ok: true, groups: targets.length };
+  });
+  route('POST', /^\/api\/group\/poll$/, ({ body }) => {
+    const name = String(body.question || '').trim().slice(0, 250);
+    const values = [...new Set((Array.isArray(body.options) ? body.options : []).map((o) => String(o).trim().slice(0, 100)).filter(Boolean))].slice(0, 12);
+    if (!name || values.length < 2) throw new HttpError(400, 'Нужен вопрос и хотя бы 2 варианта');
+    const targets = groupTargets(body.jid);
+    const poll = { name, values, selectableCount: body.multiple ? values.length : 1 };
+    for (const jid of targets) wa.send(jid, { poll }, {}, { meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
+    return { ok: true, groups: targets.length };
+  });
+  route('POST', /^\/api\/group\/homework$/, async ({ body }) => {
+    const date = await dateFrom(body.date);
+    if (!date) throw new HttpError(400, 'Неверная дата');
+    const targets = groupTargets(body.jid);
+    const content = await contentFor(await homework.dayView(date, { fresh: true }), homework.today());
+    for (const jid of targets) wa.send(jid, content, {}, { persist: true, meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
+    return { ok: true, date, groups: targets.length };
+  });
+  route('POST', /^\/api\/group\/schedule$/, async ({ body }) => {
+    const date = await dateFrom(body.date);
+    if (!date) throw new HttpError(400, 'Неверная дата');
+    const targets = groupTargets(body.jid);
+    const text = formatSchedule(await homework.dayView(date, { fresh: true }), homework.today());
+    for (const jid of targets) wa.sendText(jid, text, { persist: true, meta: { by: 'admin' }, maxAgeMs: 3600 * 1000 }).catch(() => {});
+    return { ok: true, date, groups: targets.length };
+  });
+  route('POST', /^\/api\/group\/ai$/, ({ body }) => {
+    // ИИ во всех подключённых группах: вкл / выкл
+    const on = Boolean(body.on);
+    for (const jid of core.targets()) core.setGroupOption(jid, 'ai', on);
+    return { ok: true, on };
   });
 
   // настройки
@@ -468,36 +685,45 @@ export function startWebServer(app) {
   // ключи и доступ
   route('GET', /^\/api\/access$/, ({ token }) => ({
     groq: app.keys.list(),
+    openrouter: app.orKeys?.list() || [],
     backup: app.backup.describe(),
     bilim: { login: mask(config.bilim.login), loginHint: config.bilim.login ? `${config.bilim.login.slice(0, 2)}•••` : '', fromPanel: Boolean(app.secrets.get('bilim')), loggedIn: app.bilim.loggedIn, error: homework.status().lastError, className: app.bilim.session?.className || '', fullName: app.bilim.session?.fullName || '', mode: app.diary.status().mode },
     whatsapp: { ...wa.info(), qr: undefined, hasQr: Boolean(wa.qr), admins: config.whatsapp.admins.map((p) => `+${p.slice(0, 4)}•••${p.slice(-2)}`) },
     panel: { hasPassword: Boolean(auth.passwordHash), passwordFromPanel: Boolean(app.secrets.get('panel')?.passwordHash), methods: auth.methods(), sessions: auth.listSessions(token) },
     system: { canRestart: Boolean(app.restart), version, node: process.version },
   }));
-  route('POST', /^\/api\/access\/groq$/, async ({ body }) => {
-    const id = app.keys.add({ key: body.key, label: body.label });
-    const test = await app.groq.testKey(app.keys.byId(id).key);
-    if (!test.ok) app.keys.byId(id).status = test.status === 401 || test.status === 403 ? 'invalid' : 'unknown';
-    app.keys.save();
-    return { id, test: { ok: test.ok, message: test.message || null, models: test.models?.length || 0 }, keys: app.keys.list() };
+  // ключи ИИ: Groq и OpenRouter (несколько ключей одного аккаунта, автозамена нерабочего)
+  const ring = (provider) => ({ groq: { keys: app.keys, client: app.groq }, openrouter: { keys: app.orKeys, client: app.openrouter } })[provider] || null;
+  const testOut = (test) => ({ ok: test.ok, message: test.message || null, models: test.models?.length || 0, info: test.info || null });
+  route('POST', /^\/api\/access\/keys\/(groq|openrouter)$/, async ({ params, body }) => {
+    const { keys, client } = ring(params[0]);
+    const id = keys.add({ key: body.key, label: body.label });
+    const test = await client.testKey(keys.byId(id).key);
+    keys.byId(id).status = test.ok ? 'ok' : test.status === 401 || test.status === 403 ? 'invalid' : 'unknown';
+    if (test.ok) keys.byId(id).lastOkAt = Date.now();
+    keys.save();
+    return { id, test: testOut(test), keys: keys.list() };
   });
-  route('POST', /^\/api\/access\/groq\/([^/]+)\/test$/, async ({ params }) => {
-    const entry = app.keys.byId(params[0]);
+  route('POST', /^\/api\/access\/keys\/(groq|openrouter)\/([^/]+)\/test$/, async ({ params }) => {
+    const { keys, client } = ring(params[0]);
+    const entry = keys.byId(params[1]);
     if (!entry) throw new HttpError(404, 'Ключ не найден');
-    const test = await app.groq.testKey(entry.key);
+    const test = await client.testKey(entry.key);
     entry.status = test.ok ? 'ok' : test.status === 401 || test.status === 403 ? 'invalid' : entry.status;
     entry.lastError = test.ok ? null : test.message;
     if (test.ok) entry.lastOkAt = Date.now();
-    app.keys.save();
-    return { test: { ok: test.ok, message: test.message || null, models: test.models?.length || 0 }, keys: app.keys.list() };
+    keys.save();
+    return { test: testOut(test), keys: keys.list() };
   });
-  route('POST', /^\/api\/access\/groq\/([^/]+)\/activate$/, ({ params }) => {
-    app.keys.activate(params[0]);
-    return { keys: app.keys.list() };
+  route('POST', /^\/api\/access\/keys\/(groq|openrouter)\/([^/]+)\/activate$/, ({ params }) => {
+    const { keys } = ring(params[0]);
+    keys.activate(params[1]);
+    return { keys: keys.list() };
   });
-  route('DELETE', /^\/api\/access\/groq\/([^/]+)$/, ({ params }) => {
-    app.keys.remove(params[0]);
-    return { keys: app.keys.list() };
+  route('DELETE', /^\/api\/access\/keys\/(groq|openrouter)\/([^/]+)$/, ({ params }) => {
+    const { keys } = ring(params[0]);
+    keys.remove(params[1]);
+    return { keys: keys.list() };
   });
   route('PUT', /^\/api\/access\/backup$/, ({ body }) => {
     app.backup.update({ enabled: Boolean(body.enabled), baseUrl: body.baseUrl, apiKey: body.apiKey, model: body.model, label: body.label });
@@ -579,6 +805,7 @@ export function startWebServer(app) {
       [app.inbox, 'chat', (e) => send('chatState', e)],
       [wa, 'state', () => send('wa', { ...wa.info(), qr: undefined, hasQr: Boolean(wa.qr) })],
       [app.settings, 'change', (paths) => send('settings', { paths })],
+      ...(app.journal ? [[app.journal, 'entry', (item) => send('understand', item)]] : []),
     ];
     for (const [emitter, name, fn] of listeners) emitter.on(name, fn);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);

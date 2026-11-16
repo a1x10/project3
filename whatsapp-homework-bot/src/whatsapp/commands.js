@@ -32,10 +32,12 @@ const COMMANDS = {
   resume: ['продолжить', 'resume', 'старт-рассылки'],
   skip: ['пропустить', 'skip'],
   panel: ['панель', 'panel', 'админка'],
+  note: ['заметка', 'note'],
+  notes: ['заметки', 'notes'],
 };
 
 const LOOKUP = new Map(Object.entries(COMMANDS).flatMap(([name, aliases]) => aliases.map((a) => [a, name])));
-const ADMIN_ONLY = new Set(['status', 'refresh', 'digest', 'bind', 'unbind', 'auto', 'autodigest', 'add', 'remove', 'groups', 'id', 'plan', 'pause', 'resume', 'skip', 'panel']);
+const ADMIN_ONLY = new Set(['status', 'refresh', 'digest', 'bind', 'unbind', 'auto', 'autodigest', 'add', 'remove', 'groups', 'id', 'plan', 'pause', 'resume', 'skip', 'panel', 'note', 'notes']);
 
 // «пн», «будни», «выходные», «все», «пн,ср,пт» → [1, 3, 5]
 const DAY_GROUPS = { будни: [1, 2, 3, 4, 5], все: [1, 2, 3, 4, 5, 6, 7], каждый: [1, 2, 3, 4, 5, 6, 7], выходные: [6, 7] };
@@ -114,6 +116,7 @@ export class Commands {
         `${p}удалить N — удалить добавленное вручную`,
         `${p}статус — состояние бота · ${p}группы — список групп · ${p}id — id чата`,
         `${p}панель — ссылка для входа в панель управления`,
+        `${p}заметка Алгебра: учебник Абылкасымова — заметка для ИИ · ${p}заметки — список`,
       );
     }
     return lines.join('\n');
@@ -200,6 +203,10 @@ export class Commands {
           return await this.skipCommand(ctx, args);
         case 'panel':
           return await this.panelCommand(ctx);
+        case 'note':
+          return await this.noteCommand(ctx, args);
+        case 'notes':
+          return await this.notesCommand(ctx);
         default:
           return false;
       }
@@ -454,6 +461,43 @@ export class Commands {
     this.needSettings().skipDate(date, !skipped);
     const when = date === today ? 'сегодня' : `в ${WEEKDAYS_ACC[weekdayOf(date) - 1]}, ${toDM(date)}`;
     await this.reply(ctx, skipped ? `↩️ Пропуск отменён: ${when} рассылка будет как обычно.` : `⏭ ${when[0].toUpperCase()}${when.slice(1)} рассылки не будет. Отменить: !пропустить ${args || ''}`.trim());
+    return true;
+  }
+
+  // Заметка для ИИ: «!заметка Алгебра: СОР в пятницу» · «!заметка удалить 3»
+  async noteCommand(ctx, args) {
+    const del = /^(удалить|убрать|del|delete)\s+(\d+)$/i.exec(args.trim());
+    if (del) {
+      const id = Number(del[2]);
+      const exists = (this.core.store.data.notes || []).some((n) => n.id === id);
+      this.core.store.update((s) => {
+        s.notes = (s.notes || []).filter((n) => n.id !== id);
+      });
+      await this.reply(ctx, exists ? `🗑 Заметка №${id} удалена.` : `Нет заметки №${id}. Список: !заметки`);
+      return true;
+    }
+    if (!args.trim()) {
+      await this.reply(ctx, 'Напишите заметку после команды, например:\n!заметка Алгебра: учебник Абылкасымова, 7 класс\n!заметка СОР по физике в пятницу\nИИ будет учитывать её в ответах.');
+      return true;
+    }
+    const m = /^([^:]{2,30}):\s*([\s\S]+)$/.exec(args.trim());
+    const note = { text: (m ? m[2] : args).trim().slice(0, 1000), subject: m ? m[1].trim() : '', until: null, createdAt: Date.now(), author: ctx.name || '' };
+    const id = this.core.store.update((s) => {
+      s.notes = s.notes || [];
+      const newId = s.nextNoteId || 1;
+      s.nextNoteId = newId + 1;
+      s.notes.push({ id: newId, ...note });
+      return newId;
+    });
+    await this.reply(ctx, `📝 ${this.config.ai.persona?.gender === 'male' ? 'Запомнил' : 'Запомнила'} (№${id}). Теперь учитываю это в ответах.\nУдалить: !заметка удалить ${id}`);
+    return true;
+  }
+
+  async notesCommand(ctx) {
+    const notes = this.core.store.data.notes || [];
+    await this.reply(ctx, notes.length
+      ? `📝 *Заметки для ИИ:*\n${notes.map((n) => `№${n.id}: ${n.subject ? `${n.subject}: ` : ''}${truncate(n.text, 120)}${n.until ? ` (до ${toDM(n.until)})` : ''}`).join('\n')}`
+      : 'Заметок пока нет. Добавить: !заметка Алгебра: учебник Абылкасымова');
     return true;
   }
 

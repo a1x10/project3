@@ -126,7 +126,7 @@ describe('веб-панель', () => {
 
   it('ключи: наружу только маска, нерабочий ключ помечается', async () => {
     const cookie = await login();
-    const res = await call('/api/access/groq', { method: 'POST', cookie, body: { key: 'gsk_secret_value_1234567890_bad', label: 'Тест' } });
+    const res = await call('/api/access/keys/groq', { method: 'POST', cookie, body: { key: 'gsk_secret_value_1234567890_bad', label: 'Тест' } });
     const text = await res.text();
     assert.ok(!text.includes('secret_value'), 'полный ключ не возвращается');
     const data = JSON.parse(text);

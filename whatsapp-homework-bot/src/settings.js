@@ -88,6 +88,41 @@ const T = {
     if (isIso(v)) return v;
     throw new ConfigError('пауза: дата ГГГГ-ММ-ДД или forever');
   } },
+  num: (min, max) => ({ parse: (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`ожидается число от ${min} до ${max}`);
+    return Math.round(n * 100) / 100;
+  } }),
+  // кто отвечает в каждой роли: { chat|understand|vision: { provider: auto|groq|openrouter, model } }
+  routing: { parse: (v) => {
+    if (!v || typeof v !== 'object') throw new ConfigError('ожидаются настройки ролей');
+    const out = {};
+    for (const role of ['chat', 'understand', 'vision']) {
+      const r = v[role] || {};
+      const provider = r.provider || 'auto';
+      if (!['auto', 'groq', 'openrouter'].includes(provider)) throw new ConfigError(`${role}: провайдер auto/groq/openrouter`);
+      const model = String(r.model || '').trim();
+      if (model && !/^[\w.:/~@+-]{2,120}$/.test(model)) throw new ConfigError(`${role}: странное имя модели «${model}»`);
+      out[role] = { provider, model };
+    }
+    return out;
+  } },
+  persona: { parse: (v) => {
+    if (!v || typeof v !== 'object') throw new ConfigError('ожидаются настройки характера');
+    const gender = ['female', 'male'].includes(v.gender) ? v.gender : null;
+    const tone = ['friendly', 'chill', 'tutor', 'strict', 'fun'].includes(v.tone) ? v.tone : null;
+    const length = ['short', 'normal', 'detailed'].includes(v.length) ? v.length : null;
+    const emoji = Number(v.emoji);
+    if (!gender || !tone || !length || !Number.isInteger(emoji) || emoji < 0 || emoji > 3) throw new ConfigError('характер: род, тон, длина и эмодзи (0–3)');
+    const custom = String(v.custom || '').replace(/\r/g, '').trim();
+    if (custom.length > 1500) throw new ConfigError('свои указания — до 1500 символов');
+    return { gender, tone, emoji, length, custom };
+  } },
+  actions: { parse: (v) => {
+    if (!v || typeof v !== 'object') throw new ConfigError('ожидаются действия');
+    const keys = ['sendHomework', 'sendSchedule', 'askTask', 'answer', 'react'];
+    return Object.fromEntries(keys.map((k) => [k, v[k] !== false && v[k] !== 'false']));
+  } },
   dates: { parse: (v) => {
     const list = Array.isArray(v) ? v : String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (list.some((d) => !isIso(d))) throw new ConfigError('даты в формате ГГГГ-ММ-ДД');
@@ -109,7 +144,12 @@ export const FIELDS = {
   'schedule.skipDates': { type: T.dates, group: 'schedule', label: 'Дни без рассылки' },
   'features.homeworkPhoto': { type: T.oneOf('screenshot', 'card', 'text'), group: 'schedule', label: 'Как присылать ДЗ' },
   'features.sendFiles': { type: T.bool, group: 'schedule', label: 'Пересылать файлы к ДЗ' },
-  'ai.mode': { type: T.oneOf('smart', 'mention', 'off'), group: 'ai', label: 'Когда ИИ отвечает в группе' },
+  'ai.mode': { type: T.oneOf('all', 'smart', 'mention', 'off'), group: 'ai', label: 'Когда ИИ читает и отвечает в группе' },
+  'ai.routing': { type: T.routing, group: 'ai', label: 'Кто думает (провайдер и модель для каждой роли)' },
+  'ai.persona': { type: T.persona, group: 'ai', label: 'Характер' },
+  'ai.actions': { type: T.actions, group: 'ai', label: 'Что бот делает сам' },
+  'ai.temperature': { type: T.num(0, 1.5), group: 'ai', label: 'Креативность ответов' },
+  'ai.understandDailyLimit': { type: T.int(10, 100000), group: 'ai', label: 'Сообщений в сутки на «понимание»' },
   'ai.style': { type: T.oneOf('tutor', 'hints'), group: 'ai', label: 'Стиль помощи' },
   'ai.humanLike': { type: T.bool, group: 'ai', label: 'Отвечать по-человечески (печатает, пишет короткими сообщениями)' },
   'ai.voice': { type: T.oneOf('all', 'direct', 'off'), group: 'ai', label: 'Голосовые вопросы' },

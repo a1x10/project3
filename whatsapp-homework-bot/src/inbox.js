@@ -18,6 +18,7 @@ export function contentSummary(content = {}) {
   if (content.image) return { text: content.caption || '', media: 'image' };
   if (content.document) return { text: content.caption || content.fileName || 'файл', media: 'file' };
   if (content.audio) return { text: '', media: 'voice' };
+  if (content.poll) return { text: `📊 ${content.poll.name}: ${(content.poll.values || []).join(' / ')}`, media: 'poll' };
   return { text: '', media: 'other' };
 }
 

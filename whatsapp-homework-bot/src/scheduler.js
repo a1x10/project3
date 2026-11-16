@@ -62,6 +62,44 @@ export class Scheduler {
     if (Object.keys(patch).length) this.settings?.update(patch, { by: 'scheduler' });
   }
 
+  // Отложенные сообщения админа в группу: разовые (дата и время) и еженедельные (дни недели и время)
+  sendScheduled(now) {
+    const list = this.store.data.scheduled || [];
+    if (!list.length) return [];
+    const abs = (iso, minutes) => Date.parse(`${iso}T00:00:00Z`) / 60000 + minutes;
+    const nowAbs = abs(now.iso, now.minutes);
+    const sent = [];
+    for (const m of list) {
+      if (!m.enabled) continue;
+      let due = false;
+      if (m.kind === 'once' && m.at && !m.lastRun) {
+        const [date, time] = m.at.split('T');
+        const at = abs(date, Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)));
+        if (nowAbs >= at && nowAbs - at <= 180) due = true;
+        else if (nowAbs - at > 180) {
+          // бот был выключен слишком долго — старое объявление уже неактуально
+          this.store.update(() => {
+            m.enabled = false;
+            m.lastRun = 'пропущено';
+          });
+        }
+      } else if (m.kind === 'weekly' && m.time && (m.days || []).includes(now.weekday) && m.lastRun !== now.iso) {
+        const t = Number(m.time.slice(0, 2)) * 60 + Number(m.time.slice(3, 5));
+        due = now.minutes >= t && now.minutes - t <= 60;
+      }
+      if (!due) continue;
+      const targets = m.jids?.length ? m.jids.filter((jid) => this.core.isTarget(jid)) : this.core.targets();
+      for (const jid of targets) this.wa.sendText(jid, m.text, { persist: true, maxAgeMs: 3 * 3600 * 1000, meta: { by: 'admin' } }).catch(() => {});
+      this.store.update(() => {
+        m.lastRun = m.kind === 'once' ? `${now.iso} ${formatClock(now.minutes)}` : now.iso;
+        if (m.kind === 'once') m.enabled = false;
+      });
+      this.logger.info({ id: m.id, groups: targets.length }, 'Отложенное сообщение отправлено');
+      sent.push(m.id);
+    }
+    return sent;
+  }
+
   // Что присылать сегодня: «завтра + новое» или «только на завтра» (по графику дня)
   todayScope() {
     return this.config.schedule.days?.[this.clock().weekday]?.scope || 'new';
@@ -101,6 +139,7 @@ export class Scheduler {
         this.jobDone('prune', now.iso);
       }
       this.cleanupSchedule(now);
+      this.sendScheduled(now);
       if (this.store.data.jobs.digest !== now.iso) {
         const plan = await this.digestPlan(now);
         if (plan?.at != null && this.isDue('digest', plan.at, now, this.digestDeadline(plan))) await this.guard('digest', now, () => this.dailyDigest(now));

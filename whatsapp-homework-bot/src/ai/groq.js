@@ -32,13 +32,17 @@ export function reasoningParams(model, effort) {
   return {};
 }
 
+// Клиент OpenAI-совместимого API: Groq, OpenRouter или любой другой (запасной ИИ).
 export class GroqClient {
   // keys — KeyRing (несколько ключей с автозаменой нерабочего); apiKey — один ключ.
-  // plain — «чистый» OpenAI-совместимый API (запасной провайдер): без параметров рассуждений Groq.
-  constructor({ apiKey, keys = null, baseUrl = 'https://api.groq.com/openai/v1', timeoutMs = 60000, logger, fetchImpl, plain = false }) {
+  // flavor: groq — параметры рассуждений Groq; openrouter — единый параметр reasoning OpenRouter;
+  // plain — «чистый» OpenAI-совместимый API (запасной провайдер). headers — доп. заголовки (OpenRouter: имя приложения).
+  constructor({ apiKey, keys = null, baseUrl = 'https://api.groq.com/openai/v1', timeoutMs = 60000, logger, fetchImpl, plain = false, flavor, headers = {} }) {
     this.staticKey = apiKey;
     this.keys = keys;
-    this.plain = plain;
+    this.flavor = flavor || (plain ? 'plain' : 'groq');
+    this.plain = this.flavor !== 'groq';
+    this.headers = headers;
     this.baseUrl = baseUrl;
     this.timeoutMs = timeoutMs;
     this.logger = logger;
@@ -62,6 +66,7 @@ export class GroqClient {
         method,
         headers: {
           Authorization: `Bearer ${key}`,
+          ...this.headers,
           ...(isForm || method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
         },
         ...(method === 'GET' ? {} : { body: isForm ? body : JSON.stringify(body) }),
@@ -131,13 +136,21 @@ export class GroqClient {
     throw lastError;
   }
 
+  // Ограничение длины и «рассуждения» — у каждого API по-своему
+  limits(model, maxTokens, effort) {
+    if (this.flavor === 'groq') return { max_completion_tokens: maxTokens, ...reasoningParams(model, effort) };
+    // OpenRouter сам игнорирует параметры, которые модель не поддерживает; рассуждения скрываем из ответа
+    if (this.flavor === 'openrouter') return { max_tokens: maxTokens, reasoning: { effort: effort === 'none' ? 'low' : effort || 'low', exclude: true } };
+    return { max_tokens: maxTokens };
+  }
+
   async chat({ model, fallbacks = [], messages, maxTokens = 1500, temperature = 0.4, json = false, reasoningEffort }) {
     return this.withFallback([model, ...fallbacks], async (current) => {
       const body = {
         model: current,
         messages,
         temperature,
-        ...(this.plain ? { max_tokens: maxTokens } : { max_completion_tokens: maxTokens, ...reasoningParams(current, reasoningEffort) }),
+        ...this.limits(current, maxTokens, reasoningEffort),
         ...(json ? { response_format: { type: 'json_object' } } : {}),
       };
       const data = await this.post('/chat/completions', body);
@@ -165,6 +178,15 @@ export class GroqClient {
   // Проверить ключ (для панели): список моделей доступен — ключ рабочий
   async testKey(key = this.apiKey) {
     if (!key) return { ok: false, status: 401, message: 'ключ не задан' };
+    if (this.flavor === 'openrouter') {
+      try {
+        const data = await this.post('/key', null, { method: 'GET', key });
+        const info = data?.data || {};
+        return { ok: true, status: 200, models: [], info: { label: info.label || '', usage: info.usage ?? null, limit: info.limit ?? null, freeTier: Boolean(info.is_free_tier) } };
+      } catch (error) {
+        return { ok: false, status: error.status || 0, message: error.message };
+      }
+    }
     try {
       const data = await this.post('/models', null, { method: 'GET', key });
       return { ok: true, status: 200, models: (data?.data || []).map((m) => m.id).filter(Boolean) };

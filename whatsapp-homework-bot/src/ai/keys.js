@@ -16,8 +16,12 @@ const fingerprint = (key) => createHash('sha256').update(String(key)).digest('he
 const KEY_RE = /^[A-Za-z0-9_\-.:]{16,300}$/;
 
 export class KeyRing extends EventEmitter {
-  constructor({ secrets, envKey = '', logger }) {
+  // section — где в data/secrets.json лежат ключи (groq / openrouter); provider — имя для сообщений
+  constructor({ secrets, envKey = '', logger, section = 'groq', provider = 'Groq', keyHint = 'Groq: начинается с gsk_' }) {
     super();
+    this.section = section;
+    this.provider = provider;
+    this.keyHint = keyHint;
     this.secrets = secrets;
     this.envKey = envKey;
     this.logger = logger;
@@ -27,7 +31,7 @@ export class KeyRing extends EventEmitter {
   }
 
   load() {
-    const saved = this.secrets?.get('groq') || {};
+    const saved = this.secrets?.get(this.section) || {};
     this.keys = (saved.keys || []).filter((k) => k && typeof k.key === 'string');
     this.active = saved.active || null;
     this.envHidden = saved.envHidden || null;
@@ -39,7 +43,7 @@ export class KeyRing extends EventEmitter {
   }
 
   save() {
-    this.secrets?.set('groq', {
+    this.secrets?.set(this.section, {
       keys: this.keys.filter((k) => k.source !== 'env'),
       active: this.active,
       envHidden: this.envHidden,
@@ -80,7 +84,7 @@ export class KeyRing extends EventEmitter {
 
   add({ key, label = '' }) {
     const value = String(key || '').trim();
-    if (!KEY_RE.test(value)) throw new Error('Ключ выглядит неправильно — скопируйте его целиком (Groq: начинается с gsk_)');
+    if (!KEY_RE.test(value)) throw new Error(`Ключ выглядит неправильно — скопируйте его целиком (${this.keyHint})`);
     if (this.keys.some((k) => k.key === value)) throw new Error('Такой ключ уже добавлен');
     const entry = {
       id: randomBytes(6).toString('hex'),
@@ -148,8 +152,8 @@ export class KeyRing extends EventEmitter {
     const next = this.keys.find((k) => this.usable(k));
     if (next) this.active = next.id;
     this.save();
-    this.logger?.warn({ key: entry.label, next: next?.label || null }, 'Ключ Groq не работает');
-    this.emit('invalid', { label: entry.label, next: next?.label || null });
+    this.logger?.warn({ key: entry.label, next: next?.label || null, provider: this.provider }, 'Ключ ИИ не работает');
+    this.emit('invalid', { label: entry.label, next: next?.label || null, provider: this.provider });
     this.emit('change');
     return Boolean(next);
   }
