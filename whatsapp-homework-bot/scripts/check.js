@@ -1,5 +1,5 @@
 // Проверка настроек перед запуском: npm run check
-// Входит в BilimClass, показывает ДЗ на ближайший день и проверяет ключ Groq. В WhatsApp ничего не отправляет.
+// Входит в BilimClass, показывает ДЗ на ближайший день и проверяет ключи ИИ (OpenRouter, Groq). В WhatsApp ничего не отправляет.
 import path from 'node:path';
 import { GroqClient } from '../src/ai/groq.js';
 import { KeyRing } from '../src/ai/keys.js';
@@ -25,6 +25,7 @@ const secrets = new SecretStore(path.join(config.dataDir, 'secrets.json')).load(
 const savedBilim = secrets.get('bilim');
 if (savedBilim?.login && savedBilim?.password) Object.assign(config.bilim, { login: savedBilim.login, password: savedBilim.password });
 const keys = new KeyRing({ secrets, envKey: config.groq.apiKey }).load();
+const orKeys = new KeyRing({ secrets, section: 'openrouter', provider: 'OpenRouter', envKey: config.openrouter.apiKey }).load();
 let failed = false;
 
 console.log('\n— BilimClass —');
@@ -82,9 +83,28 @@ try {
   bad(error.message);
 }
 
-console.log('\n— Groq (ИИ) —');
+console.log('\n— OpenRouter (ИИ: ответы и понимание чата) —');
+if (!orKeys.hasKey) {
+  info('Ключа OpenRouter нет — бот будет думать через Groq. Ключ: https://openrouter.ai/keys (в .env OPENROUTER_API_KEY или в панели)');
+} else {
+  const openrouter = new GroqClient({ keys: orKeys, baseUrl: config.openrouter.baseUrl, timeoutMs: config.openrouter.timeoutMs, flavor: 'openrouter' });
+  try {
+    const { text, model } = await openrouter.chat({
+      model: config.ai.routing?.chat?.provider === 'openrouter' && config.ai.routing.chat.model ? config.ai.routing.chat.model : config.openrouter.model,
+      messages: [{ role: 'user', content: 'Сколько будет 7×8? Ответь одним числом.' }],
+      maxTokens: 300,
+      reasoningEffort: 'low',
+    });
+    ok(`OpenRouter отвечает (${model}): ${text.slice(0, 60)}`);
+  } catch (error) {
+    failed = true;
+    bad(`OpenRouter: ${error.message}`);
+  }
+}
+
+console.log('\n— Groq (ИИ и голосовые) —');
 if (!keys.hasKey) {
-  bad('Нет ключа Groq — ИИ-ответы будут выключены. Ключ: https://console.groq.com/keys (добавьте в .env или в панели)');
+  (orKeys.hasKey ? info : bad)(`Нет ключа Groq — ${orKeys.hasKey ? 'голосовые сообщения бот расшифровать не сможет' : 'ИИ-ответы будут выключены'}. Ключ: https://console.groq.com/keys (добавьте в .env или в панели)`);
 } else {
   const groq = new GroqClient({ ...config.groq, keys });
   try {

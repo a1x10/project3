@@ -126,11 +126,11 @@ export function toast(text, kind = 'ok', ms = 4200) {
 export function modal({ title, body, actions = [], wide = false, onClose }) {
   const dlg = $('#modal');
   dlg.className = `modal${wide ? ' wide' : ''}`;
-  dlg.replaceChildren(
+  dlg.replaceChildren(...[
     h('div.modal-h', h('h3', title), h('button.btn.btn-icon.btn-ghost.btn-sm', { type: 'button', 'aria-label': 'Закрыть', onclick: () => dlg.close() }, icon('x'))),
     h('div.modal-b', body),
     actions.length ? h('div.modal-f', actions) : null,
-  );
+  ].filter(Boolean));
   const close = () => {
     dlg.removeEventListener('close', close);
     onClose?.();

@@ -16,8 +16,30 @@ export async function render(root, { refreshOverview }) {
   }
 
   // --- ключи Groq ---
-  function keysCard() {
-    const rows = data.groq.length ? data.groq.map((k) => {
+  // ключи ИИ: OpenRouter и Groq — одна и та же карточка
+  const PROVIDERS = {
+    openrouter: {
+      title: 'Ключи OpenRouter',
+      sub: 'сотни моделей, есть бесплатные',
+      placeholder: 'sk-or-…',
+      empty: 'Ключ: openrouter.ai/keys. С ним бот понимает чат и отвечает через OpenRouter — модели выбираются в разделе «Мозг».',
+      note: 'Бесплатные модели OpenRouter работают с дневным лимитом запросов. Если его мало — пополните баланс OpenRouter и выберите недорогую модель в «Мозг». Несколько ключей одного аккаунта — для подстраховки: если ключ отзовут, бот сам перейдёт на следующий.',
+      okText: (t) => (t.info ? `Ключ работает${t.info.freeTier ? ' · бесплатный тариф' : ''}${t.info.limit != null ? ` · лимит $${t.info.limit}` : ''}${t.info.usage != null ? ` · потрачено $${Number(t.info.usage).toFixed(2)}` : ''}` : 'Ключ работает'),
+    },
+    groq: {
+      title: 'Ключи Groq',
+      sub: 'быстрые ответы и голосовые',
+      placeholder: 'gsk_…',
+      empty: 'Ключ бесплатный: console.groq.com/keys. Нужен для голосовых (Whisper); может отвечать и понимать чат.',
+      note: 'Можно хранить несколько ключей одного вашего аккаунта Groq: если ключ отзовут или он утечёт, бот сам перейдёт на следующий и напишет админу. Лимиты Groq общие на аккаунт, поэтому ключи с разных аккаунтов ради обхода лимитов добавлять нельзя — это запрещено правилами Groq.',
+      okText: (t) => `Ключ работает · моделей: ${t.models}`,
+    },
+  };
+
+  function keysCard(provider) {
+    const p = PROVIDERS[provider];
+    const list = data[provider] || [];
+    const rows = list.length ? list.map((k) => {
       const [cls, text] = STATUS[k.status] || STATUS.unknown;
       return h(`div.key-row${k.inUse ? '.in-use' : ''}`,
         h('div',
@@ -25,20 +47,20 @@ export async function render(root, { refreshOverview }) {
           h('div.k2', k.lastError ? `Ошибка: ${k.lastError}` : k.lastOkAt ? `Последний успешный запрос ${ago(k.lastOkAt)}` : k.addedAt ? `Добавлен ${ago(k.addedAt)}` : '')),
         h('div.acts',
           h('button.btn.btn-sm', { type: 'button', onclick: (e) => busy(e.currentTarget, async () => {
-            const r = await post(`/api/access/groq/${k.id}/test`);
-            data.groq = r.keys;
-            toast(r.test.ok ? `Ключ работает · моделей: ${r.test.models}` : `Ключ не работает: ${r.test.message}`, r.test.ok ? 'ok' : 'err');
+            const r = await post(`/api/access/keys/${provider}/${k.id}/test`);
+            data[provider] = r.keys;
+            toast(r.test.ok ? p.okText(r.test) : `Ключ не работает: ${r.test.message}`, r.test.ok ? 'ok' : 'err');
             draw();
           }) }, icon('zap'), 'Проверить'),
           k.inUse ? null : h('button.btn.btn-sm', { type: 'button', onclick: (e) => busy(e.currentTarget, async () => {
-            data.groq = (await post(`/api/access/groq/${k.id}/activate`)).keys;
+            data[provider] = (await post(`/api/access/keys/${provider}/${k.id}/activate`)).keys;
             toast(`Теперь используется «${k.label}»`);
             draw();
           }) }, 'Сделать основным'),
           h('button.btn.btn-sm.btn-ghost.btn-icon', { type: 'button', title: 'Удалить ключ', onclick: async () => {
-            if (!(await confirmDialog({ title: `Удалить ключ «${k.label}»?`, text: k.source === 'env' ? 'Ключ останется в .env, но бот перестанет им пользоваться.' : 'Ключ будет удалён из бота. В аккаунте Groq он останется — удалите его там, если он утёк.', ok: 'Удалить', danger: true }))) return;
+            if (!(await confirmDialog({ title: `Удалить ключ «${k.label}»?`, text: k.source === 'env' ? 'Ключ останется в .env, но бот перестанет им пользоваться.' : 'Ключ будет удалён из бота. В аккаунте он останется — удалите его там, если он утёк.', ok: 'Удалить', danger: true }))) return;
             try {
-              data.groq = (await del(`/api/access/groq/${k.id}`)).keys;
+              data[provider] = (await del(`/api/access/keys/${provider}/${k.id}`)).keys;
               toast('Ключ удалён');
               draw();
               refreshOverview();
@@ -46,25 +68,25 @@ export async function render(root, { refreshOverview }) {
               toast(error.message, 'err');
             }
           } }, icon('trash'))));
-    }) : [h('div.empty', h('b', 'Ключей нет'), 'Без ключа ИИ не отвечает. Ключ бесплатный: console.groq.com/keys')];
+    }) : [h('div.empty', h('b', 'Ключей нет'), p.empty)];
 
     const label = h('input.input.sm', { placeholder: 'Название, например «Основной»', maxlength: 40, style: { maxWidth: '220px' } });
-    const key = h('input.input.sm', { type: 'password', placeholder: 'gsk_…', autocomplete: 'off', spellcheck: false });
+    const key = h('input.input.sm', { type: 'password', placeholder: p.placeholder, autocomplete: 'off', spellcheck: false });
     const add = h('button.btn.btn-primary.btn-sm', { type: 'button' }, icon('plus'), 'Добавить и проверить');
     add.onclick = () => busy(add, async () => {
-      const r = await post('/api/access/groq', { key: key.value, label: label.value });
-      data.groq = r.keys;
+      const r = await post(`/api/access/keys/${provider}`, { key: key.value, label: label.value });
+      data[provider] = r.keys;
       key.value = '';
       label.value = '';
-      toast(r.test.ok ? 'Ключ добавлен и работает ✅' : `Ключ добавлен, но не прошёл проверку: ${r.test.message}`, r.test.ok ? 'ok' : 'warn');
+      toast(r.test.ok ? `${p.okText(r.test)} ✅` : `Ключ добавлен, но не прошёл проверку: ${r.test.message}`, r.test.ok ? 'ok' : 'warn');
       draw();
       refreshOverview();
     });
 
-    return card('Ключи Groq', {
-      sub: 'ИИ-помощник',
+    return card(p.title, {
+      sub: p.sub,
       body: h('div.stack', h('div.keys', rows), h('div.row', label, h('div', { style: { flex: '1', minWidth: '220px' } }, key), add)),
-      note: h('div.policy', 'Можно хранить несколько ключей одного вашего аккаунта Groq: если ключ отзовут или он утечёт, бот сам перейдёт на следующий и напишет админу. Лимиты Groq общие на аккаунт, поэтому ключи с разных аккаунтов ради обхода лимитов добавлять нельзя — это запрещено правилами Groq. Если Groq перегружен, поможет запасной ИИ ниже.'),
+      note: h('div.policy', p.note),
     });
   }
 
@@ -248,7 +270,8 @@ export async function render(root, { refreshOverview }) {
 
   function draw() {
     content.replaceChildren(
-      h('div.grid.g2', keysCard(), h('div.stack', backupCard())),
+      h('div.grid.g2', keysCard('openrouter'), keysCard('groq')),
+      h('div.grid.g2', backupCard(), h('div')),
       h('div.grid.g2', bilimCard(), waCard()),
       h('div.grid.g2', panelCard(), systemCard()),
     );

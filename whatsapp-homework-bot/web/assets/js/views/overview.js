@@ -54,6 +54,13 @@ function chart(stats) {
   return svg;
 }
 
+// «сегодня из 300 · поняла 42 сообщения · OpenRouter: deepseek-chat»
+function aiSub(ai) {
+  const chat = ai.brain?.chat;
+  const who = ai.provider === 'backup' ? 'запасной ИИ' : chat ? `${chat.provider === 'openrouter' ? 'OpenRouter' : 'Groq'}: ${String(chat.model).split('/').pop().replace(/:free$/, '')}` : '';
+  return [`сегодня из ${ai.dailyLimit}`, ai.understood ? `прочитала ${ai.understood} сообщ.` : '', who].filter(Boolean).join(' · ');
+}
+
 function statCard({ ico, title, value, sub, level = 'ok', extra = null }) {
   return h(`section.card.stat.${level}`, h('div.stat-top', h('span.stat-ico', icon(ico)), title, h(`i.dot.${level}`)), h('div.stat-val', value), h('div.stat-sub', sub), extra);
 }
@@ -112,7 +119,7 @@ export async function render(root, { refreshOverview }) {
     stats.replaceChildren(
       statCard({ ico: 'phone', title: 'WhatsApp', level: waOk ? 'ok' : wa.status === 'qr' ? 'warn' : 'err', value: waOk ? 'На связи' : wa.status === 'qr' ? 'Ждёт привязки' : 'Нет связи', sub: waOk ? `+${(wa.me?.id || '').split('@')[0]} · с ${ago(wa.connectedSince)}` : 'бот переподключается сам' }),
       statCard({ ico: 'book', title: 'Дневник BilimClass', level: o.bilim.ok ? (o.bilim.mode === 'site' ? 'warn' : 'ok') : 'err', value: o.bilim.ok ? (o.bilim.mode === 'site' ? 'Через сайт' : 'Работает') : 'Ошибка', sub: o.bilim.ok ? `обновлён ${ago(o.bilim.lastSyncAt)}` : o.bilim.error || '' }),
-      statCard({ ico: 'spark', title: 'ИИ-помощник', level: o.ai.enabled ? 'ok' : 'warn', value: o.ai.enabled ? `${o.ai.today} ответов` : 'Выключен', sub: o.ai.enabled ? `сегодня из ${o.ai.dailyLimit} · ключ «${o.ai.key || '—'}»${o.ai.provider === 'backup' ? ' · запасной ИИ' : ''}` : 'добавьте ключ в «Ключи и доступ»', extra: o.ai.enabled ? h('div.bar', h('i', { style: { width: `${aiPct}%` } })) : null }),
+      statCard({ ico: 'brain', title: 'ИИ-помощник', level: o.ai.enabled ? 'ok' : 'warn', value: o.ai.enabled ? `${o.ai.today} ответов` : 'Выключен', sub: o.ai.enabled ? aiSub(o.ai) : 'добавьте ключ OpenRouter или Groq в «Ключи и доступ»', extra: o.ai.enabled ? h('div.bar', h('i', { style: { width: `${aiPct}%` } })) : null }),
       statCard({ ico: 'calendar', title: 'Рассылка', level: o.digest.pausedUntil ? 'warn' : 'ok', value: o.digest.sentToday ? 'Отправлена' : o.digest.today?.at ? `в ${o.digest.today.at}` : o.digest.pausedUntil ? 'Пауза' : 'Сегодня нет', sub: o.digest.last ? `последняя: ${o.digest.last.split('-').reverse().slice(0, 2).join('.')}` : 'ещё не было' }),
     );
 

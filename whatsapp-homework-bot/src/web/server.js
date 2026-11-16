@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { askTaskText } from '../ai/assistant.js';
 import { BilimAuthError, BilimClassClient } from '../bilimclass/client.js';
 import { ConfigError } from '../config.js';
 import { HomeworkPhotos } from '../homework/message.js';
@@ -92,6 +93,7 @@ function importMapHashes(files) {
 export function startWebServer(app) {
   const { config, logger, wa, homework, core, auth } = app;
   if (!config.http.port) return null;
+  app.ai ??= app.assistant?.ai; // маршрутизатор ИИ (OpenRouter / Groq / запасной)
   const root = config.root;
   const files = staticTable(root);
   const three = threeDir(root);
@@ -338,7 +340,7 @@ export function startWebServer(app) {
       const res = await fetch(`${config.openrouter.baseUrl}/models`, { signal: controller.signal });
       if (!res.ok) throw new Error(`OpenRouter: HTTP ${res.status}`);
       const data = await res.json();
-      const price = (v) => Math.round(Number(v || 0) * 1e8) / 100; // $ за 1 млн токенов
+      const price = (v) => (Number(v) < 0 ? null : Math.round(Number(v || 0) * 1e8) / 100); // $ за 1 млн токенов; у роутеров цена плавает (-1)
       const list = (data.data || []).map((m) => ({
         id: m.id,
         name: m.name || m.id,
@@ -389,7 +391,8 @@ export function startWebServer(app) {
     if (!text) throw new HttpError(400, 'Напишите сообщение');
     if (!app.ai.anyKey) throw new HttpError(400, 'Нет ни одного ключа ИИ — добавьте OpenRouter или Groq в «Ключи и доступ»');
     const decision = await app.assistant.understand({ text, explicit: Boolean(body.explicit), isPrivate: Boolean(body.isPrivate), senderName: 'Ученик' });
-    return { decision };
+    // что она напишет, если попросит прислать пример
+    return { decision, reply: decision.action === 'ask_task' ? askTaskText(decision) : null };
   });
   route('POST', /^\/api\/ai\/ask$/, async ({ body }) => {
     const question = String(body.question || '').trim().slice(0, 2000);
@@ -693,7 +696,11 @@ export function startWebServer(app) {
     system: { canRestart: Boolean(app.restart), version, node: process.version },
   }));
   // ключи ИИ: Groq и OpenRouter (несколько ключей одного аккаунта, автозамена нерабочего)
-  const ring = (provider) => ({ groq: { keys: app.keys, client: app.groq }, openrouter: { keys: app.orKeys, client: app.openrouter } })[provider] || null;
+  const ring = (provider) => {
+    const r = { groq: { keys: app.keys, client: app.groq }, openrouter: { keys: app.orKeys, client: app.openrouter } }[provider];
+    if (!r?.keys || !r.client) throw new HttpError(400, 'Этот провайдер ИИ не подключён в боте');
+    return r;
+  };
   const testOut = (test) => ({ ok: test.ok, message: test.message || null, models: test.models?.length || 0, info: test.info || null });
   route('POST', /^\/api\/access\/keys\/(groq|openrouter)$/, async ({ params, body }) => {
     const { keys, client } = ring(params[0]);

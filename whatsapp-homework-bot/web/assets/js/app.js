@@ -3,10 +3,11 @@ import { $, $$, ago, emit, get, h, on, post, toast } from './lib.js';
 
 const VIEWS = {
   overview: { title: 'Обзор', load: () => import('./views/overview.js') },
+  control: { title: 'Пульт', sub: 'Сделать прямо сейчас: ДЗ и расписание в группу, сообщение, опрос, отложенные сообщения', load: () => import('./views/control.js') },
   chats: { title: 'Переписка', sub: 'Личные чаты учеников с ботом и обращения к нему в группе', load: () => import('./views/chats.js') },
   homework: { title: 'Домашка', sub: 'Что сейчас в дневнике — и как это увидит класс', load: () => import('./views/homework.js') },
   schedule: { title: 'График', sub: 'Когда бот присылает ДЗ в группу', load: () => import('./views/schedule.js') },
-  ai: { title: 'ИИ-помощник', sub: 'Как бот отвечает на вопросы', load: () => import('./views/ai.js') },
+  ai: { title: 'Мозг', sub: 'Кто думает, характер, как она понимает чат, заметки и проверка', load: () => import('./views/ai.js') },
   access: { title: 'Ключи и доступ', sub: 'Ключи ИИ, вход в дневник, WhatsApp, безопасность панели', load: () => import('./views/access.js') },
   alerts: { title: 'Уведомления', sub: 'Технические события — только для админов', load: () => import('./views/alerts.js') },
   terminal: { title: 'Терминал', sub: 'Команды бота и живой журнал', load: () => import('./views/terminal.js') },
@@ -197,7 +198,7 @@ function connectEvents() {
       /* битое событие */
     }
   });
-  for (const name of ['log', 'alert', 'chat', 'read', 'chatState', 'wa', 'settings']) relay(name);
+  for (const name of ['log', 'alert', 'chat', 'read', 'chatState', 'wa', 'settings', 'understand']) relay(name);
   es.onerror = () => {
     // сервер перезапускается или сессия истекла — проверим вход
     setTimeout(async () => {
@@ -244,6 +245,7 @@ async function route() {
     state.cleanup = null;
   }
   document.querySelector('.savebar')?.remove();
+  if ($('#modal')?.open) $('#modal').close(); // окно прошлого раздела не остаётся поверх нового
   state.route = view;
   for (const a of $$('.side-nav a')) a.classList.toggle('active', a.dataset.route === view);
   $('#page-title').textContent = VIEWS[view].title;

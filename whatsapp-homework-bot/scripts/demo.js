@@ -6,7 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Assistant } from '../src/ai/assistant.js';
+import { UnderstandJournal } from '../src/ai/journal.js';
 import { BackupAi, KeyRing } from '../src/ai/keys.js';
+import { AiRouter } from '../src/ai/router.js';
 import { buildConfig } from '../src/config.js';
 import { BotCore } from '../src/core.js';
 import { HomeworkPhotos } from '../src/homework/message.js';
@@ -139,26 +141,45 @@ class DemoWA extends EventEmitter {
 }
 
 // --- ИИ «понарошку» ---
+// Понимание чата по ключевым словам: в демо нет настоящего ИИ, но панель «Мозг» показывает решения как обычно
+function demoDecision(text) {
+  const t = text.toLowerCase();
+  const d = (action, toBot, confidence, reason, extra = {}) => JSON.stringify({ action, to_bot: toBot, about_study: action !== 'ignore', confidence, reason, ...extra });
+  if (/^[а-яё]+,\s/i.test(text) && !/^бот,/i.test(text)) return d('ignore', 'no', 0.9, 'обращаются к однокласснику, не к ней');
+  if (/спасиб|благодар/.test(t)) return d('react', 'yes', 0.85, 'благодарят за помощь');
+  if (/(номер|№|упр)\s*\d+/.test(t) && text.length < 90) return d('ask_task', 'unclear', 0.86, 'спрашивают, как решить номер, но условия нет', { task: (t.match(/(номер|№|упр)\s*\d+/) || [''])[0], has_task_text: false });
+  if (/расписан|какие .*урок|во сколько/.test(t)) return d('send_schedule', 'unclear', 0.8, 'спрашивают расписание', { day: 'завтра' });
+  if (/задали|дз|домашк/.test(t)) return d('send_homework', 'unclear', 0.88, 'спрашивают, что задали', { day: 'завтра' });
+  if (/почему|как |объясн|что такое|помоги/.test(t)) return d('answer', 'unclear', 0.75, 'вопрос по учёбе — может помочь');
+  return d('ignore', 'no', 0.7, 'обычная болтовня, не про учёбу');
+}
+
 class DemoGroq {
-  constructor() {
+  constructor(model = 'demo') {
     this.hasKey = true;
+    this.model = model;
   }
 
   async chat({ messages, json }) {
-    if (json) return { text: '{"respond": true}', model: 'demo' };
     const last = messages.at(-1).content;
     const q = typeof last === 'string' ? last : '';
+    if (json) {
+      await new Promise((r) => setTimeout(r, 250));
+      return { text: demoDecision(q.split(':\n').at(-1)), model: this.model };
+    }
     await new Promise((r) => setTimeout(r, 600));
     return {
-      model: 'demo',
+      model: this.model,
       text: /250/.test(q)
         ? 'Смотри: в №250 система из двух уравнений. Выразим y из первого: y = 7 − 2x, подставим во второе и найдём x. Попробуй сам, а я проверю 😉'
-        : 'Это демо-режим, поэтому отвечаю заготовкой 🙂 В настоящем боте здесь будет ответ ИИ с учётом ДЗ из дневника.',
+        : /2x \+ 5 = 11/.test(q)
+          ? 'Легко, смотри 👇\n1) Переносим 5 вправо: 2x = 11 − 5 = 6\n2) Делим на 2: x = 3\nПроверка: 2·3 + 5 = 11 ✅ Если что-то непонятно — пиши!'
+          : 'Это демо-режим, поэтому отвечаю заготовкой 🙂 В настоящем боте здесь будет ответ ИИ с учётом ДЗ из дневника.',
     };
   }
 
   async testKey() {
-    return { ok: true, models: ['demo'] };
+    return { ok: true, models: ['demo'], info: { label: 'demo', usage: 0.12, limit: null, freeTier: false } };
   }
 }
 
@@ -173,8 +194,13 @@ const core = new BotCore({ config, store, wa, logger });
 const keys = new KeyRing({ secrets, envKey: 'gsk_demo_key_0000000000000000000000000000ab12', logger }).load();
 keys.add({ key: 'gsk_reserve_key_000000000000000000000000cd34', label: 'Запасной ключ' });
 const backup = new BackupAi({ secrets, logger });
-const groq = new DemoGroq();
-const assistant = new Assistant({ groq, homework, config, backup, logger });
+const orKeys = new KeyRing({ secrets, section: 'openrouter', provider: 'OpenRouter', keyHint: 'OpenRouter: начинается с sk-or-', logger }).load();
+orKeys.add({ key: 'sk-or-v1-demo0000000000000000000000000000000000000000ef56', label: 'Основной' });
+const groq = new DemoGroq('openai/gpt-oss-120b');
+const openrouter = new DemoGroq('deepseek/deepseek-chat-v3.1');
+const ai = new AiRouter({ config, clients: { groq, openrouter }, backup, logger });
+const journal = new UnderstandJournal();
+const assistant = new Assistant({ ai, groq, homework, config, backup, logger });
 core.assistant = assistant;
 const inbox = new Inbox({ file: null, logger });
 wa.on('sent', ({ jid, content, meta, id, at }) => inbox.record(jid, { dir: 'out', by: meta?.by || 'bot', ...contentSummary(content), id, at }));
@@ -199,6 +225,33 @@ store.update((s) => {
     { id: 'a3', key: 'wa-recovered', text: '✅ WhatsApp снова на связи (не было 7 мин). Сообщения из очереди отправлены.', level: 'ok', at: Date.now() - 3 * 86400000 },
   ];
 });
+// заметки, отложенные сообщения и журнал «что она поняла»
+store.update((s) => {
+  const today = nowParts(config.timezone).iso;
+  s.notes = [
+    { id: 1, subject: 'Алгебра', text: 'Учебник — Абылкасымова, 7 класс, 2023 г.', until: null, createdAt: Date.now() - 5 * 86400000, author: 'панель' },
+    { id: 2, subject: 'Физика', text: 'СОР по физике в пятницу, темы §10–14', until: addDays(today, 5), createdAt: Date.now() - 86400000, author: 'админ' },
+  ];
+  s.nextNoteId = 3;
+  s.scheduled = [
+    { id: 1, text: '🎒 Не забудьте завтра форму на физру!', kind: 'weekly', days: [2, 4], time: '19:30', enabled: true, lastRun: null, createdAt: Date.now() - 3 * 86400000, jids: [] },
+  ];
+  s.nextScheduledId = 2;
+  const u = s.usage[today] || (s.usage[today] = {});
+  u.understand = 42;
+});
+const journalSeed = [
+  [180, 'Алия', 'бот, что по химии?', 'send_homework', 'yes', 0.93, 'просят ДЗ по химии', 'прислала ДЗ'],
+  [120, 'Тимур', 'кто знает как решить номер 312?', 'ask_task', 'unclear', 0.88, 'спрашивают, как решить номер, условия нет', 'попросила пример'],
+  [118, 'Тимур', '312. Решите систему: x + y = 7, x − y = 1', 'answer', 'yes', 0.95, 'прислали пример, который она просила', 'ответила'],
+  [95, 'Аня', 'Даня, ты сделал физику?', 'ignore', 'no', 0.91, 'обращаются к однокласснику', 'промолчала'],
+  [60, 'Дамир', 'во сколько завтра физра', 'send_schedule', 'unclear', 0.84, 'спрашивают расписание на завтра', 'прислала расписание'],
+  [12, 'Тимур', 'спасибо бот 🙏', 'react', 'yes', 0.9, 'благодарят за помощь', 'реакция'],
+];
+for (const [mins, name, text, action, toBot, confidence, reason, done] of journalSeed) {
+  journal.add({ at: Date.now() - mins * 60000, chat: GROUP, isGroup: true, name, text, done, decision: { action, toBot, confidence, reason, by: 'ai', provider: 'openrouter', model: 'deepseek/deepseek-chat-v3.1', ms: 700 + mins * 3 } });
+}
+
 const ANYA = '77011112233@s.whatsapp.net';
 const DAMIR = '77012223344@s.whatsapp.net';
 const minutesAgo = (m) => Date.now() - m * 60000;
@@ -228,8 +281,8 @@ logger.child({ module: 'bilim' }).info({ class: '7 «В»' }, 'Вход в Bilim
 logger.child({ module: 'wa' }).info('✅ WhatsApp подключён');
 
 startWebServer({
-  config, logger: logger.child({ module: 'web' }), wa, homework, core, auth, settings, secrets, scheduler, inbox, keys, backup, groq,
-  assistant, diary, bilim: diary, siteBrowser: null, logBuffer, restart: () => logger.warn('Демо: перезапуск'),
+  config, logger: logger.child({ module: 'web' }), wa, homework, core, auth, settings, secrets, scheduler, inbox, keys, orKeys, backup, groq, openrouter,
+  ai, journal, assistant, diary, bilim: diary, siteBrowser: null, logBuffer, restart: () => logger.warn('Демо: перезапуск'),
 });
 await scheduler.digestPlan(nowParts(config.timezone));
 // живость: время от времени «приходят» сообщения и записи журнала
