@@ -578,7 +578,7 @@ class Brain:
             from .video_dl import find_links
 
             links = find_links(inc.text)
-            if links:  # ссылка на TikTok/YouTube — скачать и прислать ответом (в фоне, ответы чата не ждут)
+            if links:  # ссылка на ролик (TikTok, YouTube, Instagram…) — скачать и прислать ответом (в фоне, ответы чата не ждут)
                 direct = (addressed or quoted_is_bot or mentions_name(inc.text, self.stems)
                           or any(jid_digits(j) in self.bot.digits() for j in inc.mentioned))
                 self.spawn(self._send_linked_video(chat, inc, links[0], direct=direct))
@@ -612,7 +612,7 @@ class Brain:
         self.runners.setdefault(inc.chat_jid, ChatRunner(self, inc.chat_jid)).feed(inc, level)
 
     async def _send_linked_video(self, chat: dict[str, Any], inc: Incoming, url: str, *, direct: bool) -> None:
-        """Скинули ролик TikTok/YouTube — скачать и прислать видео ответом на это сообщение.
+        """Скинули ролик (TikTok, YouTube, Instagram, VK…) — скачать и прислать видео ответом на это сообщение.
 
         Лимиты считают ПОПЫТКИ (скачивание — это процесс на сотни мегабайт): на чат, на человека и на весь бот.
         direct — просили её саму: тогда на неудачу коротко отвечает, иначе молчит."""
@@ -676,7 +676,7 @@ class Brain:
             if fresh is None or chat_paused(fresh):
                 return "paused"
             file = MediaFile("video", video.data, MIME["mp4"], f"{site}.mp4")
-            name = "YouTube" if site == "youtube" else "TikTok"
+            name = video_dl.SITE_NAMES.get(site, site)
             wa_id = await self.outbox.send_media(fresh, file, "", quoted=inc,
                                                  history=f"[видео из {name} по ссылке из сообщения выше]")
             return "sent" if wa_id else "not_sent"
@@ -724,9 +724,13 @@ class Brain:
         if kind == "cookies":
             text = (f"⚠️ Файл cookies для YouTube ({cookies}) не подходит: нужен формат Netscape — выгрузи заново "
                     "расширением «Get cookies.txt LOCALLY» (README, раздел «Видео по ссылке»).")
-        elif site == "tiktok":
-            text = ("⚠️ TikTok не даёт скачать видео с сервера — похоже, блокирует его IP. Обычно это временно; "
-                    "если долго не проходит — помогает только другой сервер или прокси.")
+        elif site != "youtube":
+            from .video_dl import SITE_NAMES
+
+            name = SITE_NAMES.get(site, site)
+            text = (f"⚠️ {name} не даёт скачать видео с сервера — блокирует его IP или просит войти. Бывает временно; "
+                    f"помогает файл cookies из браузера, где ты вошёл в {name} (тот же {cookies}, «Get cookies.txt "
+                    "LOCALLY» — можно один файл на все сайты), или другой сервер/прокси.")
         elif os.path.isfile(cookies):
             text = (f"⚠️ YouTube не даёт скачать видео с сервера даже с cookies ({cookies}) — похоже, они устарели: "
                     "выгрузи cookies.txt заново из браузера, где ты вошёл в YouTube (README, «Видео по ссылке»).")

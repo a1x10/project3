@@ -1,7 +1,7 @@
-"""Видео по ссылке из чата: TikTok и YouTube скачиваются (yt-dlp) и уходят ответом на сообщение со ссылкой.
+"""Видео по ссылке из чата: TikTok, YouTube, Instagram, Facebook, VK, X и др. скачиваются (yt-dlp) и уходят ответом.
 
 yt-dlp работает в отдельном процессе со своим временем и без ключей в окружении; разрешены только извлекатели
-YouTube и TikTok (никаких «скачай что угодно по любой ссылке» — внутренние адреса сервера недоступны).
+известных видеосайтов (SITES) — никаких «скачай что угодно по любой ссылке»: внутренние адреса сервера недоступны.
 Видео приводится к тому, что WhatsApp точно покажет: H.264 + AAC в MP4, не больше 720p и VIDEO_DL_MAX_MB.
 """
 
@@ -21,19 +21,44 @@ from dataclasses import dataclass
 
 log = logging.getLogger("stella.video")
 
-# только ролики: ютуб (обычные, shorts, youtu.be, мобильный) и тикток (полные и короткие ссылки)
-LINK_RE = re.compile(
-    r"https?://(?:"
-    r"(?:www\.|m\.)?youtube\.com/(?:watch\?(?:[^\s&#]{0,200}&){0,20}v=([\w-]{11})|shorts/([\w-]{11})|live/([\w-]{11}))"
-    r"|youtu\.be/([\w-]{11})"
-    r"|(?:www\.|m\.)?tiktok\.com/@[\w.-]{1,64}/video/(\d{5,25})"
-    r"|(?:vm|vt)\.tiktok\.com/([\w-]{1,32})"
-    r"|(?:www\.)?tiktok\.com/t/([\w-]{1,32})"
-    r")[^\s<>\"']{0,300}",
-    re.IGNORECASE,
-)
+# (сайт, человеческое название, шаблон ссылки после https://, извлекатели yt-dlp). Только известные видеосайты:
+# «скачай что угодно по любой ссылке» дало бы чужим доступ к внутренним адресам сервера.
+SITES: list[tuple[str, str, str, str]] = [
+    ("youtube", "YouTube",
+     r"(?:www\.|m\.)?youtube\.com/(?:watch\?(?:[^\s&#]{0,200}&){0,20}v=([\w-]{11})|shorts/([\w-]{11})|live/([\w-]{11}))"
+     r"|youtu\.be/([\w-]{11})", "youtube,YoutubeYtBe"),
+    ("tiktok", "TikTok",
+     r"(?:www\.|m\.)?tiktok\.com/@[\w.-]{1,64}/video/(\d{5,25})|(?:vm|vt)\.tiktok\.com/([\w-]{1,32})"
+     r"|(?:www\.)?tiktok\.com/t/([\w-]{1,32})", "TikTok,vm.tiktok"),
+    ("instagram", "Instagram", r"(?:www\.)?instagram\.com/(?:[\w.]{1,40}/)?(?:p|reel|reels|tv)/([\w-]{5,40})",
+     "Instagram"),
+    ("facebook", "Facebook",
+     r"(?:www\.|m\.|web\.)?facebook\.com/(?:reel/(\d{5,25})|watch/?\?v=(\d{5,25})|share/[vr]/([\w-]{5,40})"
+     r"|[\w.]{1,80}/videos/(?:[\w.-]{1,80}/)?(\d{5,25})|video\.php\?v=(\d{5,25}))|fb\.watch/([\w-]{3,40})",
+     "facebook,facebook:reel,FacebookRedirectURL"),
+    ("vk", "VK", r"(?:m\.)?(?:vk\.com|vkvideo\.ru)/(?:video|clip)(-?\d{1,15}_\d{1,15})", "vk"),
+    ("twitter", "X (Twitter)", r"(?:www\.|mobile\.)?(?:twitter|x)\.com/\w{1,20}/status/(\d{5,25})", "twitter"),
+    ("reddit", "Reddit", r"(?:www\.|old\.)?reddit\.com/r/\w{1,30}/(?:comments|s)/(\w{3,20})|v\.redd\.it/(\w{3,20})",
+     "Reddit"),
+    ("pinterest", "Pinterest", r"(?:[\w-]{1,10}\.)?pinterest\.[a-z.]{2,6}/pin/([\w-]{5,40})", "Pinterest"),
+    ("likee", "Likee", r"(?:www\.|l\.)?likee\.video/[@\w./-]{3,120}", "likee"),
+    ("twitch", "Twitch", r"clips\.twitch\.tv/([\w-]{3,80})|(?:www\.)?twitch\.tv/\w{1,30}/clip/([\w-]{3,80})",
+     "twitch:clips"),
+    ("rutube", "Rutube", r"rutube\.ru/(?:video|shorts)/(\w{10,40})", "rutube"),
+    ("ok", "Одноклассники", r"(?:m\.)?ok\.ru/video/(\d{5,25})", "Odnoklassniki"),
+    ("dzen", "Дзен", r"dzen\.ru/(?:video/watch|shorts)/(\w{10,40})", "dzen.ru"),
+    ("snapchat", "Snapchat", r"(?:www\.)?snapchat\.com/spotlight/([\w-]{5,80})", "SnapchatSpotlight"),
+    ("vimeo", "Vimeo", r"(?:www\.)?vimeo\.com/(\d{5,15})", "vimeo"),
+    ("dailymotion", "Dailymotion", r"(?:www\.)?dailymotion\.com/video/(\w{5,20})|dai\.ly/(\w{5,20})", "dailymotion"),
+    ("streamable", "Streamable", r"streamable\.com/(\w{4,12})", "Streamable"),
+    ("coub", "Coub", r"coub\.com/view/(\w{3,12})", "Coub"),
+]
+SITE_NAMES = {key: name for key, name, _, _ in SITES}
+_SITE_RES = [(key, re.compile(r"https?://(?:" + pat + r")", re.IGNORECASE)) for key, _, pat, _ in SITES]
+LINK_RE = re.compile(r"https?://(?:" + "|".join(f"(?:{pat})" for _, _, pat, _ in SITES) + r")[^\s<>\"']{0,300}",
+                     re.IGNORECASE)
 MAX_SCAN = 4000  # дальше в длинном сообщении ссылки не ищем (и регулярка не тормозит бота)
-EXTRACTORS = "youtube,YoutubeYtBe,TikTok,vm.tiktok"
+EXTRACTORS = ",".join(ex for _, _, _, ex in SITES)
 DL_TIMEOUT = 150  # скачивание целиком
 FIX_TIMEOUT = 180  # перекодирование, если формат не подходит WhatsApp
 SAFE_PATH = "/usr/local/bin:/usr/bin:/bin"
@@ -53,7 +78,7 @@ class VideoError(Exception):
 class Video:
     data: bytes
     title: str
-    site: str  # youtube | tiktok
+    site: str  # youtube | tiktok | instagram | … (ключ из SITES)
 
 
 def find_links(text: str, limit: int = 1) -> list[str]:
@@ -84,7 +109,10 @@ def canonical(url: str) -> str:
 
 
 def site_of(url: str) -> str:
-    return "tiktok" if "tiktok" in url.lower() else "youtube"
+    for key, rx in _SITE_RES:
+        if rx.match(url):
+            return key
+    return "youtube"
 
 
 def _env(tmp: str) -> dict[str, str]:
@@ -158,7 +186,7 @@ async def download(url: str, *, max_seconds: int = 300, max_mb: int = 30, cookie
                # P — до фильтра по длине (чтобы понять, почему не скачалось), A — готовый файл
                "--print", "pre_process:P%(.{duration,is_live})j",
                "--print", "after_move:A%(.{filepath,title,vcodec,acodec,height,duration})j"]
-        if cookies and site_of(url) == "youtube" and os.path.isfile(cookies):  # YouTube на серверах просит вход
+        if cookies and os.path.isfile(cookies):  # YouTube, Instagram и др. на серверах часто просят вход
             cookie_copy = os.path.join(tmp, "cookies.txt")
             try:
                 shutil.copyfile(cookies, cookie_copy)  # yt-dlp дописывает файл — портим копию, не оригинал

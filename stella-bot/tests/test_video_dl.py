@@ -142,7 +142,7 @@ async def test_filtered_videos_say_why(fake_ytdlp):
     assert e.value.kind == "too_big"
 
 
-async def test_cookies_only_for_youtube_and_only_a_copy(fake_ytdlp, tmp_path):
+async def test_cookies_go_as_a_copy_to_every_site(fake_ytdlp, tmp_path):
     fake_ytdlp["fail"] = "ERROR: [youtube] x: Sign in to confirm you’re not a bot"
     cookies = tmp_path / "cookies.txt"
     cookies.write_text("# Netscape HTTP Cookie File\n")
@@ -153,7 +153,7 @@ async def test_cookies_only_for_youtube_and_only_a_copy(fake_ytdlp, tmp_path):
     assert "--cookies" in cmd and cmd[cmd.index("--cookies") + 1] != str(cookies)  # копия, а не оригинал
     with pytest.raises(VideoError):
         await video_dl.download(TT, cookies=str(cookies))
-    assert "--cookies" not in fake_ytdlp["calls"][-1]  # в TikTok куки ютуба не уходят
+    assert "--cookies" in fake_ytdlp["calls"][-1]  # один файл на все сайты: yt-dlp шлёт куки только своего домена
     cookies.chmod(0)
     if not os.access(cookies, os.R_OK):  # нечитаемый файл (root, 600) — качаем без него, а не падаем
         with pytest.raises(VideoError):
@@ -280,3 +280,15 @@ async def test_prompt_mentions_links_only_when_enabled(brain):
     assert "TikTok" in minimal_prompt(brain.s) and "не выдумывай" in minimal_prompt(brain.s)
     brain.s.video_dl_enabled = False
     assert "TikTok" not in minimal_prompt(brain.s)
+
+
+def test_many_sites_but_not_any_url():
+    from bot.video_dl import find_links, site_of
+
+    cases = {"https://www.instagram.com/reel/C9abcDEF12/?igsh=x": "instagram", "https://fb.watch/abcDEF/": "facebook",
+             "https://vk.com/clip-123456_456239017": "vk", "https://x.com/u/status/1790000000000000000": "twitter",
+             "https://www.reddit.com/r/funny/comments/abc123/x/": "reddit", "https://ok.ru/video/123456789": "ok"}
+    for url, site in cases.items():
+        assert find_links(f"смотри {url}") and site_of(url) == site
+    for url in ("http://127.0.0.1:8000/admin", "https://example.com/video.mp4", "http://localhost/x"):
+        assert find_links(url) == []
