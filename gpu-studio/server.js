@@ -93,8 +93,16 @@ app.get('/api/jobs', auth, (req, res) => {
   res.json({ jobs });
 });
 
-app.listen(config.port, async () => {
+const httpServer = app.listen(config.port, async () => {
   console.log(`GPU Studio: http://localhost:${config.port}${config.mock ? '  (ТЕСТОВЫЙ РЕЖИМ, GPU не арендуется)' : ''}`);
   if (!config.mock && !loadTokens()) console.log('⚠ Higgsfield не подключён. Выполните: npm run connect');
   await recover();
+});
+
+httpServer.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\n❌ Порт ${config.port} уже занят другой программой.\n   Откройте файл .env, поменяйте PORT=${config.port} на свободный (например PORT=3080) и запустите снова.`);
+    process.exit(1);
+  }
+  throw e;
 });
