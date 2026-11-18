@@ -116,6 +116,25 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         file = await run(media.picture_from_svg, str(args.get("svg") or ""), str(args.get("shape") or "square"))
         return await budget.queue(file, str(args.get("caption") or "")[:500])
 
+    async def draw_image(args: dict[str, Any]) -> str:
+        from . import image_gen
+        from .keys import STORE as KEYS
+
+        prompt = " ".join(str(args.get("prompt") or "").split())
+        if len(prompt) < 3:
+            raise ToolError("prompt: опиши, что нарисовать")
+        await budget.take()
+        try:
+            data, mime, cost = await image_gen.generate(prompt, str(args.get("shape") or "square"), KEYS,
+                                                        settings.image_gen_model)
+        except image_gen.ImageGenError as exc:
+            raise ToolError(str(exc)) from exc
+        if ctx.on_cost is not None:  # сколько взял OpenRouter (если не сказал — по цене из настроек)
+            await ctx.on_cost(cost if cost is not None else settings.image_gen_price)
+        ext = "jpg" if "jpeg" in mime else (mime.split("/")[-1] or "png")
+        file = media.MediaFile("image", data, mime, f"picture.{ext}")
+        return await budget.queue(file, str(args.get("caption") or "")[:500])
+
     async def make_meme(args: dict[str, Any]) -> str:
         await budget.take()
         if ctx.quoted_media is None:
@@ -452,6 +471,11 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         make_deck,
     )
     shape = {"type": "string", "enum": ["square", "wide", "tall"], "description": "квадрат, 16:9 или вертикальное"}
+
+    def image_gen_ready() -> bool:
+        from .keys import STORE as KEYS
+
+        return bool(getattr(settings, "image_gen_enabled", False)) and KEYS.has("openrouter")
     from .anim_beta import spec as anim_spec
 
     color = {"type": "string", "description": "#RRGGBB"}
@@ -489,6 +513,15 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
              "required": ["svg"]},
             make_sticker,
         ),
+        *([ToolSpec(
+            "draw_image",
+            "Нарисовать КРАСИВУЮ картинку нейросетью (как фото, арт, иллюстрация, аватарка, обои) и отправить в чат. "
+            "prompt — подробное описание на английском: что изображено, стиль, цвета, ракурс, свет. Текст на картинке "
+            "нейросеть рисует плохо — надписи лучше в caption. Для схем, графиков и открыток с текстом — make_picture.",
+            {"type": "object", "properties": {"prompt": {"type": "string"}, "shape": shape,
+                                              "caption": {"type": "string"}}, "required": ["prompt"]},
+            draw_image,
+        )] if image_gen_ready() else []),
         ToolSpec(
             "make_picture",
             "Нарисовать картинку (иллюстрацию, схему, открытку, график) и отправить в чат. " + SVG_RULES +
