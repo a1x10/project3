@@ -1,0 +1,21 @@
+{
+  "name": "gpu-studio",
+  "version": "1.0.0",
+  "description": "Генерация видео и фото на одном общем GPU Higgsfield",
+  "main": "server.js",
+  "scripts": {
+    "start": "node launch.js",
+    "connect": "node connect.js",
+    "mock": "node launch.js --mock"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "express": "^4.22.3"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

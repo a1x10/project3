@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="logo">GPU<span>Studio</span></div>
+  <div id="who" class="who hidden"><span id="uname"></span> <button id="logout" class="link">Выйти</button></div>
+</header>
+
+<main>
+  <!-- Регистрация / вход -->
+  <section id="auth" class="card narrow hidden">
+    <div class="tabs">
+      <button data-tab="register" class="tab active">Регистрация</button>
+      <button data-tab="login" class="tab">Вход</button>
+    </div>
+    <form id="authForm">
+      <label>Логин<input name="username" autocomplete="username" required minlength="3" maxlength="24"></label>
+      <label>Пароль<input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
+      <label id="inviteRow" class="hidden">Инвайт-код<input name="invite"></label>
+      <label id="adultRow" class="check"><input name="adult" type="checkbox"> Мне есть 18 лет, я согласен с правилами</label>
+      <button class="primary" type="submit" id="authBtn">Создать аккаунт</button>
+      <p id="authErr" class="err"></p>
+    </form>
+    <p class="rules">Запрещено: любой контент с несовершеннолетними, дипфейки и откровенный контент с реальными людьми.</p>
+  </section>
+
+  <!-- Основной экран -->
+  <section id="app" class="hidden">
+    <div class="card status">
+      <div class="status-row">
+        <span id="dot" class="dot off"></span>
+        <div class="status-text">
+          <b id="phase">Сервер выключен</b>
+          <small id="statusMsg"></small>
+        </div>
+        <button id="startBtn" class="primary">Запустить сервер</button>
+      </div>
+      <div id="progress" class="progress hidden"><div></div></div>
+      <div class="meta" id="meta"></div>
+    </div>
+
+    <div class="card">
+      <div class="kind">
+        <button class="kindBtn active" data-kind="video">🎬 Видео</button>
+        <button class="kindBtn" data-kind="image">🖼 Фото</button>
+      </div>
+      <form id="genForm">
+        <textarea id="prompt" rows="3" maxlength="2000" placeholder="Введите промт для генерации видео…"></textarea>
+        <button class="primary" type="submit" id="genBtn">Сгенерировать</button>
+        <p id="genErr" class="err"></p>
+      </form>
+    </div>
+
+    <h3>Мои генерации</h3>
+    <div id="jobs" class="jobs"></div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
