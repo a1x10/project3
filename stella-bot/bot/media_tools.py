@@ -98,6 +98,16 @@ _DRAW_RE = re.compile(r"\b(?:нарису\w*|сгенери\w*|генерани\
 _NOT_DRAW_RE = re.compile(r"стикер|схем|график|диаграм|мем|таблиц|презентац|документ|мультик|видео", re.IGNORECASE)
 
 
+_VIDEO_RE = re.compile(r"\b(?:сделай|сгенери\w*|сними|создай|запили|замути)\s+(?:мне\s+|нам\s+)?(?:\w+\s+){0,2}"
+                       r"(?:видео\w*|видос\w*|ролик\w*|клип\w*)", re.IGNORECASE)
+
+
+def wants_video(text: str) -> bool:
+    """Просят сделать видео нейросетью («сделай видео, как кот танцует») — не мультик и не ссылку скачать."""
+    t = text or ""
+    return bool(_VIDEO_RE.search(t)) and not re.search(r"мультик|https?://|слайд", t, re.IGNORECASE)
+
+
 def wants_drawing(text: str) -> bool:
     """Просят нарисовать картинку («нарисуй кота», «сделай аватарку») — но не стикер, схему, мем или мультик."""
     return bool(_DRAW_RE.search(text or "")) and not _NOT_DRAW_RE.search(text or "")
@@ -150,6 +160,59 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
         ctx.drew_image = True
         log.info("нарисовала картинку (%s, %d КБ)", settings.image_gen_model, len(data) // 1024)
         return await budget.queue(file, str(args.get("caption") or "")[:500])
+
+    async def make_ai_video(args: dict[str, Any]) -> str:
+        from . import video_gen
+        from .keys import STORE as KEYS
+
+        prompt = " ".join(str(args.get("prompt") or "").split())
+        if len(prompt) < 3:
+            raise ToolError("prompt: опиши, что должно быть в видео")
+        if ctx.sender is None:
+            raise ToolError("видео — только когда о нём просят")
+        if getattr(ctx, "ai_video_queued", False):
+            raise ToolError("за один ответ — одно видео")
+        await budget.take()
+        day_key = f"aivideo:{ctx.chat_id}:{date.today().isoformat()}"
+        used = await db.kv_get(day_key)
+        limit = getattr(settings, "video_gen_per_day", 0)
+        if limit > 0 and not ctx.is_admin and used and used[1] >= limit:
+            raise ToolError("на сегодня видео в этом чате хватит, давай завтра")
+        seconds = max(5, min(30, int(getattr(settings, "video_gen_seconds", 5) or 5)))
+        resolution = str(getattr(settings, "video_gen_resolution", "480p") or "480p")
+        shape = str(args.get("shape") or "tall")
+        caption = str(args.get("caption") or "")[:500]
+        ctx.ai_video_queued = True
+        ctx.made_ai_video = True
+        ctx.media_queued += 1
+        await db.kv_add(day_key, 1)
+        actions = ctx.actions
+        released = asyncio.Event()
+
+        async def deliver() -> None:
+            try:
+                data, cost = await video_gen.generate(prompt, shape, seconds, resolution, KEYS, settings.video_gen_model)
+            except Exception as exc:
+                await db.kv_add(day_key, -1)
+                log.warning("видео нейросетью не получилось: %s", exc)
+                await asyncio.wait({asyncio.ensure_future(released.wait())}, timeout=60)
+                await actions.say(f"видео не получилось 😕 {str(exc)[:150]}", reply=True)
+                return
+            if ctx.on_cost is not None:
+                await ctx.on_cost(cost if cost is not None else video_gen.estimate_cost(seconds, resolution))
+            await asyncio.wait({asyncio.ensure_future(released.wait())}, timeout=60)
+            log.info("видео нейросетью готово (%s, %d с, %d КБ)", resolution, seconds, len(data) // 1024)
+            await actions.send_file(media.MediaFile("video", data, media.MIME["mp4"], "video.mp4"), caption,
+                                    reply=True)
+
+        async def release() -> None:
+            if not getattr(ctx, "replied", 0):
+                await actions.say("делаю видео 🎬 будет через пару минут")
+            released.set()
+
+        ctx.after.append(release)
+        actions.spawn(deliver())
+        return f"видео ставится в очередь ({seconds} с, {resolution}); придёт отдельным сообщением через 1–3 минуты"
 
     async def make_meme(args: dict[str, Any]) -> str:
         await budget.take()
@@ -488,6 +551,11 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
     )
     shape = {"type": "string", "enum": ["square", "wide", "tall"], "description": "квадрат, 16:9 или вертикальное"}
 
+    def video_gen_ready() -> bool:
+        from .keys import STORE as KEYS
+
+        return bool(getattr(settings, "video_gen_enabled", False)) and KEYS.has("openrouter")
+
     def image_gen_ready() -> bool:
         from .keys import STORE as KEYS
 
@@ -538,6 +606,16 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
                                               "caption": {"type": "string"}}, "required": ["prompt"]},
             draw_image,
         )] if image_gen_ready() else []),
+        *([ToolSpec(
+            "make_ai_video",
+            "Сделать НАСТОЯЩЕЕ видео нейросетью (HeyGen) по описанию — живые сцены, люди, животные, природа — и прислать "
+            "в чат через 1–3 минуты. prompt — подробно на английском: что происходит, кто в кадре, место, свет, "
+            "движение камеры. shape — tall (как в TikTok), wide или square. Для слайдшоу из картинок — make_video, для "
+            "мультика с котом и лисой — make_cartoon.",
+            {"type": "object", "properties": {"prompt": {"type": "string"}, "shape": shape,
+                                              "caption": {"type": "string"}}, "required": ["prompt"]},
+            make_ai_video,
+        )] if video_gen_ready() else []),
         ToolSpec(
             "make_picture",
             "Нарисовать картинку (иллюстрацию, схему, открытку, график) и отправить в чат. " + SVG_RULES +

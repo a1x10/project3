@@ -1110,11 +1110,17 @@ class Brain:
             tool_ctx.untrusted = "files"
         tools = build_tools(self.db, self.casino, self.s, tool_ctx)
         tools += self._extra_tools(chat, tool_ctx, shared=shared)
-        from .media_tools import wants_drawing
+        from .media_tools import wants_drawing, wants_video
 
         draw_tool = next((t for t in tools if t.name == "draw_image"), None)
         asked_text = " ".join(i.text or "" for i in starred)
         want_draw = draw_tool is not None and mode != AMBIENT and wants_drawing(asked_text)
+        video_tool = next((t for t in tools if t.name == "make_ai_video"), None)
+        want_video = video_tool is not None and mode != AMBIENT and wants_video(asked_text)
+        if want_video:
+            want_draw = False
+            prompt += ("\n\n(Тебя просят сделать видео — обязательно вызови make_ai_video: prompt подробно на "
+                       "английском; в тексте ответь коротко, вроде «щас сделаю, пару минут».)")
         if want_draw:  # модели иногда отвечают «держи» без картинки — говорим прямо
             prompt += ("\n\n(Тебя просят нарисовать картинку — обязательно вызови draw_image: prompt подробно на "
                        "английском; в тексте ответь коротко, вроде «щас нарисую».)")
@@ -1159,6 +1165,12 @@ class Brain:
             await self.outbox.send_result(chat, res, reply_to=target)
         # отвечая нескольким по очереди, каждому — покороче, чтобы не упереться в лимит сообщений
         segments = parse_reply(reply.text, min(self.s.max_bubbles, 3) if several else self.s.max_bubbles)
+        if want_video and not getattr(tool_ctx, "made_ai_video", False):  # модель не вызвала — ставим видео сами
+            try:
+                await video_tool.handler({"prompt": asked_text[:1000], "shape": "tall"})
+            except Exception as exc:
+                await self.outbox.send_result(chat, self._canned([f"видео не получилось 😕 {str(exc)[:120]}"]),
+                                              reply_to=target)
         if want_draw and not getattr(tool_ctx, "drew_image", False):  # модель так и не нарисовала — рисуем сами
             try:
                 await draw_tool.handler({"prompt": asked_text[:1000], "shape": "square"})

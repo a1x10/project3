@@ -113,6 +113,12 @@ class Settings:
     # картинки нейросетью через OpenRouter (тот же ключ): Recraft V4.1 Flash V2 — около $0.007 за картинку
     image_gen_enabled: bool = field(default_factory=lambda: _bool("IMAGE_GEN_ENABLED", True))
     image_gen_model: str = field(default_factory=lambda: _str("IMAGE_GEN_MODEL", "recraft/recraft-v4.1-flash-v2"))
+    # видео нейросетью через OpenRouter: HeyGen Video, цена за секунду (480p ≈ $0.02/с → 5 с ≈ $0.10)
+    video_gen_enabled: bool = field(default_factory=lambda: _bool("VIDEO_GEN_ENABLED", True))
+    video_gen_model: str = field(default_factory=lambda: _str("VIDEO_GEN_MODEL", "heygen/heygen-video-1"))
+    video_gen_resolution: str = field(default_factory=lambda: _str("VIDEO_GEN_RESOLUTION", "480p"))
+    video_gen_seconds: int = field(default_factory=lambda: _int("VIDEO_GEN_SECONDS", 5))  # 5–30
+    video_gen_per_day: int = field(default_factory=lambda: _int("VIDEO_GEN_PER_DAY", 0))  # на чат; 0 — без лимита
     image_gen_price: float = field(default_factory=lambda: _float("IMAGE_GEN_PRICE", 0.007))  # для учёта расходов
     video_dl_per_day: int = field(default_factory=lambda: _int("VIDEO_DL_PER_DAY", 0))  # на чат в сутки
     video_dl_max_seconds: int = field(default_factory=lambda: _int("VIDEO_DL_MAX_SECONDS", 300))  # длиннее — не качает
