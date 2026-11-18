@@ -170,6 +170,8 @@ class Outbox:
                                               delay_ms=delay, **extra)
             label = f"[{ {'image': 'картинка', 'video': 'видео'}.get(file.kind, 'файл') }: {file.filename}]"
         self.remember_sent(wa_id)
+        log.info("файл %s (%d КБ) в %s: %s", file.filename, len(file.data) // 1024, mask_phone(chat["jid"]),
+                 "отправлен" if wa_id else "сервер WhatsApp/Telegram не подтвердил отправку")
         # history — как записать в историю (например, «видео по ссылке»), чтобы чужой текст не стал её словами
         await self.db.add_message(chat["id"], "assistant", history or f"{label} {caption}".strip(), wa_message_id=wa_id,
                                   sender_name=self.s.bot_name,

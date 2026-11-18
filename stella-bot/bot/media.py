@@ -691,3 +691,22 @@ def _frames(base: Image.Image, start: int, stop: int, n: int, size: tuple[int, i
             frame = Image.eval(frame, lambda px, a=alpha: int(px * a))
         frames.append(frame.tobytes())
     return b"".join(frames)
+
+
+def to_jpeg(data: bytes, max_side: int = 1600, quality: int = 90) -> bytes:
+    """Любая картинка (PNG, WebP, AVIF…) -> JPEG не больше max_side по длинной стороне (прозрачность — на белом)."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    img.load()
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+    img.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality, optimize=True)
+    return buf.getvalue()

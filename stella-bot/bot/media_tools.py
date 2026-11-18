@@ -142,8 +142,11 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             raise ToolError(str(exc)) from exc
         if ctx.on_cost is not None:  # сколько взял OpenRouter (если не сказал — по цене из настроек)
             await ctx.on_cost(cost if cost is not None else settings.image_gen_price)
-        ext = "jpg" if "jpeg" in mime else (mime.split("/")[-1] or "png")
-        file = media.MediaFile("image", data, mime, f"picture.{ext}")
+        try:  # WhatsApp и Telegram надёжно показывают как фото только JPEG/PNG — приводим к JPEG
+            data = await run(media.to_jpeg, data)
+        except Exception as exc:
+            raise ToolError(f"картинка пришла в непонятном формате ({mime})") from exc
+        file = media.MediaFile("image", data, media.MIME["jpg"], "picture.jpg")
         ctx.drew_image = True
         log.info("нарисовала картинку (%s, %d КБ)", settings.image_gen_model, len(data) // 1024)
         return await budget.queue(file, str(args.get("caption") or "")[:500])
