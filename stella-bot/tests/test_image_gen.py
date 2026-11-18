@@ -49,3 +49,28 @@ async def test_tool_only_with_openrouter_key(settings, brain):
         assert "draw_image" not in {t.name for t in build_media_tools(brain.db, settings, ctx)}
     finally:
         STORE.keys = []
+
+
+async def test_draw_request_gets_a_picture_even_if_model_forgets(brain, monkeypatch):
+    from bot.media_tools import wants_drawing
+
+    from .conftest import VASYA, settle, upsert
+
+    assert wants_drawing("стелла нарисуй кота-космонавта") and wants_drawing("сделай мне аватарку")
+    assert not wants_drawing("нарисуй стикер кота") and not wants_drawing("как дела")
+
+    async def fake_generate(prompt, shape, store, model, **kw):
+        fake_generate.prompts.append(prompt)
+        return PNG, "image/png", 0.007
+    fake_generate.prompts = []
+    monkeypatch.setattr(image_gen, "generate", fake_generate)
+    await STORE.add("openrouter", KEY_A)
+    try:
+        brain.llm.queue = ["держи"]  # модель «забыла» вызвать draw_image
+        await brain.handle_payload(upsert("стелла нарисуй кота-космонавта", chat=VASYA, sender=VASYA))
+        await settle(brain)
+        assert "обязательно вызови draw_image" in brain.llm.calls[-1]["prompt"]
+        assert fake_generate.prompts and "кота-космонавта" in fake_generate.prompts[0]
+        assert [m for m in brain.evo.sent if m["type"] == "media" and m.get("mediatype") == "image"]
+    finally:
+        STORE.keys = []

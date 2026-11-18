@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import date
 from typing import TYPE_CHECKING, Any
@@ -92,6 +93,16 @@ class _Budget:
         return "готово — уйдёт в чат сразу после твоего сообщения"
 
 
+_DRAW_RE = re.compile(r"\b(?:нарису\w*|сгенери\w*|генерани\w*|сделай\s+(?:мне\s+|нам\s+)?(?:картинк\w*|фот\w*|арт\w*|"
+                      r"аватар\w*|авку|обо\w*|изображени\w*|рисун\w*)|покажи,?\s+как\s+выгляд\w*)", re.IGNORECASE)
+_NOT_DRAW_RE = re.compile(r"стикер|схем|график|диаграм|мем|таблиц|презентац|документ|мультик|видео", re.IGNORECASE)
+
+
+def wants_drawing(text: str) -> bool:
+    """Просят нарисовать картинку («нарисуй кота», «сделай аватарку») — но не стикер, схему, мем или мультик."""
+    return bool(_DRAW_RE.search(text or "")) and not _NOT_DRAW_RE.search(text or "")
+
+
 def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[ToolSpec]:
     from .tools import ToolError
 
@@ -133,6 +144,8 @@ def build_media_tools(db: DB, settings: Settings, ctx: "ToolContext") -> list[To
             await ctx.on_cost(cost if cost is not None else settings.image_gen_price)
         ext = "jpg" if "jpeg" in mime else (mime.split("/")[-1] or "png")
         file = media.MediaFile("image", data, mime, f"picture.{ext}")
+        ctx.drew_image = True
+        log.info("нарисовала картинку (%s, %d КБ)", settings.image_gen_model, len(data) // 1024)
         return await budget.queue(file, str(args.get("caption") or "")[:500])
 
     async def make_meme(args: dict[str, Any]) -> str:
