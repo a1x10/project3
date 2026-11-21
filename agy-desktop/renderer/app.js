@@ -208,11 +208,13 @@ const chat = () => state.chats.find(c => c.id === state.current);
 async function loadChats() {
   state.chats = await api.loadChats();
   if (!Array.isArray(state.chats)) state.chats = [];
+  state.chats.forEach(c => c.messages.forEach(m => { delete m._view; if (m.busy) m.busy = false; }));
+  state.lastChatUsed = state.settings.lastChatId || null;
   if (state.chats.length) state.current = state.chats[0].id; else newChat();
   renderChatList(); renderMessages();
 }
 let saveT = null;
-function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(state.chats.slice(0, 200)), 300); }
+function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => k === '_view' ? undefined : v))), 300); }
 
 function newChat() {
   const existing = state.chats.find(c => !c.messages.length);
@@ -280,9 +282,17 @@ function fillAgent(el, m) {
     ex.appendChild(d);
   }
   const body = el.querySelector('.body');
-  if (m.text) body.innerHTML = renderMarkdown(m.text);
-  else if (m.busy) body.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  const typingNow = m._view != null;
+  const visible = typingNow ? m.text.slice(0, m._view) : m.text;
+  if (visible) body.innerHTML = renderMarkdown(visible);
+  else if (m.busy && !typingNow) body.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
   else body.innerHTML = '';
+  if (typingNow && (m.busy || m._view < m.text.length)) {
+    const caret = document.createElement('span'); caret.className = 'caret';
+    const last = body.lastElementChild;
+    const host = last && /^(P|LI|H\d)$/.test(last.tagName) ? last : (last && last.tagName === 'UL' || last && last.tagName === 'OL') ? last.lastElementChild : (last && last.tagName === 'PRE' ? last.querySelector('code') : body);
+    (host || body).appendChild(caret);
+  }
   if (m.error) { const e = document.createElement('div'); e.className = 'err'; e.textContent = m.error; body.appendChild(e); }
   if (m.authRequired) {
     const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Войти в Stella';
@@ -292,6 +302,32 @@ function fillAgent(el, m) {
   body.querySelectorAll('pre .copy').forEach(btn => btn.onclick = () => {
     navigator.clipboard.writeText(btn.nextElementSibling.textContent); btn.textContent = 'скопировано'; setTimeout(() => btn.textContent = 'copy', 1200);
   });
+}
+
+/* ---------- letter-by-letter typing ---------- */
+const typingMsgs = new Set();
+let typingRaf = false;
+function startTyping(m) {
+  if (m._view == null) m._view = 0;
+  typingMsgs.add(m);
+  if (!typingRaf) { typingRaf = true; requestAnimationFrame(typeTick); }
+}
+function typeTick() {
+  for (const m of typingMsgs) {
+    const len = m.text.length;
+    if (m._view > len) m._view = len;
+    if (m._view < len) {
+      const behind = len - m._view;
+      // ~2 letters per frame, faster when far behind so the text never lags much
+      m._view = Math.min(len, m._view + Math.max(2, Math.ceil(behind / 25)));
+      updateMsg(m);
+    } else if (!m.busy) {
+      delete m._view;
+      typingMsgs.delete(m);
+      updateMsg(m);
+    }
+  }
+  if (typingMsgs.size) requestAnimationFrame(typeTick); else typingRaf = false;
 }
 
 function updateMsg(m) {
@@ -344,6 +380,7 @@ function sendText(raw) {
     continueLast: !c.convId && c.messages.length > 2 && state.lastChatUsed === c.id
   });
   state.lastChatUsed = c.id;
+  api.setSettings({ lastChatId: c.id });
   saveChats();
 }
 
@@ -353,9 +390,9 @@ api.onEvent(ev => {
   const m = b.msg;
   const c = state.chats.find(x => x.id === b.chatId);
   switch (ev.type) {
-    case 'delta': b.gotDelta = true; m.text += ev.text; break;
-    case 'raw': if (!b.gotDelta) m.text += ev.text; break;
-    case 'final': if (!m.text || !b.gotDelta || ev.text.length >= m.text.length) m.text = ev.text; break;
+    case 'delta': b.gotDelta = true; m.text += ev.text; startTyping(m); break;
+    case 'raw': if (!b.gotDelta) { m.text += ev.text; startTyping(m); } break;
+    case 'final': if (!m.text || !b.gotDelta || ev.text.length >= m.text.length) { if (!ev.text.startsWith(m.text.slice(0, m._view || 0))) m._view = 0; m.text = ev.text; startTyping(m); } break;
     case 'thinking': m.thinking = (m.thinking || '') + ev.text; break;
     case 'tool': m.tools.push({ name: ev.name, detail: ev.detail }); break;
     case 'error': m.error = (m.error ? m.error + '\n' : '') + ev.text; break;

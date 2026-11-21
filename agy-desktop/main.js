@@ -355,7 +355,8 @@ function respLog(text) {
 
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
-  const fmt = s.outputFormat === 'stream-json' ? 'stream-json' : 'json';
+  // text = real-time streaming (default); json / stream-json can be chosen in settings.json
+  const fmt = ['json', 'stream-json'].includes(s.outputFormat) ? s.outputFormat : 'text';
   const args = ['-p', prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
   if (conversationId) args.push('--conversation', conversationId);
   else if (continueLast) args.push('-c');
@@ -372,7 +373,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   send('term:data', `\r\n\x1b[90m$ agy -p "${prompt.slice(0, 80).replace(/\n/g, ' ')}${prompt.length > 80 ? '…' : ''}" --output-format ${fmt}\x1b[0m\r\n`);
 
   const dec = new (require('string_decoder').StringDecoder)('utf8');
-  let buf = '', all = '', stderr = '', shown = '', finalText = null, convId = null;
+  let buf = '', all = '', stderr = '', shown = '', finalText = null, convId = null, looksJson = null;
 
   const emitConv = o => { const id = findConvId(o); if (id && !convId) { convId = id; send('chat:event', { reqId, type: 'conversation', id }); } };
 
@@ -416,6 +417,13 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
       buf += str;
       let i;
       while ((i = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    } else if (fmt === 'text') {
+      // if the CLI still answers with a JSON object, let the close handler parse it
+      if (looksJson === null && all.trim()) looksJson = /^[\[{]/.test(all.trim());
+      if (looksJson === false) {
+        const t = stripAnsi(str).replace(/\r(?!\n)/g, '');
+        if (t) { shown += t; send('chat:event', { reqId, type: 'delta', text: t }); }
+      }
     }
   });
   child.stderr.on('data', d => { const str = d.toString('utf8'); stderr += str; send('term:data', str.replace(/\r?\n/g, '\r\n')); });
