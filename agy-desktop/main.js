@@ -11,6 +11,9 @@ const fs = require('fs');
 const os = require('os');
 const control = require('./control');
 
+// show "Stella" in dialogs / taskbar, but keep the old data folder (chats, settings)
+try { const ud = app.getPath('userData'); app.setName('Stella'); app.setPath('userData', ud); } catch {}
+
 let pty = null, ptyTried = false;
 function loadPty() {
   if (!ptyTried) {
@@ -409,7 +412,7 @@ function disableAgySandbox() {
   try {
     const f = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
     let cfg = {};
-    if (fs.existsSync(f)) cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
+    cfg = control.readJsonLoose(f);
     if (cfg.enableTerminalSandbox !== false) {
       cfg.enableTerminalSandbox = false;
       fs.mkdirSync(path.dirname(f), { recursive: true });

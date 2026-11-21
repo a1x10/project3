@@ -276,12 +276,48 @@ function runPs(script) {
   });
 }
 
+// tolerant JSON reader: BOM, UTF-16, // and /* */ comments, trailing commas, empty file.
+// If the file still can't be read, it is backed up and treated as empty (never silently lost).
+function readJsonLoose(f) {
+  if (!fs.existsSync(f)) return {};
+  const buf = fs.readFileSync(f);
+  let txt;
+  if (buf[0] === 0xFF && buf[1] === 0xFE) txt = buf.slice(2).toString('utf16le');
+  else if (buf[0] === 0xFE && buf[1] === 0xFF) txt = Buffer.from(buf.slice(2)).swap16().toString('utf16le');
+  else txt = buf.toString('utf8');
+  txt = txt.replace(/^﻿/, '').replace(/\u0000/g, '');
+  if (!txt.trim()) return {};
+  try { return JSON.parse(txt); } catch {}
+  // strip comments (outside strings) and trailing commas
+  let out = '', inStr = false, esc = false;
+  for (let i = 0; i < txt.length; i++) {
+    const c = txt[i], n = txt[i + 1];
+    if (inStr) { out += c; if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') { inStr = true; out += c; continue; }
+    if (c === '/' && n === '/') { while (i < txt.length && txt[i] !== '\n') i++; out += '\n'; continue; }
+    if (c === '/' && n === '*') { i += 2; while (i < txt.length && !(txt[i] === '*' && txt[i + 1] === '/')) i++; i++; continue; }
+    out += c;
+  }
+  out = out.replace(/,(\s*[}\]])/g, '$1');
+  try { const v = JSON.parse(out); return v && typeof v === 'object' ? v : {}; } catch (e) {
+    const bak = f + '.stella-backup-' + Date.now();
+    try { fs.copyFileSync(f, bak); } catch {}
+    H.log('unreadable JSON, backed up to', bak, e.message);
+    return {};
+  }
+}
+
 // register chrome-devtools-mcp with agy and allow its tools in headless mode
 function setBrowserMcp(enabled) {
   const mcpFile = path.join(os.homedir(), '.gemini', 'config', 'mcp_config.json');
   const setFile = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
-  const readJ = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (fs.existsSync(f)) throw new Error('cannot parse ' + f); return {}; } };
-  const writeJ = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
+  const readJ = f => readJsonLoose(f);
+  const writeJ = (f, v) => {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const bak = f + '.before-stella';
+    if (fs.existsSync(f) && !fs.existsSync(bak)) { try { fs.copyFileSync(f, bak); } catch {} }   // one-time backup of the original
+    fs.writeFileSync(f, JSON.stringify(v, null, 2));
+  };
 
   const mcp = readJ(mcpFile);
   mcp.mcpServers = mcp.mcpServers || {};
@@ -516,4 +552,4 @@ function agentNote() {
   return t;
 }
 
-module.exports = { init, agentNote, setBrowserMcp, ensureBrowser, newPrompt, promptFinished, stopControl, findBrowser, BROWSER_PORT };
+module.exports = { readJsonLoose, init, agentNote, setBrowserMcp, ensureBrowser, newPrompt, promptFinished, stopControl, findBrowser, BROWSER_PORT };
