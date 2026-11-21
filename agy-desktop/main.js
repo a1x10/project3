@@ -12,7 +12,18 @@ const os = require('os');
 const control = require('./control');
 
 // show "Stella" in dialogs / taskbar, but keep the old data folder (chats, settings)
-try { const ud = app.getPath('userData'); app.setName('Stella'); app.setPath('userData', ud); } catch {}
+try {
+  const ud = app.getPath('userData');
+  app.setName('Stella'); app.setPath('userData', ud);
+  // the .exe build stores data in %APPDATA%\Stella: bring chats/settings over from the old install.bat version
+  const old = path.join(app.getPath('appData'), 'Agy Desktop');
+  if (ud !== old && fs.existsSync(old)) {
+    fs.mkdirSync(ud, { recursive: true });
+    for (const f of ['chats.json', 'settings.json']) {
+      if (!fs.existsSync(path.join(ud, f)) && fs.existsSync(path.join(old, f))) fs.copyFileSync(path.join(old, f), path.join(ud, f));
+    }
+  }
+} catch {}
 
 let pty = null, ptyTried = false;
 function loadPty() {
@@ -62,12 +73,14 @@ process.on('uncaughtException', e => {
 // Returns true if an elevated copy was started (UAC accepted)
 function relaunchAsAdmin() {
   const { spawnSync } = require('child_process');
+  const portable = process.env.PORTABLE_EXECUTABLE_FILE;
+  const exePath = portable || process.execPath;
   const args = app.isPackaged ? process.argv.slice(1) : [app.getAppPath()];
   args.push(ELEVATED_FLAG);
   // each argument wrapped in double quotes so paths with spaces / cyrillic survive
   const argString = args.map(a => '"' + String(a).replace(/"/g, '\\"') + '"').join(' ');
-  const workDir = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
-  const ps = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${psQuote(process.execPath)} -ArgumentList ${psQuote(argString)} -WorkingDirectory ${psQuote(workDir)} -Verb RunAs`;
+  const workDir = app.isPackaged ? path.dirname(exePath) : app.getAppPath();
+  const ps = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${psQuote(exePath)} -ArgumentList ${psQuote(argString)} -WorkingDirectory ${psQuote(workDir)} -Verb RunAs`;
   const encoded = Buffer.from(ps, 'utf16le').toString('base64');
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
                       { windowsHide: true, timeout: 120000, encoding: 'utf8' });
@@ -219,6 +232,7 @@ function createWindow() {
     width: 1280, height: 840, minWidth: 820, minHeight: 560,
     title: 'Stella',
     backgroundColor: '#f7f6f3',
+    icon: path.join(__dirname, 'renderer', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

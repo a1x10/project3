@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win portable --x64"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -21,10 +21,47 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "local.agy.desktop",
+    "appId": "local.stella.desktop",
+    "productName": "Stella",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "control.js",
+      "renderer/**",
+      "package.json",
+      "!node_modules/node-pty/build/**",
+      "!node_modules/node-pty/deps/**",
+      "!node_modules/node-pty/src/**",
+      "!node_modules/node-pty/third_party/**",
+      "!node_modules/node-pty/prebuilds/darwin-*/**",
+      "!**/*.pdb"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
     "win": {
-      "target": "portable",
-      "requestedExecutionLevel": "requireAdministrator"
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "requestedExecutionLevel": "requireAdministrator",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Stella.exe",
+      "requestExecutionLevel": "admin",
+      "unpackDirName": "Stella"
     }
   }
 }
