@@ -27,19 +27,39 @@ function isAdmin() {
 
 function psQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
 
+// simple log file: %APPDATA%\agy-desktop\agy-desktop.log
+function log(...a) {
+  try {
+    const dir = path.join(process.env.APPDATA || os.homedir(), 'agy-desktop');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'agy-desktop.log'), new Date().toISOString() + ' ' + a.map(String).join(' ') + '\n');
+  } catch {}
+}
+process.on('uncaughtException', e => { log('uncaught', e && e.stack || e); });
+
+// Returns true if an elevated copy was started (UAC accepted)
 function relaunchAsAdmin() {
+  const { spawnSync } = require('child_process');
   const args = app.isPackaged ? process.argv.slice(1) : [app.getAppPath()];
   args.push(ELEVATED_FLAG);
-  const argList = args.map(psQuote).join(',');
-  const cmd = `Start-Process -FilePath ${psQuote(process.execPath)} -ArgumentList ${argList} ` +
-              `-WorkingDirectory ${psQuote(app.isPackaged ? path.dirname(process.execPath) : app.getAppPath())} -Verb RunAs`;
-  spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', cmd],
-        { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  // each argument wrapped in double quotes so paths with spaces / cyrillic survive
+  const argString = args.map(a => '"' + String(a).replace(/"/g, '\\"') + '"').join(' ');
+  const workDir = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
+  const ps = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${psQuote(process.execPath)} -ArgumentList ${psQuote(argString)} -WorkingDirectory ${psQuote(workDir)} -Verb RunAs`;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+                      { windowsHide: true, timeout: 120000, encoding: 'utf8' });
+  log('relaunchAsAdmin exit=', r.status, 'err=', (r.stderr || '').trim(), r.error ? r.error.message : '');
+  return r.status === 0;
 }
 
-if (isWin && !process.env.AGY_NO_ADMIN && !isAdmin() && !process.argv.includes(ELEVATED_FLAG)) {
-  relaunchAsAdmin();
-  app.exit(0);
+log('start argv=', JSON.stringify(process.argv), 'admin=', isAdmin());
+if (isWin && !process.env.AGY_NO_ADMIN && !process.argv.includes(ELEVATED_FLAG) && !isAdmin()) {
+  if (relaunchAsAdmin()) {
+    app.exit(0);
+  } else {
+    log('UAC cancelled or failed, continuing without admin rights');
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -182,7 +202,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => { log('ready'); createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
 app.on('before-quit', killAll);
 

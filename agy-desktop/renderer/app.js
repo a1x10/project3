@@ -2,6 +2,18 @@
 const $ = s => document.querySelector(s);
 const api = window.agy;
 
+// show any error on screen instead of a blank window
+function fatal(msg) {
+  document.querySelectorAll('.screen').forEach(x => x.classList.toggle('active', x.id === 'boot'));
+  const box = document.getElementById('boot-error');
+  box.querySelector('p').textContent = 'Ошибка: ' + msg;
+  box.classList.remove('hidden');
+}
+window.addEventListener('error', e => fatal(e.message + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')));
+window.addEventListener('unhandledrejection', e => fatal(String(e.reason && e.reason.stack || e.reason)));
+if (!api) setTimeout(() => fatal('preload.js не загрузился — переустановите (install.bat)'), 0);
+if (typeof Terminal === 'undefined') setTimeout(() => fatal('Не найдены файлы терминала (node_modules/@xterm). Запустите install.bat'), 0);
+
 const state = {
   settings: null,
   info: null,
@@ -78,7 +90,7 @@ async function boot() {
   await sleep(350);
   show('login');
 }
-$('#boot-retry').onclick = boot;
+$('#boot-retry').onclick = () => boot().catch(e => fatal(e.stack || e));
 
 /* ================================================================== */
 /* Terminals (xterm.js) — hidden terminal + login terminal             */
@@ -506,4 +518,4 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && state.voice) setVoice(false);
 });
 
-boot();
+if (api) boot().catch(e => fatal(e.stack || e));

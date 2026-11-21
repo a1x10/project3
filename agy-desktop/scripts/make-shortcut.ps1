@@ -18,5 +18,5 @@ foreach ($lnk in $targets) {
   $bytes = [IO.File]::ReadAllBytes($lnk)
   $bytes[0x15] = $bytes[0x15] -bor 0x20
   [IO.File]::WriteAllBytes($lnk, $bytes)
-  Write-Host "  ярлык: $lnk"
+  Write-Host "  shortcut: $lnk"
 }

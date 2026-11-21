@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
-if not exist "node_modules\electron\dist\electron.exe" (
-  echo Сначала запустите install.bat
+if not exist "%~dp0node_modules\electron\dist\electron.exe" (
+  echo Run install.bat first.
   pause
   exit /b 1
 )
