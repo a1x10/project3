@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:">
-<title>Agy Desktop</title>
+<title>Stella</title>
 <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -12,10 +12,10 @@
 <!-- ============ BOOT: admin / CLI check / install ============ -->
 <section id="boot" class="screen active">
   <div class="boot-card">
-    <div class="logo"><span class="logo-mark">✳</span> Agy Desktop</div>
+    <div class="logo"><span class="logo-mark">✳</span> Stella</div>
     <ul class="steps">
       <li id="st-admin"><i></i><span>Права администратора</span><em></em></li>
-      <li id="st-cli"><i></i><span>Проверка Antigravity CLI</span><em></em></li>
+      <li id="st-cli"><i></i><span>Проверка системных файлов</span><em></em></li>
       <li id="st-install" class="hidden"><i></i><span>Установка системных файлов…</span><em></em></li>
       <li id="st-term"><i></i><span>Запуск терминала</span><em></em></li>
     </ul>
@@ -31,8 +31,8 @@
 <section id="login" class="screen">
   <div class="login-card">
     <div class="logo big"><span class="logo-mark">✳</span></div>
-    <h1>Добро пожаловать</h1>
-    <p class="muted">Antigravity CLI установлен. Войдите через аккаунт Google, чтобы начать.</p>
+    <h1>Добро пожаловать в Stella</h1>
+    <p class="muted">Всё готово. Войдите через аккаунт Google, чтобы начать.</p>
     <button class="btn primary wide" id="login-btn">Войдите в систему</button>
     <p id="login-status" class="muted small"></p>
     <div id="login-term-wrap" class="login-term hidden">
@@ -53,7 +53,7 @@
 <section id="app" class="screen">
   <aside id="sidebar">
     <div class="side-top">
-      <div class="logo small"><span class="logo-mark">✳</span> Agy</div>
+      <div class="logo small"><span class="logo-mark">✳</span> Stella</div>
       <button class="icon-btn" id="new-chat" title="Новый чат (Ctrl+N)">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -68,7 +68,7 @@
       <button class="side-link" id="toggle-term">
         <svg viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></svg> Терминал
       </button>
-      <div class="status-line"><span class="dot" id="status-dot"></span><span id="status-text">agy</span></div>
+      <div class="status-line"><span class="dot" id="status-dot"></span><span id="status-text">Stella</span></div>
     </div>
   </aside>
 
@@ -84,7 +84,7 @@
       <div id="empty" class="empty">
         <div class="logo-mark huge">✳</div>
         <h2>Чем займёмся?</h2>
-        <p class="muted">Запросы уходят в Antigravity CLI, ответы — сюда. Нажмите чёрную кнопку, чтобы говорить голосом.</p>
+        <p class="muted">Напишите запрос или нажмите чёрную кнопку, чтобы говорить голосом.</p>
         <div class="suggestions">
           <button class="sugg">Объясни структуру этого проекта</button>
           <button class="sugg">Найди и исправь баги в коде</button>
@@ -140,7 +140,7 @@
           </button>
         </div>
       </div>
-      <div class="hint muted small">Enter — отправить · Shift+Enter — новая строка · команды, начинающиеся с <code>/</code>, уходят прямо в терминал agy</div>
+      <div class="hint muted small">Enter — отправить · Shift+Enter — новая строка · команды, начинающиеся с <code>/</code>, выполняются как команды</div>
     </div>
   </main>
 

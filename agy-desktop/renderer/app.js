@@ -1,4 +1,4 @@
-/* Agy Desktop — renderer */
+/* Stella — renderer */
 const $ = s => document.querySelector(s);
 const api = window.agy;
 
@@ -73,8 +73,7 @@ async function boot() {
     off();
     if (!r.ok) {
       step('st-install', 'fail', 'ошибка');
-      bootError('Не удалось установить Antigravity CLI. Проверьте интернет и нажмите «Повторить». ' +
-        'Можно установить вручную: irm https://antigravity.google/cli/install.ps1 | iex');
+      bootError('Не удалось установить системные файлы. Проверьте интернет и нажмите «Повторить».');
       return;
     }
     step('st-install', 'ok', 'готово');
@@ -86,7 +85,7 @@ async function boot() {
   initTerminals();
   await sleep(300);
   step('st-term', state.info.pty ? 'ok' : 'warn', state.info.pty ? 'pty' : 'без node-pty');
-  setStatus('on', 'agy ' + (cli.version || ''));
+  setStatus('on', 'Stella готова');
   await sleep(350);
   show('login');
 }
@@ -156,7 +155,7 @@ $('#login-btn').onclick = async () => {
     enterApp();
     return;
   }
-  st.textContent = 'Запускаю Antigravity CLI… Откроется окно входа Google.';
+  st.textContent = 'Запускаю Stella… Откроется окно входа Google.';
   $('#login-term-wrap').classList.remove('hidden');
   if (!xLogin) {
     xLogin = new Terminal({ fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 12, theme: termTheme, cursorBlink: true });
@@ -262,7 +261,7 @@ function msgEl(m) {
     el.innerHTML = '<div class="bubble"></div>';
     el.querySelector('.bubble').textContent = m.text;
   } else {
-    el.innerHTML = `<div class="who"><span class="logo-mark">✳</span> Antigravity</div><div class="extras"></div><div class="body"></div>`;
+    el.innerHTML = `<div class="who"><span class="logo-mark">✳</span> Stella</div><div class="extras"></div><div class="body"></div>`;
     fillAgent(el, m);
   }
   return el;
@@ -286,7 +285,7 @@ function fillAgent(el, m) {
   else body.innerHTML = '';
   if (m.error) { const e = document.createElement('div'); e.className = 'err'; e.textContent = m.error; body.appendChild(e); }
   if (m.authRequired) {
-    const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Войти в Antigravity';
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Войти в Stella';
     b.onclick = () => { state.settings.loggedIn = false; api.setSettings({ loggedIn: false }); show('login'); };
     body.appendChild(b);
   }
@@ -370,7 +369,7 @@ api.onDone(({ reqId, code }) => {
   const b = state.busy;
   if (!b || b.reqId !== reqId) return;
   b.msg.busy = false;
-  if (!b.msg.text && !b.msg.error && code !== 0) b.msg.error = 'agy завершился с кодом ' + code + '. Откройте «Терминал» для подробностей.';
+  if (!b.msg.text && !b.msg.error && code !== 0) b.msg.error = 'Stella не смогла ответить (код ' + code + '). Откройте «Терминал» для подробностей.';
   updateMsg(b.msg);
   state.busy = null;
   setStatus('on', 'готов');

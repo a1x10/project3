@@ -1,4 +1,4 @@
-# Agy Desktop
+# Stella
 
 Десктоп-приложение в стиле Claude Code / Codex / Antigravity поверх **Antigravity CLI (`agy`)**.
 

@@ -1,10 +1,10 @@
 @echo off
 setlocal
-title Agy Desktop - install
+title Stella - install
 cd /d "%~dp0"
 
 echo.
-echo  === Agy Desktop: install ===
+echo  === Stella: install ===
 echo  Folder: %CD%
 echo.
 
@@ -57,6 +57,6 @@ echo  [4/4] Creating shortcuts (always run as administrator)...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make-shortcut.ps1" -AppDir "%~dp0."
 
 echo.
-echo  Done! Starting Agy Desktop...
+echo  Done! Starting Stella...
 start "" "%~dp0node_modules\electron\dist\electron.exe" "%~dp0."
 timeout /t 3 >nul

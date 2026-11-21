@@ -52,7 +52,7 @@ function log(...a) {
 function logFile() { return path.join(process.env.APPDATA || os.homedir(), 'agy-desktop', 'agy-desktop.log'); }
 process.on('uncaughtException', e => {
   log('uncaught', e && e.stack || e);
-  try { dialog.showErrorBox('Agy Desktop — ошибка', String(e && e.stack || e) + '\n\nЛог: ' + logFile()); } catch {}
+  try { dialog.showErrorBox('Stella — ошибка', String(e && e.stack || e) + '\n\nЛог: ' + logFile()); } catch {}
 });
 
 // Returns true if an elevated copy was started (UAC accepted)
@@ -211,7 +211,7 @@ function send(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send
 function createWindow() {
   win = new BrowserWindow({
     width: 1280, height: 840, minWidth: 820, minHeight: 560,
-    title: 'Agy Desktop',
+    title: 'Stella',
     backgroundColor: '#f7f6f3',
     autoHideMenuBar: true,
     webPreferences: {
@@ -221,6 +221,7 @@ function createWindow() {
       sandbox: false
     }
   });
+  win.on('page-title-updated', e => e.preventDefault());
   const wc = win.webContents;
   wc.on('did-fail-load', (_e, code, desc, url) => log('did-fail-load', code, desc, url));
   wc.on('preload-error', (_e, p, err) => log('preload-error', p, err && err.stack));
@@ -229,7 +230,7 @@ function createWindow() {
   wc.on('render-process-gone', (_e, d) => {
     log('render-process-gone', JSON.stringify(d));
     if (++crashes <= 2) setTimeout(() => { if (!win.isDestroyed()) win.reload(); }, 500);
-    else dialog.showErrorBox('Agy Desktop', 'Окно упало (' + d.reason + '). Лог: ' + logFile());
+    else dialog.showErrorBox('Stella', 'Окно упало (' + d.reason + '). Лог: ' + logFile());
   });
   wc.on('unresponsive', () => log('window unresponsive'));
   win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch(e => log('loadFile error', e.message));
@@ -237,7 +238,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => { log('ready'); createWindow(); })
-  .catch(e => { log('ready error', e.stack); dialog.showErrorBox('Agy Desktop', String(e.stack || e)); });
+  .catch(e => { log('ready error', e.stack); dialog.showErrorBox('Stella', String(e.stack || e)); });
 app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d)));
 process.on('unhandledRejection', e => log('unhandledRejection', e && e.stack || e));
 app.on('window-all-closed', () => { killAll(); app.quit(); });
@@ -252,7 +253,7 @@ let termBuffer = '';
 
 function startTerm() {
   if (term) return { ok: true, fresh: false };
-  if (!agyPath) return { ok: false, error: 'Antigravity CLI не найден' };
+  if (!agyPath) return { ok: false, error: 'Системные файлы не найдены' };
   const s = getSettings();
   const env = Object.assign({}, process.env, { TERM: 'xterm-256color', COLORTERM: 'truecolor' });
   const [file, args] = agyCommand(modeArgs(s));
@@ -418,7 +419,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     }
   });
   child.stderr.on('data', d => { const str = d.toString('utf8'); stderr += str; send('term:data', str.replace(/\r?\n/g, '\r\n')); });
-  child.on('error', e => { send('chat:event', { reqId, type: 'error', text: 'Не удалось запустить agy: ' + e.message }); });
+  child.on('error', e => { send('chat:event', { reqId, type: 'error', text: 'Не удалось запустить агента: ' + e.message }); });
   child.on('close', code => {
     all += dec.end();
     if (fmt === 'stream-json' && buf) handleLine(buf);
@@ -459,7 +460,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     } else if (nothing && all.trim()) {
       send('chat:event', { reqId, type: 'final', text: '```json\n' + all.trim().slice(0, 4000) + '\n```' });
     } else if (nothing) {
-      send('chat:event', { reqId, type: 'error', text: `agy вернул пустой ответ (код ${code}). Подробности: ${path.join(path.dirname(logFile()), 'last-response.log')}` });
+      send('chat:event', { reqId, type: 'error', text: `Пустой ответ (код ${code}). Подробности: ${path.join(path.dirname(logFile()), 'last-response.log')}` });
     }
     send('chat:done', { reqId, code });
   });

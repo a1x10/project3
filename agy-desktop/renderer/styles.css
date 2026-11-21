@@ -43,6 +43,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 18px; }
 .logo.small { font-size: 15px; }
 .logo-mark { color: var(--accent); font-size: 22px; line-height: 1; display: inline-block; }
+.logo.big { justify-content: center; }
 .logo.big .logo-mark { font-size: 54px; }
 .logo-mark.huge { font-size: 46px; margin-bottom: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
