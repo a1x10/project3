@@ -10,8 +10,17 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-let pty = null;
-try { pty = require('node-pty'); } catch (e) { pty = null; }
+let pty = null, ptyTried = false;
+function loadPty() {
+  if (!ptyTried) {
+    ptyTried = true;
+    try { pty = require('node-pty'); } catch (e) { pty = null; try { log('node-pty unavailable:', e.message); } catch {} }
+  }
+  return pty;
+}
+function ptyAvailable() {
+  try { return fs.existsSync(path.join(path.dirname(require.resolve('node-pty/package.json')), 'package.json')); } catch { return false; }
+}
 
 const isWin = process.platform === 'win32';
 const ELEVATED_FLAG = '--agy-elevated';
@@ -35,7 +44,11 @@ function log(...a) {
     fs.appendFileSync(path.join(dir, 'agy-desktop.log'), new Date().toISOString() + ' ' + a.map(String).join(' ') + '\n');
   } catch {}
 }
-process.on('uncaughtException', e => { log('uncaught', e && e.stack || e); });
+function logFile() { return path.join(process.env.APPDATA || os.homedir(), 'agy-desktop', 'agy-desktop.log'); }
+process.on('uncaughtException', e => {
+  log('uncaught', e && e.stack || e);
+  try { dialog.showErrorBox('Agy Desktop — ошибка', String(e && e.stack || e) + '\n\nЛог: ' + logFile()); } catch {}
+});
 
 // Returns true if an elevated copy was started (UAC accepted)
 function relaunchAsAdmin() {
@@ -52,6 +65,11 @@ function relaunchAsAdmin() {
   log('relaunchAsAdmin exit=', r.status, 'err=', (r.stderr || '').trim(), r.error ? r.error.message : '');
   return r.status === 0;
 }
+
+// White-screen fixes: elevated Chromium + some GPU drivers render nothing
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 log('start argv=', JSON.stringify(process.argv), 'admin=', isAdmin());
 if (isWin && !process.env.AGY_NO_ADMIN && !process.argv.includes(ELEVATED_FLAG) && !isAdmin()) {
@@ -198,11 +216,25 @@ function createWindow() {
       sandbox: false
     }
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  const wc = win.webContents;
+  wc.on('did-fail-load', (_e, code, desc, url) => log('did-fail-load', code, desc, url));
+  wc.on('preload-error', (_e, p, err) => log('preload-error', p, err && err.stack));
+  wc.on('console-message', (_e, level, msg, line, src) => { if (level >= 2) log('renderer:', msg, src + ':' + line); });
+  let crashes = 0;
+  wc.on('render-process-gone', (_e, d) => {
+    log('render-process-gone', JSON.stringify(d));
+    if (++crashes <= 2) setTimeout(() => { if (!win.isDestroyed()) win.reload(); }, 500);
+    else dialog.showErrorBox('Agy Desktop', 'Окно упало (' + d.reason + '). Лог: ' + logFile());
+  });
+  wc.on('unresponsive', () => log('window unresponsive'));
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch(e => log('loadFile error', e.message));
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
 
-app.whenReady().then(() => { log('ready'); createWindow(); });
+app.whenReady().then(() => { log('ready'); createWindow(); })
+  .catch(e => { log('ready error', e.stack); dialog.showErrorBox('Agy Desktop', String(e.stack || e)); });
+app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d)));
+process.on('unhandledRejection', e => log('unhandledRejection', e && e.stack || e));
 app.on('window-all-closed', () => { killAll(); app.quit(); });
 app.on('before-quit', killAll);
 
@@ -219,7 +251,7 @@ function startTerm() {
   const s = getSettings();
   const env = Object.assign({}, process.env, { TERM: 'xterm-256color', COLORTERM: 'truecolor' });
   const [file, args] = agyCommand(modeArgs(s));
-  if (pty) {
+  if (loadPty()) {
     try {
       term = pty.spawn(file, args, { name: 'xterm-256color', cols: termCols, rows: termRows, cwd: s.workspace, env, useConpty: true });
       term.onData(d => { pushTerm(d); });
@@ -369,21 +401,36 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   });
 }
 
+// run a command without blocking the UI; resolves stdout ('' on error/timeout)
+function runAsync(file, args, timeout) {
+  return new Promise(resolve => {
+    let out = '', done = false;
+    let c;
+    try { c = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { return resolve(''); }
+    const finish = () => { if (!done) { done = true; clearTimeout(t); resolve(out); } };
+    const t = setTimeout(() => { treeKill(c.pid); finish(); }, timeout);
+    c.stdout.on('data', d => out += d);
+    c.on('error', finish);
+    c.on('close', finish);
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* IPC                                                                  */
 /* ------------------------------------------------------------------ */
 ipcMain.handle('app:info', () => ({
-  admin: isAdmin(), platform: process.platform, pty: !!pty, version: app.getVersion()
+  admin: isAdmin(), platform: process.platform, pty: ptyAvailable(), version: app.getVersion()
 }));
 
-ipcMain.handle('agy:check', () => {
+ipcMain.handle('agy:check', async () => {
   agyPath = findAgy();
   if (!agyPath) { refreshPathFromRegistry(); agyPath = findAgy(); }
   let version = null;
   if (agyPath) {
     try {
       const [f, a] = agyCommand(['--version']);
-      version = execFileSync(f, a, { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim().split(/\r?\n/)[0];
+      version = (await runAsync(f, a, 10000)).trim().split(/\r?\n/)[0] || null;
     } catch {}
   }
   return { installed: !!agyPath, path: agyPath, version };
@@ -396,11 +443,11 @@ ipcMain.handle('agy:install', async () => {
   return { ok: ok && !!agyPath, path: agyPath };
 });
 
-ipcMain.handle('agy:models', () => {
+ipcMain.handle('agy:models', async () => {
   if (!agyPath) return [];
   try {
     const [f, a] = agyCommand(['models']);
-    const out = stripAnsi(execFileSync(f, a, { encoding: 'utf8', windowsHide: true, timeout: 30000 }));
+    const out = stripAnsi(await runAsync(f, a, 20000));
     return out.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(available|models|name|-+|=+)/i.test(l))
       .map(l => l.replace(/^[*•\-\s]+/, '').split(/\s{2,}|\t/)[0]).filter(l => /^[\w.\-:/]+$/.test(l)).slice(0, 40);
   } catch { return []; }
