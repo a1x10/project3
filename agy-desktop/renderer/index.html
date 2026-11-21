@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:">
+<title>Agy Desktop</title>
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ BOOT: admin / CLI check / install ============ -->
+<section id="boot" class="screen active">
+  <div class="boot-card">
+    <div class="logo"><span class="logo-mark">✳</span> Agy Desktop</div>
+    <ul class="steps">
+      <li id="st-admin"><i></i><span>Права администратора</span><em></em></li>
+      <li id="st-cli"><i></i><span>Проверка Antigravity CLI</span><em></em></li>
+      <li id="st-install" class="hidden"><i></i><span>Установка системных файлов…</span><em></em></li>
+      <li id="st-term"><i></i><span>Запуск терминала</span><em></em></li>
+    </ul>
+    <pre id="install-log" class="log hidden"></pre>
+    <div id="boot-error" class="boot-error hidden">
+      <p></p>
+      <button class="btn" id="boot-retry">Повторить</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LOGIN ============ -->
+<section id="login" class="screen">
+  <div class="login-card">
+    <div class="logo big"><span class="logo-mark">✳</span></div>
+    <h1>Добро пожаловать</h1>
+    <p class="muted">Antigravity CLI установлен. Войдите через аккаунт Google, чтобы начать.</p>
+    <button class="btn primary wide" id="login-btn">Войдите в систему</button>
+    <p id="login-status" class="muted small"></p>
+    <div id="login-term-wrap" class="login-term hidden">
+      <div class="login-term-head">
+        <span>Вход выполняется в браузере. Если браузер не открылся — нажмите на ссылку ниже или введите код здесь.</span>
+      </div>
+      <div id="login-term"></div>
+      <div class="row gap">
+        <a id="auth-link" class="hidden" href="#">Открыть ссылку авторизации</a>
+        <span class="spacer"></span>
+        <button class="btn" id="login-check">Я вошёл — проверить</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MAIN APP ============ -->
+<section id="app" class="screen">
+  <aside id="sidebar">
+    <div class="side-top">
+      <div class="logo small"><span class="logo-mark">✳</span> Agy</div>
+      <button class="icon-btn" id="new-chat" title="Новый чат (Ctrl+N)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <button class="workspace" id="workspace" title="Рабочая папка агента">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span id="workspace-name">…</span>
+    </button>
+    <div class="side-label">Чаты</div>
+    <ul id="chat-list"></ul>
+    <div class="side-bottom">
+      <button class="side-link" id="toggle-term">
+        <svg viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></svg> Терминал
+      </button>
+      <div class="status-line"><span class="dot" id="status-dot"></span><span id="status-text">agy</span></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <div id="chat-title">Новый чат</div>
+      <div class="top-actions">
+        <span class="chip" id="admin-chip" title="Приложение запущено от имени администратора">🛡 Admin</span>
+      </div>
+    </header>
+
+    <div id="messages">
+      <div id="empty" class="empty">
+        <div class="logo-mark huge">✳</div>
+        <h2>Чем займёмся?</h2>
+        <p class="muted">Запросы уходят в Antigravity CLI, ответы — сюда. Нажмите чёрную кнопку, чтобы говорить голосом.</p>
+        <div class="suggestions">
+          <button class="sugg">Объясни структуру этого проекта</button>
+          <button class="sugg">Найди и исправь баги в коде</button>
+          <button class="sugg">Напиши скрипт, который…</button>
+          <button class="sugg">/help</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- voice overlay -->
+    <div id="voice-panel" class="hidden">
+      <div class="orb"><span></span><span></span><span></span></div>
+      <div class="voice-info">
+        <strong>Голосовой режим</strong>
+        <span id="voice-transcript" class="muted">Слушаю… говорите</span>
+      </div>
+      <button class="btn" id="voice-end">Завершить</button>
+    </div>
+
+    <!-- composer (looks like the reference screenshot) -->
+    <div id="composer-wrap">
+      <div id="composer">
+        <div id="attachments"></div>
+        <textarea id="input" rows="1" placeholder="Ask anything, @ to mention, / for actions"></textarea>
+        <div class="composer-row">
+          <button class="icon-btn" id="attach" title="Прикрепить файл (@)">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="dropdown" id="model-dd">
+            <button class="dd-btn" id="model-btn"><span id="model-label">Default model</span>
+              <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div class="dd-menu" id="model-menu"></div>
+          </div>
+          <span class="spacer"></span>
+          <div class="dropdown up-right" id="mode-dd">
+            <button class="icon-btn" id="mode-btn" title="Режим разрешений">
+              <svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M12 8v4M12 16h.01" class="sh-mark"/></svg>
+            </button>
+            <div class="dd-menu" id="mode-menu">
+              <button data-mode="default"><b>Спрашивать</b><small>Агент спрашивает перед действиями</small></button>
+              <button data-mode="accept-edits"><b>Авто-правки</b><small>Принимать изменения файлов</small></button>
+              <button data-mode="plan"><b>План</b><small>Только планирует, ничего не меняет</small></button>
+              <button data-mode="yolo"><b>Полный автомат</b><small>--dangerously-skip-permissions</small></button>
+            </div>
+          </div>
+          <button class="icon-btn" id="mic" title="Диктовка (/voice)">
+            <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+          <button id="voice-btn" title="Голосовой режим — /voice live">
+            <svg class="i-wave" viewBox="0 0 24 24"><path d="M5 10v4M9 7v10M13 4v16M17 8v8M21 11v2"/></svg>
+            <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="hint muted small">Enter — отправить · Shift+Enter — новая строка · команды, начинающиеся с <code>/</code>, уходят прямо в терминал agy</div>
+    </div>
+  </main>
+
+  <!-- hidden terminal drawer -->
+  <div id="term-drawer" class="hidden">
+    <div class="drawer-head">
+      <span>Терминал · agy</span>
+      <span class="spacer"></span>
+      <button class="btn tiny" id="term-restart">Перезапустить</button>
+      <button class="icon-btn" id="term-close" title="Скрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div id="term"></div>
+  </div>
+</section>
+
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="markdown.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
