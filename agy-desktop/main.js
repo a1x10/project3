@@ -28,10 +28,15 @@ const ELEVATED_FLAG = '--agy-elevated';
 /* ------------------------------------------------------------------ */
 /* Administrator rights                                                 */
 /* ------------------------------------------------------------------ */
+let adminCache = null;
 function isAdmin() {
   if (!isWin) return true;
-  try { execSync('net session', { stdio: 'ignore', windowsHide: true }); return true; }
-  catch { return false; }
+  if (adminCache !== null) return adminCache;
+  const tries = ['fltmc', 'net session', 'reg query "HKU\\S-1-5-19"'];
+  for (const cmd of tries) {
+    try { execSync(cmd, { stdio: 'ignore', windowsHide: true, timeout: 8000 }); return (adminCache = true); } catch {}
+  }
+  return (adminCache = false);
 }
 
 function psQuote(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
@@ -313,33 +318,44 @@ function killAll() {
   stopTerm();
 }
 
-function pickText(o) {
-  if (o == null) return null;
+// keys that usually hold the assistant's text in agy / Gemini style JSON
+const TEXT_KEYS = ['response', 'result', 'candidates', 'choices', 'messages', 'text', 'delta', 'content', 'output', 'answer', 'message', 'parts', 'data', 'value', 'chunk', 'final'];
+const SKIP_KEYS = /^(input|args|arguments|params|parameters|tool_?input|tool_?args|command|path|file|files|stats|usage|metadata|model|id|type|role|error)$/i;
+
+// collect assistant text from any JSON shape
+function deepText(o, depth = 0) {
+  if (o == null || depth > 6) return '';
   if (typeof o === 'string') return o;
-  for (const k of ['delta', 'text', 'content', 'chunk', 'message']) {
-    const v = o[k];
-    if (typeof v === 'string') return v;
-    if (v && typeof v === 'object') { const t = pickText(v); if (t) return t; }
-    if (Array.isArray(v)) {
-      const t = v.map(x => (x && (x.text || (typeof x === 'string' ? x : ''))) || '').join('');
-      if (t) return t;
+  if (Array.isArray(o)) return o.map(x => deepText(x, depth + 1)).join('');
+  if (typeof o !== 'object') return '';
+  if (o.role && /user|system/i.test(o.role)) return '';
+  if (o.thought === true) return '';
+  for (const k of TEXT_KEYS) {
+    if (k in o && !SKIP_KEYS.test(k)) {
+      const t = deepText(o[k], depth + 1);
+      if (t && t.trim()) return t;
     }
   }
-  return null;
+  return '';
 }
 
 function findConvId(o, depth = 0) {
-  if (!o || typeof o !== 'object' || depth > 3) return null;
+  if (!o || typeof o !== 'object' || depth > 4) return null;
   for (const [k, v] of Object.entries(o)) {
-    if (/^(conversation_?id|conversationId|session_?id|sessionId)$/i.test(k) && typeof v === 'string') return v;
+    if (/^(conversation_?id|conversationId|session_?id|sessionId|thread_?id)$/i.test(k) && typeof v === 'string') return v;
     if (v && typeof v === 'object') { const r = findConvId(v, depth + 1); if (r) return r; }
   }
   return null;
 }
 
+function respLog(text) {
+  try { fs.appendFileSync(path.join(path.dirname(logFile()), 'last-response.log'), text); } catch {}
+}
+
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--print-timeout', '30m', ...modeArgs(s)];
+  const fmt = s.outputFormat === 'stream-json' ? 'stream-json' : 'json';
+  const args = ['-p', prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
   if (conversationId) args.push('--conversation', conversationId);
   else if (continueLast) args.push('-c');
 
@@ -347,56 +363,104 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   try { [file, fargs] = agyCommand(args); }
   catch (e) { send('chat:event', { reqId, type: 'error', text: e.message }); send('chat:done', { reqId, code: -1 }); return; }
 
-  const child = spawn(file, fargs, { cwd: s.workspace, env: Object.assign({}, process.env, { NO_COLOR: '1' }), windowsHide: true });
-  running.set(reqId, child);
-  send('term:data', `\r\n\x1b[90m$ agy -p "${prompt.slice(0, 80).replace(/\n/g, ' ')}${prompt.length > 80 ? '…' : ''}" --output-format stream-json\x1b[0m\r\n`);
+  try { fs.writeFileSync(path.join(path.dirname(logFile()), 'last-response.log'), `=== ${new Date().toISOString()}\n${file} ${JSON.stringify(fargs)}\ncwd=${s.workspace}\n--- stdout ---\n`); } catch {}
 
-  let buf = '', raw = '', gotText = false, finalText = null, convId = null, stderr = '';
+  const child = spawn(file, fargs, { cwd: s.workspace, env: Object.assign({}, process.env, { NO_COLOR: '1' }), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  try { child.stdin.end(); } catch {}           // never let agy wait for stdin
+  running.set(reqId, child);
+  send('term:data', `\r\n\x1b[90m$ agy -p "${prompt.slice(0, 80).replace(/\n/g, ' ')}${prompt.length > 80 ? '…' : ''}" --output-format ${fmt}\x1b[0m\r\n`);
+
+  const dec = new (require('string_decoder').StringDecoder)('utf8');
+  let buf = '', all = '', stderr = '', shown = '', finalText = null, convId = null;
+
+  const emitConv = o => { const id = findConvId(o); if (id && !convId) { convId = id; send('chat:event', { reqId, type: 'conversation', id }); } };
+
+  // stream-json: one event per line
+  const handleEvent = (o) => {
+    emitConv(o);
+    const type = String(o.type || o.event || o.kind || '').toLowerCase();
+    if (/tool/.test(type) || o.tool_name || o.toolName || o.functionCall || o.function_call) {
+      const fc = o.functionCall || o.function_call || {};
+      const name = o.tool_name || o.toolName || fc.name || (o.tool && (o.tool.name || o.tool)) || o.name || 'tool';
+      const detail = o.input || o.args || o.arguments || fc.args || o.command || o.path || '';
+      send('chat:event', { reqId, type: 'tool', name: String(name), detail: typeof detail === 'string' ? detail : JSON.stringify(detail).slice(0, 600) });
+      return;
+    }
+    if (/think|reason|thought/.test(type)) { const t = deepText(o); if (t) send('chat:event', { reqId, type: 'thinking', text: t }); return; }
+    if ((/error/.test(type) || o.error) && !o.response) {
+      const t = (typeof o.error === 'string' ? o.error : (o.error && (o.error.message || JSON.stringify(o.error)))) || deepText(o) || JSON.stringify(o);
+      send('chat:event', { reqId, type: 'error', text: t }); return;
+    }
+    if (/user/.test(type) || o.role === 'user') return;
+    if (typeof o.response === 'string' || /result|final|done|complete|end/.test(type)) {
+      const t = deepText(o); if (t && t.trim()) finalText = t; return;
+    }
+    if (/init|start|system|stats|usage/.test(type)) return;
+    const t = deepText(o);
+    if (t) { shown += t; send('chat:event', { reqId, type: 'delta', text: t }); }
+  };
 
   const handleLine = (line) => {
     if (!line.trim()) return;
-    let o;
-    try { o = JSON.parse(line); } catch { o = null; }
-    if (!o) { raw += line + '\n'; send('chat:event', { reqId, type: 'raw', text: line + '\n' }); return; }
-
-    const id = findConvId(o); if (id && !convId) { convId = id; send('chat:event', { reqId, type: 'conversation', id }); }
-    const type = String(o.type || o.event || o.kind || '').toLowerCase();
-
-    if (/tool/.test(type) || o.tool || o.tool_name || o.toolName) {
-      const name = o.tool_name || o.toolName || (o.tool && (o.tool.name || o.tool)) || o.name || 'tool';
-      const detail = o.input || o.args || o.arguments || o.command || o.path || o.result || o.output || '';
-      send('chat:event', { reqId, type: 'tool', name: String(name), status: type, detail: typeof detail === 'string' ? detail : JSON.stringify(detail).slice(0, 600) });
-      return;
-    }
-    if (/think|reason/.test(type)) { const t = pickText(o); if (t) send('chat:event', { reqId, type: 'thinking', text: t }); return; }
-    if (/error/.test(type) || o.error) {
-      const t = (typeof o.error === 'string' ? o.error : (o.error && o.error.message)) || pickText(o) || JSON.stringify(o);
-      send('chat:event', { reqId, type: 'error', text: t }); return;
-    }
-    if (typeof o.response === 'string') { finalText = o.response; return; }
-    if (/result|final|done|complete/.test(type) && typeof o.result === 'string') { finalText = o.result; return; }
-    if (/user/.test(type) || o.role === 'user') return;
-    const t = pickText(o);
-    if (t) { gotText = true; send('chat:event', { reqId, type: 'delta', text: t }); }
+    let o = null;
+    try { o = JSON.parse(line); } catch {}
+    if (o && typeof o === 'object') handleEvent(o);
   };
 
   child.stdout.on('data', d => {
-    const str = d.toString();
-    send('term:data', str.replace(/\n/g, '\r\n'));
-    buf += str;
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    const str = dec.write(d);
+    all += str; respLog(str);
+    send('term:data', str.replace(/\r?\n/g, '\r\n'));
+    if (fmt === 'stream-json') {
+      buf += str;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
   });
-  child.stderr.on('data', d => { const str = d.toString(); stderr += str; send('term:data', str.replace(/\n/g, '\r\n')); });
-  child.on('error', e => { send('chat:event', { reqId, type: 'error', text: e.message }); });
+  child.stderr.on('data', d => { const str = d.toString('utf8'); stderr += str; send('term:data', str.replace(/\r?\n/g, '\r\n')); });
+  child.on('error', e => { send('chat:event', { reqId, type: 'error', text: 'Не удалось запустить agy: ' + e.message }); });
   child.on('close', code => {
-    if (buf) handleLine(buf);
+    all += dec.end();
+    if (fmt === 'stream-json' && buf) handleLine(buf);
     running.delete(reqId);
+    respLog(`\n--- stderr ---\n${stderr}\n--- exit code: ${code} ---\n`);
+    log('prompt finished code=', code, 'stdout bytes=', all.length, 'stderr bytes=', stderr.length);
+
+    // json mode (or anything not yet shown): parse the whole stdout
+    if (finalText == null && !shown.trim()) {
+      const trimmed = all.trim();
+      let parsed = null;
+      try { parsed = JSON.parse(trimmed); } catch {
+        // maybe several JSON objects / lines
+        const objs = trimmed.split(/\r?\n/).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        if (objs.length) parsed = objs;
+      }
+      if (parsed) {
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        list.forEach(emitConv);
+        const errObj = list.find(x => x && x.error && !x.response);
+        const t = list.map(x => deepText(x)).filter(Boolean).join('\n');
+        if (t.trim()) finalText = t;
+        else if (errObj) send('chat:event', { reqId, type: 'error', text: typeof errObj.error === 'string' ? errObj.error : JSON.stringify(errObj.error) });
+      } else if (trimmed) {
+        finalText = stripAnsi(trimmed);            // plain text output
+      }
+    }
+
     if (finalText != null) send('chat:event', { reqId, type: 'final', text: finalText });
-    else if (!gotText && raw) send('chat:event', { reqId, type: 'final', text: raw });
-    const plainErr = stripAnsi(stderr);
-    if (code !== 0 && /sign ?in|log ?in|auth|credential|unauthori[sz]ed/i.test(plainErr)) send('chat:event', { reqId, type: 'auth-required' });
-    else if (code !== 0 && !gotText && finalText == null && plainErr.trim()) send('chat:event', { reqId, type: 'error', text: plainErr.trim().slice(-2000) });
+
+    const plainErr = stripAnsi(stderr).trim();
+    const nothing = finalText == null && !shown.trim();
+    if (/sign ?in|log ?in|not authenticated|credential|unauthori[sz]ed|re-?authenticate/i.test(plainErr) && (code !== 0 || nothing)) {
+      send('chat:event', { reqId, type: 'error', text: plainErr.slice(-1500) });
+      send('chat:event', { reqId, type: 'auth-required' });
+    } else if (nothing && plainErr) {
+      send('chat:event', { reqId, type: 'error', text: plainErr.slice(-2000) });
+    } else if (nothing && all.trim()) {
+      send('chat:event', { reqId, type: 'final', text: '```json\n' + all.trim().slice(0, 4000) + '\n```' });
+    } else if (nothing) {
+      send('chat:event', { reqId, type: 'error', text: `agy вернул пустой ответ (код ${code}). Подробности: ${path.join(path.dirname(logFile()), 'last-response.log')}` });
+    }
     send('chat:done', { reqId, code });
   });
 }
