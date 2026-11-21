@@ -353,6 +353,27 @@ function respLog(text) {
   try { fs.appendFileSync(path.join(path.dirname(logFile()), 'last-response.log'), text); } catch {}
 }
 
+// lines that describe agent actions (tool calls, commands) rather than answer text
+const ACT_MARK = /^[⏺●○◆◇▶►»→✓✔✗✘⎿│├└•⚡\u{1F527}\u{1F6E0}]/u;
+const ACT_WORDS = ['Running', 'Executing', 'Calling tool', 'Tool call', 'Using tool', 'Ran ', 'Thinking', 'Searching the web'];
+function cleanStatus(line) {
+  line = stripAnsi(line);
+  const parts = line.split('\r'); line = parts[parts.length - 1];       // spinner overwrites
+  line = line.replace(/^[\s⠀-⣿◐-◓◰-◷]+/, '').trim();
+  line = line.replace(ACT_MARK, '').trim();
+  return line.length > 300 ? line.slice(0, 300) + '…' : line;
+}
+function isActLine(line) {
+  const l = stripAnsi(line).replace(/^\s+/, '');
+  return ACT_MARK.test(l) || ACT_WORDS.some(w => l.startsWith(w));
+}
+function couldBeActPrefix(partial) {
+  const l = stripAnsi(partial).replace(/^\s+/, '');
+  if (!l) return true;
+  if (ACT_MARK.test(l)) return true;
+  return ACT_WORDS.some(w => w.startsWith(l) || l.startsWith(w));
+}
+
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
   // text = real-time streaming (default); json / stream-json can be chosen in settings.json
@@ -374,6 +395,9 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
 
   const dec = new (require('string_decoder').StringDecoder)('utf8');
   let buf = '', all = '', stderr = '', shown = '', finalText = null, convId = null, looksJson = null;
+  let lineBuf = '', lineIsText = false, errBuf = '', lastAct = '';
+  const activity = (t) => { t = cleanStatus(t); if (t && t !== lastAct) { lastAct = t; send('chat:event', { reqId, type: 'activity', text: t }); } };
+  const logOut = (t) => { const c = stripAnsi(t).replace(/\r(?!\n)/g, '\n'); if (c) send('chat:event', { reqId, type: 'log', text: c }); };
 
   const emitConv = o => { const id = findConvId(o); if (id && !convId) { convId = id; send('chat:event', { reqId, type: 'conversation', id }); } };
 
@@ -413,6 +437,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     const str = dec.write(d);
     all += str; respLog(str);
     send('term:data', str.replace(/\r?\n/g, '\r\n'));
+    logOut(str);
     if (fmt === 'stream-json') {
       buf += str;
       let i;
@@ -421,16 +446,39 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
       // if the CLI still answers with a JSON object, let the close handler parse it
       if (looksJson === null && all.trim()) looksJson = /^[\[{]/.test(all.trim());
       if (looksJson === false) {
-        const t = stripAnsi(str).replace(/\r(?!\n)/g, '');
-        if (t) { shown += t; send('chat:event', { reqId, type: 'delta', text: t }); }
+        const emit = t => { t = stripAnsi(t).replace(/\r(?!\n)/g, ''); if (t) { shown += t; send('chat:event', { reqId, type: 'delta', text: t }); } };
+        let rest = str;
+        while (rest) {
+          const nl = rest.indexOf('\n');
+          const piece = nl >= 0 ? rest.slice(0, nl + 1) : rest;
+          rest = nl >= 0 ? rest.slice(nl + 1) : '';
+          if (lineIsText) { emit(piece); if (nl >= 0) lineIsText = false; continue; }
+          lineBuf += piece;
+          if (lineBuf.endsWith('\n')) {
+            if (isActLine(lineBuf)) activity(lineBuf); else emit(lineBuf);
+            lineBuf = '';
+          } else if (!couldBeActPrefix(lineBuf)) {
+            emit(lineBuf); lineBuf = ''; lineIsText = true;
+          }
+        }
       }
     }
   });
-  child.stderr.on('data', d => { const str = d.toString('utf8'); stderr += str; send('term:data', str.replace(/\r?\n/g, '\r\n')); });
+  child.stderr.on('data', d => {
+    const str = d.toString('utf8'); stderr += str;
+    send('term:data', str.replace(/\r?\n/g, '\r\n'));
+    logOut(str);
+    errBuf += str;
+    const lines = errBuf.split('\n'); errBuf = lines.pop();
+    lines.forEach(l => activity(l));
+    if (errBuf.includes('\r')) activity(errBuf);                 // live spinner line
+  });
   child.on('error', e => { send('chat:event', { reqId, type: 'error', text: 'Не удалось запустить агента: ' + e.message }); });
   child.on('close', code => {
     all += dec.end();
     if (fmt === 'stream-json' && buf) handleLine(buf);
+    if (lineBuf) { if (isActLine(lineBuf)) activity(lineBuf); else { const t = stripAnsi(lineBuf); shown += t; send('chat:event', { reqId, type: 'delta', text: t }); } lineBuf = ''; }
+    if (errBuf.trim()) activity(errBuf);
     running.delete(reqId);
     respLog(`\n--- stderr ---\n${stderr}\n--- exit code: ${code} ---\n`);
     log('prompt finished code=', code, 'stdout bytes=', all.length, 'stderr bytes=', stderr.length);

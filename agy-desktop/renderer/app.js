@@ -214,7 +214,7 @@ async function loadChats() {
   renderChatList(); renderMessages();
 }
 let saveT = null;
-function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => k === '_view' ? undefined : v))), 300); }
+function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => (k === '_view' || k === '_open') ? undefined : v))), 300); }
 
 function newChat() {
   const existing = state.chats.find(c => !c.messages.length);
@@ -263,7 +263,7 @@ function msgEl(m) {
     el.innerHTML = '<div class="bubble"></div>';
     el.querySelector('.bubble').textContent = m.text;
   } else {
-    el.innerHTML = `<div class="who"><span class="logo-mark">✳</span> Stella</div><div class="extras"></div><div class="body"></div>`;
+    el.innerHTML = `<div class="who"><span class="logo-mark">✳</span> Stella</div><div class="extras"></div><div class="body"></div><div class="act-wrap"></div>`;
     fillAgent(el, m);
   }
   return el;
@@ -271,6 +271,7 @@ function msgEl(m) {
 
 function fillAgent(el, m) {
   el.classList.toggle('busy', !!m.busy);
+  updateActivity(m, el);
   const ex = el.querySelector('.extras');
   ex.innerHTML = '';
   if (m.thinking) { const t = document.createElement('div'); t.className = 'thinking'; t.textContent = m.thinking.slice(-1500); ex.appendChild(t); }
@@ -285,7 +286,7 @@ function fillAgent(el, m) {
   const typingNow = m._view != null;
   const visible = typingNow ? m.text.slice(0, m._view) : m.text;
   if (visible) body.innerHTML = renderMarkdown(visible);
-  else if (m.busy && !typingNow) body.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  else if (m.busy && !typingNow && !m.started) body.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
   else body.innerHTML = '';
   if (typingNow && (m.busy || m._view < m.text.length)) {
     const caret = document.createElement('span'); caret.className = 'caret';
@@ -303,6 +304,36 @@ function fillAgent(el, m) {
     navigator.clipboard.writeText(btn.nextElementSibling.textContent); btn.textContent = 'скопировано'; setTimeout(() => btn.textContent = 'copy', 1200);
   });
 }
+
+/* ---------- activity line: "Running … 35s ›" ---------- */
+const fmtSecs = s => s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+function updateActivity(m, el) {
+  el = el || $(`.msg[data-id="${m.id}"]`);
+  if (!el) return;
+  const wrap = el.querySelector('.act-wrap');
+  if (!wrap) return;
+  if (!m.started) { wrap.innerHTML = ''; return; }
+  let bar = wrap.querySelector('.activity');
+  if (!bar) {
+    wrap.innerHTML = '<div class="activity"><span class="act-ico"></span><span class="act-text"></span><span class="act-time"></span><span class="act-chev">›</span></div><pre class="act-log"></pre>';
+    bar = wrap.querySelector('.activity');
+    bar.onclick = () => { m._open = !m._open; updateActivity(m); if (m._open) { const lg = wrap.querySelector('.act-log'); lg.scrollTop = lg.scrollHeight; } };
+  }
+  const running = !!m.busy;
+  bar.classList.toggle('running', running);
+  bar.classList.toggle('open', !!m._open);
+  const secs = running ? Math.floor((Date.now() - m.started) / 1000) : (m.duration ?? 0);
+  bar.querySelector('.act-text').textContent = running ? (m.status || 'Думает…') : (m.error ? 'Ошибка' : 'Выполнено');
+  bar.querySelector('.act-time').textContent = fmtSecs(secs);
+  const lg = wrap.querySelector('.act-log');
+  lg.style.display = m._open ? 'block' : 'none';
+  if (m._open) {
+    const atBottom = lg.scrollHeight - lg.scrollTop - lg.clientHeight < 30;
+    const txt = (m.log || '').trim() || 'Терминал пока ничего не написал.';
+    if (lg.textContent !== txt) { lg.textContent = txt; if (atBottom) lg.scrollTop = lg.scrollHeight; }
+  }
+}
+setInterval(() => { if (state.busy) updateActivity(state.busy.msg); }, 1000);
 
 /* ---------- letter-by-letter typing ---------- */
 const typingMsgs = new Set();
@@ -364,7 +395,7 @@ function sendText(raw) {
   state.attachments = []; renderAttachments();
 
   const user = { id: uid(), role: 'user', text };
-  const agent = { id: uid(), role: 'agent', text: '', tools: [], busy: true };
+  const agent = { id: uid(), role: 'agent', text: '', tools: [], busy: true, started: Date.now(), status: 'Думает…', log: '' };
   c.messages.push(user, agent);
   if (c.title === 'Новый чат') c.title = text.replace(/^@\S+\s*/gm, '').split('\n')[0].slice(0, 48) || 'Чат';
   $('#input').value = ''; autoGrow();
@@ -390,11 +421,13 @@ api.onEvent(ev => {
   const m = b.msg;
   const c = state.chats.find(x => x.id === b.chatId);
   switch (ev.type) {
-    case 'delta': b.gotDelta = true; m.text += ev.text; startTyping(m); break;
+    case 'delta': b.gotDelta = true; m.text += ev.text; m.status = 'Пишет ответ…'; startTyping(m); break;
     case 'raw': if (!b.gotDelta) { m.text += ev.text; startTyping(m); } break;
     case 'final': if (!m.text || !b.gotDelta || ev.text.length >= m.text.length) { if (!ev.text.startsWith(m.text.slice(0, m._view || 0))) m._view = 0; m.text = ev.text; startTyping(m); } break;
     case 'thinking': m.thinking = (m.thinking || '') + ev.text; break;
-    case 'tool': m.tools.push({ name: ev.name, detail: ev.detail }); break;
+    case 'tool': m.tools.push({ name: ev.name, detail: ev.detail }); m.status = ev.name + (ev.detail ? ' ' + ev.detail : ''); break;
+    case 'activity': m.status = ev.text; break;
+    case 'log': m.log = ((m.log || '') + ev.text).slice(-30000); updateActivity(m); return;
     case 'error': m.error = (m.error ? m.error + '\n' : '') + ev.text; break;
     case 'conversation': if (c) c.convId = ev.id; break;
     case 'auth-required': m.authRequired = true; break;
@@ -406,6 +439,7 @@ api.onDone(({ reqId, code }) => {
   const b = state.busy;
   if (!b || b.reqId !== reqId) return;
   b.msg.busy = false;
+  b.msg.duration = Math.round((Date.now() - (b.msg.started || Date.now())) / 1000);
   if (!b.msg.text && !b.msg.error && code !== 0) b.msg.error = 'Stella не смогла ответить (код ' + code + '). Откройте «Терминал» для подробностей.';
   updateMsg(b.msg);
   state.busy = null;
