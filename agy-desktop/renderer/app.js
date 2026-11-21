@@ -195,6 +195,7 @@ async function enterApp() {
   await loadChats();
   renderWorkspace();
   renderMode();
+  initControlToggles();
   loadModels();
   $('#input').focus();
 }
@@ -458,11 +459,36 @@ api.onEvent(ev => {
   updateMsg(m);
 });
 
-api.onDesktopOpened(({ target, ok }) => {
+api.onBridgeAction(({ text, ok }) => {
   const b = state.busy;
-  const name = target.split(/[\\/]/).filter(Boolean).pop() || target;
-  if (b) { b.msg.tools.push({ name: 'open', detail: (ok ? 'Открыто на рабочем столе: ' : 'Не найдено: ') + name, error: ok ? undefined : 'not found' }); updateMsg(b.msg); }
+  if (b) { b.msg.tools.push({ name: 'stella', detail: text, error: ok ? undefined : 'failed' }); b.msg.status = text; updateMsg(b.msg); }
 });
+api.onControlStopped(() => {
+  const b = state.busy;
+  if (b) { b.msg.error = (b.msg.error ? b.msg.error + '\n' : '') + 'Остановлено: вы нажали Esc.'; updateMsg(b.msg); }
+});
+
+/* ---------- browser / screen control toggles ---------- */
+async function initControlToggles() {
+  const tb = $('#tg-browser'), ts = $('#tg-screen');
+  tb.checked = !!state.settings.browserControl;
+  ts.checked = !!state.settings.screenControl;
+  tb.onchange = async () => {
+    const on = tb.checked;
+    tb.disabled = true;
+    setStatus('busy', on ? 'запускаю браузер…' : 'выключаю браузер…');
+    const r = await api.controlBrowser(on);
+    tb.disabled = false;
+    if (!r.ok) { tb.checked = !on; alert('Не получилось: ' + r.error); }
+    state.settings = await api.getSettings();
+    setStatus('on', r.ok && on ? 'браузер для агента готов' : 'готов');
+  };
+  ts.onchange = async () => {
+    if (ts.checked && !confirm('Разрешить агенту видеть экран и управлять мышью и клавиатурой?\n\nПока агент работает, сверху будет красная полоса. Нажмите Esc, чтобы остановить. Пароли агент не вводит.')) { ts.checked = false; return; }
+    await api.controlScreen(ts.checked);
+    state.settings = await api.getSettings();
+  };
+}
 
 api.onDone(({ reqId, code }) => {
   const b = state.busy;

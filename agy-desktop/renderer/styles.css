@@ -237,3 +237,14 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .steps-more { border: 0; background: none; color: var(--muted); font-size: 12.5px; padding: 2px 0; text-decoration: underline; }
 .denied { display: grid; gap: 6px; justify-items: start; margin: 10px 0; padding: 10px 12px; border-radius: 12px; background: rgba(217,160,63,.12); border: 1px solid rgba(217,160,63,.35); font-size: 13px; }
 .denied span { color: var(--muted); }
+
+/* sidebar toggles */
+.side-toggle { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; color: var(--muted); cursor: pointer; user-select: none; }
+.side-toggle:hover { background: var(--hover); color: var(--text); }
+.side-toggle span { flex: 1; }
+.side-toggle input { display: none; }
+.side-toggle i { width: 30px; height: 18px; border-radius: 9px; background: var(--line); position: relative; transition: background .15s; flex: none; }
+.side-toggle i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.side-toggle input:checked + i { background: var(--accent); }
+.side-toggle input:checked + i::after { transform: translateX(12px); }
+.side-toggle input:disabled + i { opacity: .5; }

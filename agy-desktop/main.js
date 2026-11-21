@@ -9,6 +9,7 @@ const { spawn, execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const control = require('./control');
 
 let pty = null, ptyTried = false;
 function loadPty() {
@@ -107,6 +108,8 @@ function getSettings() {
       model: '',
       mode: 'default',          // default | accept-edits | plan | yolo
       loggedIn: false,
+      browserControl: false,
+      screenControl: false,
       theme: 'system'
     }, readJson(settingsFile(), {}));
   }
@@ -237,7 +240,13 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
 
-app.whenReady().then(() => { log('ready'); disableAgySandbox(); setupDesktopBridge(); createWindow(); })
+app.whenReady().then(() => { log('ready'); disableAgySandbox();
+  control.init({
+    log, send, getSettings,
+    isBusy: () => running.size > 0,
+    onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
+  });
+  createWindow(); })
   .catch(e => { log('ready error', e.stack); dialog.showErrorBox('Stella', String(e.stack || e)); });
 app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d)));
 process.on('unhandledRejection', e => log('unhandledRejection', e && e.stack || e));
@@ -393,20 +402,14 @@ function describeTool(name, params) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Desktop bridge: agy runs commands on an isolated "exebox" desktop    */
-/* (known agy bug on Windows). The agent calls stella-open, Stella      */
-/* opens the file / folder / URL on the user's real desktop.            */
+/* agy terminal sandbox off (commands still run on the exebox desktop;  */
+/* control.js bridges open / browser / screen to the real desktop)      */
 /* ------------------------------------------------------------------ */
-const bridgeDir = () => path.join(process.env.APPDATA || os.homedir(), 'agy-desktop');
-const queueDir = () => path.join(bridgeDir(), 'queue');
-const helperCmd = () => path.join(bridgeDir(), 'bin', 'stella-open.cmd');
-let bridgeToken = require('crypto').randomBytes(16).toString('hex');
-
 function disableAgySandbox() {
   try {
     const f = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
     let cfg = {};
-    if (fs.existsSync(f)) cfg = JSON.parse(fs.readFileSync(f, 'utf8'));   // throws on JSONC -> left untouched
+    if (fs.existsSync(f)) cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
     if (cfg.enableTerminalSandbox !== false) {
       cfg.enableTerminalSandbox = false;
       fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -416,68 +419,12 @@ function disableAgySandbox() {
   } catch (e) { log('disableAgySandbox skipped:', e.message); }
 }
 
-function setupDesktopBridge() {
-  if (!isWin) return;
-  try {
-    fs.mkdirSync(queueDir(), { recursive: true });
-    fs.mkdirSync(path.dirname(helperCmd()), { recursive: true });
-    const ps1 = path.join(path.dirname(helperCmd()), 'stella-open.ps1');
-    fs.writeFileSync(ps1, '\uFEFF' + [
-      '$ErrorActionPreference = "Stop"',
-      'if ($args.Count -lt 1) { Write-Output "usage: stella-open <file|folder|url>"; exit 1 }',
-      '$target = [string]$args[0]',
-      'if ($target -notmatch "^[a-zA-Z][a-zA-Z0-9+.-]*://" -and (Test-Path -LiteralPath $target)) { $target = (Resolve-Path -LiteralPath $target).Path }',
-      `$req = @{ token = "${bridgeToken}"; target = $target } | ConvertTo-Json -Compress`,
-      '$f = Join-Path (Join-Path $env:APPDATA "agy-desktop\\queue") ([guid]::NewGuid().ToString() + ".json")',
-      '[IO.File]::WriteAllText($f, $req, (New-Object Text.UTF8Encoding $false))',
-      'Write-Output ("Opened on the user\'s desktop: " + $target)'
-    ].join('\r\n'));
-    fs.writeFileSync(helperCmd(), '@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stella-open.ps1" %*\r\n');
-    for (const f of fs.readdirSync(queueDir())) { try { fs.unlinkSync(path.join(queueDir(), f)); } catch {} }
-    const scan = () => {
-      let files = [];
-      try { files = fs.readdirSync(queueDir()).filter(f => f.endsWith('.json')); } catch { return; }
-      for (const f of files) {
-        const full = path.join(queueDir(), f);
-        let req = null;
-        try { req = JSON.parse(fs.readFileSync(full, 'utf8').replace(/^﻿/, '')); } catch { continue; }   // maybe still being written
-        try { fs.unlinkSync(full); } catch {}
-        if (!req || req.token !== bridgeToken || typeof req.target !== 'string') { log('bridge: rejected request'); continue; }
-        openOnDesktop(req.target.trim());
-      }
-    };
-    try { fs.watch(queueDir(), () => setTimeout(scan, 150)); } catch {}
-    setInterval(scan, 1000);
-    log('desktop bridge ready:', helperCmd());
-  } catch (e) { log('bridge setup failed:', e.message); }
-}
-
-function openOnDesktop(target) {
-  if (!target) return;
-  const isUrl = /^(https?|mailto|ms-[a-z-]+):/i.test(target);
-  if (!isUrl && !fs.existsSync(target)) { log('bridge: not found', target); send('desktop:opened', { target, ok: false }); return; }
-  // explorer.exe hands the request to the user's normal (non-elevated) shell on the real desktop
-  const p = spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' });
-  p.on('error', e => log('bridge open error', e.message));
-  p.unref();
-  log('bridge: opened', target);
-  send('desktop:opened', { target, ok: true });
-}
-
-function bridgeNote() {
-  if (!isWin) return '';
-  return '[Stella system note — do not mention it] Your shell commands run on an isolated hidden Windows desktop (exebox), ' +
-    'so any window you start there (WPS Office, Explorer, browsers, etc.) is invisible to the user. ' +
-    `To show the user a file, folder or URL on their real screen, run: "${helperCmd()}" "<full path or URL>" ` +
-    '(it opens it with the default app, e.g. a .pptx in WPS Office, a folder in Explorer). ' +
-    'Never tell the user you cannot open windows because of isolation — use this command instead.\n\n';
-}
-
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
+  control.newPrompt();
   // stream-json (default) = live steps + text deltas (documented: init / step_update / result)
   const fmt = ['json', 'text'].includes(s.outputFormat) ? s.outputFormat : 'stream-json';
-  const args = ['-p', bridgeNote() + prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
+  const args = ['-p', control.agentNote() + prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
   if (conversationId) args.push('--conversation', conversationId);
   else if (continueLast) args.push('-c');
 
@@ -653,6 +600,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     if (lineBuf) { if (isActLine(lineBuf)) activity(lineBuf); else { const t = stripAnsi(lineBuf); shown += t; send('chat:event', { reqId, type: 'delta', text: t }); } lineBuf = ''; }
     if (errBuf.trim()) activity(errBuf);
     running.delete(reqId);
+    control.promptFinished();
     respLog(`\n--- stderr ---\n${stderr}\n--- exit code: ${code} ---\n`);
     log('prompt finished code=', code, 'stdout bytes=', all.length, 'stderr bytes=', stderr.length);
 
@@ -787,6 +735,22 @@ ipcMain.on('chat:send', (_e, req) => runPrompt(req));
 ipcMain.on('chat:stop', (_e, reqId) => { const c = running.get(reqId); if (c) treeKill(c.pid); });
 
 ipcMain.handle('settings:get', () => getSettings());
+ipcMain.handle('control:browser', async (_e, on) => {
+  const s = getSettings();
+  try {
+    if (on && !control.findBrowser()) return { ok: false, error: 'Не найден Google Chrome или Microsoft Edge. Установите Chrome.' };
+    control.setBrowserMcp(!!on);
+    s.browserControl = !!on; writeJson(settingsFile(), s);
+    if (on) await control.ensureBrowser('');
+    return { ok: true };
+  } catch (e) { log('control:browser', e.message); return { ok: false, error: e.message }; }
+});
+ipcMain.handle('control:screen', (_e, on) => {
+  const s = getSettings(); s.screenControl = !!on; writeJson(settingsFile(), s);
+  if (!on) control.stopControl('disabled');
+  return { ok: true };
+});
+ipcMain.on('control:stop', () => control.stopControl('button'));
 ipcMain.handle('settings:set', (_e, patch) => {
   const s = getSettings();
   const restart = ('workspace' in patch && patch.workspace !== s.workspace) || ('model' in patch && patch.model !== s.model) || ('mode' in patch && patch.mode !== s.mode);

@@ -31,7 +31,11 @@ contextBridge.exposeInMainWorld('agy', {
   stop: (reqId) => ipcRenderer.send('chat:stop', reqId),
   onEvent: on('chat:event'),
   onDone: on('chat:done'),
-  onDesktopOpened: on('desktop:opened'),
+  onBridgeAction: on('bridge:action'),
+  onControlStopped: on('control:stopped'),
+  controlBrowser: (on) => ipcRenderer.invoke('control:browser', on),
+  controlScreen: (on) => ipcRenderer.invoke('control:screen', on),
+  controlStop: () => ipcRenderer.send('control:stop'),
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (p) => ipcRenderer.invoke('settings:set', p),
