@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('agy', {
   stop: (reqId) => ipcRenderer.send('chat:stop', reqId),
   onEvent: on('chat:event'),
   onDone: on('chat:done'),
+  onDesktopOpened: on('desktop:opened'),
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (p) => ipcRenderer.invoke('settings:set', p),

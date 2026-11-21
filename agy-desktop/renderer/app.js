@@ -458,6 +458,12 @@ api.onEvent(ev => {
   updateMsg(m);
 });
 
+api.onDesktopOpened(({ target, ok }) => {
+  const b = state.busy;
+  const name = target.split(/[\\/]/).filter(Boolean).pop() || target;
+  if (b) { b.msg.tools.push({ name: 'open', detail: (ok ? 'Открыто на рабочем столе: ' : 'Не найдено: ') + name, error: ok ? undefined : 'not found' }); updateMsg(b.msg); }
+});
+
 api.onDone(({ reqId, code }) => {
   const b = state.busy;
   if (!b || b.reqId !== reqId) return;
