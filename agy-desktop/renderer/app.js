@@ -214,7 +214,7 @@ async function loadChats() {
   renderChatList(); renderMessages();
 }
 let saveT = null;
-function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => (k === '_view' || k === '_open') ? undefined : v))), 300); }
+function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => (k === '_view' || k === '_open' || k === '_allSteps') ? undefined : v))), 300); }
 
 function newChat() {
   const existing = state.chats.find(c => !c.messages.length);
@@ -275,11 +275,20 @@ function fillAgent(el, m) {
   const ex = el.querySelector('.extras');
   ex.innerHTML = '';
   if (m.thinking) { const t = document.createElement('div'); t.className = 'thinking'; t.textContent = m.thinking.slice(-1500); ex.appendChild(t); }
-  for (const t of (m.tools || []).slice(-12)) {
-    const d = document.createElement('div'); d.className = 'tool';
-    d.innerHTML = '<b></b><span></span>';
-    d.querySelector('b').textContent = '⚙ ' + t.name;
-    d.querySelector('span').textContent = t.detail || '';
+  const tools = m.tools || [];
+  if (tools.length > 8 && !m._allSteps) {
+    const more = document.createElement('button'); more.className = 'steps-more';
+    more.textContent = `Показать ещё ${tools.length - 8} шагов`;
+    more.onclick = () => { m._allSteps = true; updateMsg(m); };
+    ex.appendChild(more);
+  }
+  for (const t of (m._allSteps ? tools : tools.slice(-8))) {
+    const d = document.createElement('div'); d.className = 'step' + (t.error ? ' failed' : '');
+    d.innerHTML = '<i></i><span></span><em></em>';
+    d.querySelector('i').textContent = t.error ? '✗' : '✓';
+    d.querySelector('span').textContent = t.detail || t.name;
+    d.querySelector('span').title = (t.detail || t.name) + (t.error ? '\n' + t.error : '');
+    if (t.secs != null) d.querySelector('em').textContent = Math.max(1, Math.round(t.secs)) + 's';
     ex.appendChild(d);
   }
   const body = el.querySelector('.body');
@@ -293,6 +302,19 @@ function fillAgent(el, m) {
     const last = body.lastElementChild;
     const host = last && /^(P|LI|H\d)$/.test(last.tagName) ? last : (last && last.tagName === 'UL' || last && last.tagName === 'OL') ? last.lastElementChild : (last && last.tagName === 'PRE' ? last.querySelector('code') : body);
     (host || body).appendChild(caret);
+  }
+  if (m.denied && m.denied.length && !m.busy) {
+    const w = document.createElement('div'); w.className = 'denied';
+    w.innerHTML = '<b>Агенту не разрешили некоторые действия</b><span></span><button class="btn tiny">Разрешить всё и повторить</button>';
+    w.querySelector('span').textContent = m.denied.slice(-3).join(' · ');
+    w.querySelector('button').onclick = async () => {
+      if (!confirm('Включить «Полный автомат»? Агент сможет выполнять команды и менять файлы без подтверждения.')) return;
+      state.settings = await api.setSettings({ mode: 'yolo' }); renderMode();
+      const c = chat(); const idx = c.messages.indexOf(m);
+      const q = idx > 0 ? c.messages[idx - 1].text : '';
+      if (q) sendText(q);
+    };
+    body.appendChild(w);
   }
   if (m.error) { const e = document.createElement('div'); e.className = 'err'; e.textContent = m.error; body.appendChild(e); }
   if (m.authRequired) {
@@ -425,7 +447,8 @@ api.onEvent(ev => {
     case 'raw': if (!b.gotDelta) { m.text += ev.text; startTyping(m); } break;
     case 'final': if (!m.text || !b.gotDelta || ev.text.length >= m.text.length) { if (!ev.text.startsWith(m.text.slice(0, m._view || 0))) m._view = 0; m.text = ev.text; startTyping(m); } break;
     case 'thinking': m.thinking = (m.thinking || '') + ev.text; break;
-    case 'tool': m.tools.push({ name: ev.name, detail: ev.detail }); m.status = ev.name + (ev.detail ? ' ' + ev.detail : ''); break;
+    case 'tool': m.tools.push({ name: ev.name, detail: ev.detail, error: ev.error, secs: ev.secs }); break;
+    case 'denied': m.denied = m.denied || []; if (!m.denied.includes(ev.text)) m.denied.push(ev.text); break;
     case 'activity': m.status = ev.text; break;
     case 'log': m.log = ((m.log || '') + ev.text).slice(-30000); updateActivity(m); return;
     case 'error': m.error = (m.error ? m.error + '\n' : '') + ev.text; break;

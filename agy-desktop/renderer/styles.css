@@ -226,3 +226,14 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .activity.running .act-text { background: linear-gradient(90deg, var(--text) 40%, var(--muted) 50%, var(--text) 60%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.2s linear infinite; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 .act-log { display: none; margin: 8px 0 0; max-height: 260px; overflow: auto; background: #0f0f0f; color: #d8d8d8; border-radius: 10px; padding: 10px 12px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+/* agent steps (like the original interface) */
+.step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 3px 0; min-width: 0; }
+.step i { font-style: normal; color: #3a9d5d; flex: none; width: 14px; text-align: center; }
+.step.failed i { color: #d0463b; }
+.step span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.step em { font-style: normal; flex: none; font-size: 11.5px; opacity: .8; }
+.extras:not(:empty) { margin-bottom: 6px; }
+.steps-more { border: 0; background: none; color: var(--muted); font-size: 12.5px; padding: 2px 0; text-decoration: underline; }
+.denied { display: grid; gap: 6px; justify-items: start; margin: 10px 0; padding: 10px 12px; border-radius: 12px; background: rgba(217,160,63,.12); border: 1px solid rgba(217,160,63,.35); font-size: 13px; }
+.denied span { color: var(--muted); }

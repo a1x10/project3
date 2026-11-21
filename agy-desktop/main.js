@@ -374,10 +374,28 @@ function couldBeActPrefix(partial) {
   return ACT_WORDS.some(w => w.startsWith(l) || l.startsWith(w));
 }
 
+function describeTool(name, params) {
+  const p = params && typeof params === 'object' ? params : {};
+  const pick = (...keys) => { for (const k of keys) for (const pk of Object.keys(p)) if (pk.toLowerCase() === k.toLowerCase() && p[pk] != null && p[pk] !== '') return String(p[pk]); return ''; };
+  const cmd = pick('CommandLine', 'command', 'cmd');
+  const file = pick('AbsolutePath', 'TargetFile', 'FilePath', 'path', 'file', 'filename');
+  const query = pick('Query', 'query', 'pattern', 'SearchPath', 'url', 'Url');
+  const n = String(name);
+  const short = s => s.length > 140 ? s.slice(0, 140) + '…' : s;
+  if (cmd) return 'Running ' + short(cmd.replace(/\s+/g, ' '));
+  if (/write|create|save/i.test(n) && file) return 'Writing ' + short(file);
+  if (/edit|replace|patch/i.test(n) && file) return 'Editing ' + short(file);
+  if (/read|view|open/i.test(n) && file) return 'Reading ' + short(file);
+  if (/search|grep|find|glob/i.test(n)) return 'Searching ' + short(query || file || '');
+  if (/web|fetch|browse|url/i.test(n)) return 'Fetching ' + short(query || '');
+  const first = file || query || Object.values(p).find(v => typeof v === 'string') || '';
+  return n.replace(/_/g, ' ') + (first ? ' ' + short(String(first)) : '');
+}
+
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
-  // text = real-time streaming (default); json / stream-json can be chosen in settings.json
-  const fmt = ['json', 'stream-json'].includes(s.outputFormat) ? s.outputFormat : 'text';
+  // stream-json (default) = live steps + text deltas (documented: init / step_update / result)
+  const fmt = ['json', 'text'].includes(s.outputFormat) ? s.outputFormat : 'stream-json';
   const args = ['-p', prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
   if (conversationId) args.push('--conversation', conversationId);
   else if (continueLast) args.push('-c');
@@ -401,8 +419,79 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
 
   const emitConv = o => { const id = findConvId(o); if (id && !convId) { convId = id; send('chat:event', { reqId, type: 'conversation', id }); } };
 
-  // stream-json: one event per line
+  // ---- documented agy stream-json schema ----
+  const stepText = {};          // step_index -> text already shown
+  const toolSeen = {};          // step_index -> true once ACTIVE was reported
+  let lastTextStep = null;
+  const appendText = (t) => { if (!t) return; shown += t; send('chat:event', { reqId, type: 'delta', text: t }); };
+  const logLine = (t) => send('chat:event', { reqId, type: 'log', text: t.endsWith('\n') ? t : t + '\n' });
+
+  const handleAgy = (o) => {
+    const ev = String(o.event);
+    if (o.conversation_id) emitConv({ conversation_id: o.conversation_id });
+    if (ev === 'init') {
+      const i = o.init || {};
+      logLine(`● Сессия запущена${i.model ? ' · ' + i.model : ''}${i.permission_mode ? ' · режим: ' + i.permission_mode : ''}${i.cwd ? '\n  папка: ' + i.cwd : ''}`);
+      return;
+    }
+    if (ev === 'step_update') {
+      const u = o.step_update || {};
+      if (u.conversation_id) emitConv({ conversation_id: u.conversation_id });
+      const idx = u.step_index ?? 'x';
+      const st = String(u.step_type || '');
+      const done = String(u.state || '').toUpperCase() === 'DONE';
+      if (st === 'agent_response') {
+        let t = typeof u.text_delta === 'string' ? u.text_delta : '';
+        const prev = stepText[idx] || '';
+        if (done && prev && t.startsWith(prev)) t = t.slice(prev.length);  // DONE may repeat the full text
+        else if (done && prev && t === prev) t = '';
+        if (t) {
+          if (lastTextStep !== null && lastTextStep !== idx && shown && !shown.endsWith('\n\n')) appendText(shown.endsWith('\n') ? '\n' : '\n\n');
+          lastTextStep = idx;
+          stepText[idx] = prev + t;
+          appendText(t);
+        }
+        return;
+      }
+      if (st === 'tool') {
+        const info = u.tool_info || {};
+        const name = u.tool_name || info.name || 'tool';
+        const desc = describeTool(name, info.parameters);
+        if (!done || !toolSeen[idx]) {
+          toolSeen[idx] = true;
+          activity(desc);
+          logLine('▶ ' + desc);
+        }
+        if (done) {
+          const err = info.error ? (info.error.message || JSON.stringify(info.error)) : '';
+          const out = info.output == null ? '' : (typeof info.output === 'string' ? info.output : JSON.stringify(info.output, null, 2));
+          if (out.trim()) logLine(out.trim().slice(0, 6000));
+          if (err) logLine('✗ ' + err);
+          send('chat:event', { reqId, type: 'tool', name: String(name), detail: desc, error: err || undefined, secs: u.duration_seconds });
+        }
+        return;
+      }
+      if (u.subagent_info && Array.isArray(u.subagent_info.subagents)) {
+        u.subagent_info.subagents.forEach(a => { const d = 'Запущен субагент ' + (a.type_name || a.role || ''); activity(d); logLine('◆ ' + d); });
+      }
+      return;                    // user_input / checkpoint
+    }
+    if (ev === 'result') {
+      const r = o.result || {};
+      if (r.conversation_id) emitConv({ conversation_id: r.conversation_id });
+      if (typeof r.response === 'string' && r.response.trim()) finalText = r.response;
+      const status = String(r.status || '').toUpperCase();
+      if (r.error || (status && !['SUCCESS', 'RUNNING', 'WAITING'].includes(status))) {
+        send('chat:event', { reqId, type: 'error', text: (r.error || ('Статус: ' + status)) + (r.finished_reason ? ' (' + r.finished_reason + ')' : '') });
+      }
+      logLine(`● Готово${r.duration_seconds != null ? ' за ' + Math.round(r.duration_seconds) + 's' : ''}${r.num_turns ? ' · шагов: ' + r.num_turns : ''}`);
+      return;
+    }
+  };
+
+  // fallback for unknown JSON shapes
   const handleEvent = (o) => {
+    if (o && typeof o.event === 'string') return handleAgy(o);
     emitConv(o);
     const type = String(o.type || o.event || o.kind || '').toLowerCase();
     if (/tool/.test(type) || o.tool_name || o.toolName || o.functionCall || o.function_call) {
@@ -437,7 +526,7 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     const str = dec.write(d);
     all += str; respLog(str);
     send('term:data', str.replace(/\r?\n/g, '\r\n'));
-    logOut(str);
+    if (fmt !== 'stream-json') logOut(str);
     if (fmt === 'stream-json') {
       buf += str;
       let i;
@@ -470,7 +559,10 @@ function runPrompt({ reqId, prompt, conversationId, continueLast }) {
     logOut(str);
     errBuf += str;
     const lines = errBuf.split('\n'); errBuf = lines.pop();
-    lines.forEach(l => activity(l));
+    lines.forEach(l => {
+      activity(l);
+      if (/denied|not approved|requires? approval|permission|отклон/i.test(l)) send('chat:event', { reqId, type: 'denied', text: cleanStatus(l) });
+    });
     if (errBuf.includes('\r')) activity(errBuf);                 // live spinner line
   });
   child.on('error', e => { send('chat:event', { reqId, type: 'error', text: 'Не удалось запустить агента: ' + e.message }); });
