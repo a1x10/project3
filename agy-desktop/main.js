@@ -770,7 +770,16 @@ ipcMain.handle('cloud:logout', () => { cloud.logout(); return { ok: true }; });
 ipcMain.handle('cloud:status', () => cloud.getStatus());
 ipcMain.on('cloud:sync', (_e, chats) => cloud.syncChats(chats));
 ipcMain.handle('cloud:chat', (_e, { chat, extra }) => cloud.sendChat(chat, extra || {}));
-ipcMain.on('cloud:ev', (_e, ev) => cloud.event(ev));
+ipcMain.on('cloud:ev', (_e, ev) => {
+  cloud.event(ev);
+  if (ev.type === 'start') cloud.taskStarted(ev.chatId, getSettings().workspace);
+  if (ev.type === 'done') cloud.taskDone(ev.chatId);
+});
+ipcMain.handle('cloud:take-failover', () => cloud.takeFailover());
+ipcMain.handle('cloud:pull', async (_e, folder) => {
+  try { const dest = await cloud.pullFolder(folder, getSettings().workspace); shell.openPath(dest); return { ok: true, dest }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('control:browser', async (_e, on) => {
   const s = getSettings();
   try {

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { spawn, execSync } = require('child_process');
 const { readJson, saveLater } = require('./store');
 const users = require('./users');
+const sandbox = require('./sandbox');
 
 let pty = null;
 try { pty = require('node-pty'); } catch { pty = null; }
@@ -36,17 +37,11 @@ function envFor(u) {
 }
 const spawnOpts = (u, extra = {}) => Object.assign({ cwd: path.join(u.home, 'workspace'), env: envFor(u), uid: u.uid, gid: u.gid }, extra);
 
-// per-account resource limits (systemd scope): memory, CPU, number of processes
-let systemdOk = null;
-function limited(u, bin, args) {
-  if (systemdOk === null) systemdOk = u.uid != null && fs.existsSync('/run/systemd/system') && (() => { try { execSync('command -v systemd-run', { shell: '/bin/bash', stdio: 'ignore' }); return true; } catch { return false; } })();
-  if (!systemdOk || u.uid == null) return { cmd: bin, args, opts: {} };
-  const mem = process.env.STELLA_LIMIT_MEM || '2G', cpu = process.env.STELLA_LIMIT_CPU || '100%', tasks = process.env.STELLA_LIMIT_TASKS || '256';
-  return {
-    cmd: 'systemd-run',
-    args: ['--quiet', '--scope', '--collect', `--uid=${u.uid}`, `--gid=${u.gid}`, '-p', `MemoryMax=${mem}`, '-p', `CPUQuota=${cpu}`, '-p', `TasksMax=${tasks}`, '--', bin, ...args],
-    opts: { uid: undefined, gid: undefined }                       // systemd-run (root) switches to the account's user itself
-  };
+// docker container / systemd scope / plain — see sandbox.js
+function runner(u, bin, args, extra = {}) {
+  const env = { NO_COLOR: '1', TERM: 'xterm-256color', LANG: 'C.UTF-8' };
+  if (process.env.STELLA_GEMINI_API_KEY) env.GEMINI_API_KEY = process.env.STELLA_GEMINI_API_KEY;
+  return sandbox.wrap(u, bin, args, Object.assign({ env }, extra));
 }
 function runningCount(u) { return chats(u).filter(c => c.busy).length; }
 function stopAll(u) { for (const c of chats(u)) if (c.busy) stop(u, c.id); }
@@ -56,11 +51,7 @@ function prepareAgyConfig(u) {
   const mcpFile = path.join(u.home, '.gemini', 'config', 'mcp_config.json');
   const setFile = path.join(u.home, '.gemini', 'antigravity-cli', 'settings.json');
   const mcp = readJson(mcpFile, {}); mcp.mcpServers = mcp.mcpServers || {};
-  mcp.mcpServers['stella-whatsapp'] = {
-    command: process.execPath,
-    args: [path.join(__dirname, '..', 'mcp-whatsapp.js')],
-    env: { STELLA_URL: `http://127.0.0.1:${PORT}`, STELLA_TOKEN: u.mcpToken }
-  };
+  mcp.mcpServers['stella-whatsapp'] = sandbox.mcpServer(u, PORT);
   const st = readJson(setFile, {});
   if (process.env.STELLA_GEMINI_API_KEY) st.modelProvider = 'gemini';     // shared key from the server owner: no Google sign-in needed
   st.permissions = st.permissions || {};
@@ -146,8 +137,11 @@ function send(u, chatId, text, opts = {}) {
   if ((s.mode || 'yolo') === 'yolo') args.push('--dangerously-skip-permissions');   // nobody can approve on a server
   else if (s.mode === 'accept-edits' || s.mode === 'plan') args.push('--mode', s.mode);
 
-  const L = limited(u, bin, args);
+  let L;
+  try { L = runner(u, bin, args, { runId: c.id }); }
+  catch (e) { m.busy = false; c.busy = false; m.error = 'Не удалось запустить контейнер агента: ' + e.message; saveChats(u); emit(u.name, { t: 'chat', where: 'server', chat: c }); throw new Error(m.error); }
   const child = spawn(L.cmd, L.args, spawnOpts(u, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, L.opts)));
+  child.stopRun = L.kill;
   running.set(c.id, child);
   const ev = e => { applyEvent(m, c, e); emit(u.name, Object.assign({ t: 'ev', where: 'server', chatId: c.id, msgId: m.id }, e)); };
 
@@ -222,7 +216,9 @@ function applyEvent(m, c, e) {
 
 function stop(u, chatId) {
   const ch = running.get(chatId);
-  if (ch) { try { process.kill(ch.pid, 'SIGTERM'); } catch {} }
+  if (!ch) return;
+  if (ch.stopRun) ch.stopRun();                 // process inside the container
+  try { process.kill(ch.pid, 'SIGTERM'); } catch {}
 }
 
 // append a message to a chat (e.g. "Жена ответила: …")
@@ -252,7 +248,8 @@ function termOpen(u) {
   if (t) return t;
   if (!pty) throw new Error('node-pty недоступен на сервере');
   const bin = agyPath(u);
-  const p = pty.spawn(bin || '/bin/bash', [], Object.assign(spawnOpts(u), { name: 'xterm-256color', cols: 100, rows: 30 }));
+  const L = runner(u, bin || '/bin/bash', [], { tty: true, runId: 'term' });
+  const p = pty.spawn(L.cmd, L.args, Object.assign(spawnOpts(u), L.opts, { name: 'xterm-256color', cols: 100, rows: 30 }));
   t = { p, buf: '' };
   p.onData(d => { t.buf = (t.buf + d).slice(-100000); emit(u.name, { t: 'term.data', data: d }); });
   p.onExit(() => { terms.delete(u.name); emit(u.name, { t: 'term.data', data: '\r\n[agy завершился — откройте терминал снова]\r\n' }); });
@@ -268,7 +265,7 @@ function runOnce(u, prompt, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const bin = agyPath(u); if (!bin) return reject(new Error('agy not installed'));
     prepareAgyConfig(u);
-    const L = limited(u, bin, ['-p', prompt, '--output-format', 'json']);
+    const L = runner(u, bin, ['-p', prompt, '--output-format', 'json']);
     const child = spawn(L.cmd, L.args, spawnOpts(u, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, L.opts)));
     let out = '', err = '';
     const t = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, timeoutMs);

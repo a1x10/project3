@@ -197,6 +197,7 @@ async function enterApp() {
   renderWorkspace();
   renderMode();
   initControlToggles();
+  setTimeout(applyFailover, 300);
   loadModels();
   $('#input').focus();
 }
@@ -319,6 +320,17 @@ function fillAgent(el, m) {
     body.appendChild(w);
   }
   if (m.error) { const e = document.createElement('div'); e.className = 'err'; e.textContent = m.error; body.appendChild(e); }
+  if (m.pullFolder) {
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = '⬇ Забрать файлы с сервера';
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Скачиваю…';
+      const r = await api.cloudPull(m.pullFolder);
+      b.disabled = false;
+      b.textContent = r.ok ? '✓ Сохранено: ' + r.dest : '⬇ Забрать файлы с сервера';
+      if (!r.ok) alert('Не получилось: ' + r.error);
+    };
+    body.appendChild(b);
+  }
   if (m.authRequired) {
     const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Войти в Stella';
     b.onclick = () => { state.settings.loggedIn = false; api.setSettings({ loggedIn: false }); show('login'); };
@@ -747,6 +759,23 @@ api.onCloudCommand(async m => {
     sendText(prompt, { display: '↙ Продолжи здесь, на компьютере' });
   }
 });
+// tasks that the server finished while this PC was off (power cut)
+async function applyFailover() {
+  if (!state.chats.length) return;
+  const moved = await api.cloudTakeFailover();
+  if (!moved.length) return;
+  for (const x of moved) {
+    const c = state.chats.find(ch => ch.id === x.pcChatId); if (!c) continue;
+    c.messages.forEach(mm => { if (mm.busy) { mm.busy = false; mm.error = mm.error || 'Прервано: компьютер выключился'; } });
+    c.messages.push({ id: uid(), role: 'agent', note: true, tools: [], pullFolder: x.folder || null,
+      text: '⚡ **Пока компьютер был выключен, задача продолжилась на сервере.** Ход работы — в приложении Stella на телефоне (вкладка «Сервер»).' + (x.folder ? `\n\nФайлы проекта на сервере: \`${x.folder}\`` : '') });
+  }
+  renderChatList(); renderMessages(); saveChats();
+}
+api.onCloudFailover(() => applyFailover());
+let snapWarned = false;
+api.onCloudSnapshot(({ ok, why }) => { if (!ok && why && !snapWarned) { snapWarned = true; setStatus('on', 'автоперенос: ' + why); } });
+
 api.onCloudWaReply(m => {
   const c = state.chats.find(x => x.id === (m.origin && m.origin.chatId)); if (!c) return;
   c.messages.push({ id: uid(), role: 'agent', text: `📩 **${m.name}** ответил(а) в WhatsApp:\n\n> ${String(m.text).replace(/\n/g, '\n> ')}`, tools: [], note: true });

@@ -2,6 +2,7 @@
 # Stella Cloud installer for Ubuntu / Debian servers.
 #   curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/stella-cloud/install.sh | sudo bash
 # Optional:  DOMAIN=stella.example.com  (otherwise <your-ip>.sslip.io is used, HTTPS via Let's Encrypt)
+#            DUCKDNS=myname   (free name myname.duckdns.org; the token is asked for, hidden)
 set -euo pipefail
 
 REPO="${STELLA_REPO:-https://github.com/a1x10/project3.git}"
@@ -38,6 +39,15 @@ cd "$APP"
 npm ci --omit=dev --no-audit --no-fund 2>/dev/null || npm install --omit=dev --no-audit --no-fund
 chmod -R a+rX "$APP"
 
+say "Docker: отдельный контейнер для каждого аккаунта"
+if ! command -v docker >/dev/null; then $APT install -y -q docker.io && systemctl enable --now docker; fi
+if docker info >/dev/null 2>&1; then
+  docker build -q -t stella-agent:latest "$APP/docker" && echo "Образ stella-agent готов" \
+    || echo "ВНИМАНИЕ: образ не собрался — агенты будут работать без Docker (отдельные Linux-пользователи)"
+else
+  echo "ВНИМАНИЕ: Docker не запущен — агенты будут работать без Docker (отдельные Linux-пользователи)"
+fi
+
 say "Antigravity CLI (agy)"
 if [ ! -x /usr/local/bin/agy ]; then
   curl -fsSL https://antigravity.google/cli/install.sh | bash || true
@@ -68,6 +78,10 @@ STELLA_INVITE=$INVITE
 STELLA_MAX_RUNS=2
 STELLA_LIMIT_MEM=2G
 STELLA_LIMIT_CPU=100%
+# auto = Docker container per account when available
+STELLA_SANDBOX=auto
+# seconds to wait for a vanished PC before its running task moves to the server
+STELLA_FAILOVER_SEC=45
 EOF
   chmod 600 "$ENVF"
 fi
@@ -109,10 +123,29 @@ for i in $(seq 1 20); do curl -fsS "http://127.0.0.1:$PORT/api/info" >/dev/null 
 if curl -fsS "http://127.0.0.1:$PORT/api/info" >/dev/null 2>&1; then echo "Stella запущена на 127.0.0.1:$PORT"
 else echo "ВНИМАНИЕ: Stella не отвечает. Логи: journalctl -u stella-cloud -n 50 --no-pager"; fi
 
+# ---------- domain: DuckDNS / own domain / <ip>.sslip.io ----------
+DDF=/etc/stella-duckdns.env
+if [ -n "${DUCKDNS:-}" ]; then
+  DUCKDNS="${DUCKDNS%.duckdns.org}"
+  if [ -z "${DUCKDNS_TOKEN:-}" ] && [ -f "$DDF" ] && grep -q "^DUCKDNS=$DUCKDNS$" "$DDF"; then DUCKDNS_TOKEN=$(grep '^DUCKDNS_TOKEN=' "$DDF" | cut -d= -f2); fi
+  if [ -z "${DUCKDNS_TOKEN:-}" ]; then read -rsp "DuckDNS token (с duckdns.org, ввод скрыт): " DUCKDNS_TOKEN < /dev/tty; echo; fi
+  printf 'DUCKDNS=%s\nDUCKDNS_TOKEN=%s\n' "$DUCKDNS" "$DUCKDNS_TOKEN" > "$DDF"; chmod 600 "$DDF"
+  R=$(curl -fsS --max-time 15 "https://www.duckdns.org/update?domains=$DUCKDNS&token=$DUCKDNS_TOKEN&ip=" || true)
+  if [ "$R" = "OK" ]; then echo "DuckDNS: $DUCKDNS.duckdns.org → IP этого сервера"; else echo "ВНИМАНИЕ: DuckDNS ответил «$R» — проверьте имя и токен"; fi
+  cat > /etc/cron.d/stella-duckdns <<'CRON'
+*/5 * * * * root . /etc/stella-duckdns.env && curl -fsS --max-time 15 "https://www.duckdns.org/update?domains=$DUCKDNS&token=$DUCKDNS_TOKEN&ip=" >/dev/null 2>&1
+CRON
+  DOMAIN="$DUCKDNS.duckdns.org"
+elif [ -z "${DOMAIN:-}" ] && [ -f "$DDF" ]; then
+  DOMAIN="$(grep '^DUCKDNS=' "$DDF" | cut -d= -f2).duckdns.org"
+fi
 if [ -z "${DOMAIN:-}" ]; then
   IP=$(curl -fsS4 --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
   DOMAIN="${IP//./-}.sslip.io"
 fi
+# agents inside containers reach Stella (WhatsApp tools) through the public HTTPS address
+if grep -q '^STELLA_PUBLIC_URL=' "$ENVF"; then sed -i "s|^STELLA_PUBLIC_URL=.*|STELLA_PUBLIC_URL=https://$DOMAIN|" "$ENVF"; else echo "STELLA_PUBLIC_URL=https://$DOMAIN" >> "$ENVF"; fi
+systemctl restart stella-cloud
 
 WEB=$(ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null || true)
 if echo "$WEB" | grep -q nginx; then

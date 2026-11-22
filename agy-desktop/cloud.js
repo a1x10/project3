@@ -71,6 +71,7 @@ function connect() {
     if (m.t === 'hello') { setStatus('online'); if (lastChats.length) push({ t: 'pc.chats', chats: lastChats }); registerWhatsAppMcp(true); return; }
     // commands from the phone / server
     if (['pc.run', 'pc.stop', 'pc.export', 'pc.import'].includes(m.t)) H.send('cloud:command', m);
+    if (m.t === 'pc.failover') { pendingFailover.push(...(m.moved || [])); H.send('cloud:failover', { moved: [] }); }
     if (m.t === 'wa.reply' && m.origin && m.origin.where === 'pc') H.send('cloud:wa-reply', m);
     if (m.t === 'notify' && m.where === 'pc') H.send('cloud:notify', m);
   });
@@ -131,4 +132,82 @@ function agentNote() {
     'Message people ONLY when the user explicitly asks; write in the user\'s own style (call writing_style first). Replies are forwarded to the user automatically.\n';
 }
 
-module.exports = { pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
+/* ================================================================== */
+/* failover: snapshots of the project folder while a task runs          */
+/* ================================================================== */
+let pendingFailover = [];               // kept until the window has loaded its chats
+function takeFailover() { const x = pendingFailover; pendingFailover = []; return x; }
+const EXCLUDE = ['node_modules', '.venv', 'venv', '__pycache__', '.next', '.nuxt', 'dist', 'build', 'target', '.cache', '.gradle', '.idea', '.vs'];
+const LIMIT = 300 * 1024 * 1024;
+const snapTimers = new Map();
+
+function folderSize(dir, limit) {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const d = stack.pop();
+    let list = [];
+    try { list = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of list) {
+      if (EXCLUDE.includes(e.name)) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) stack.push(p);
+      else if (e.isFile()) { try { total += fs.statSync(p).size; } catch {} if (total > limit) return total; }
+    }
+  }
+  return total;
+}
+function snapshotable(ws) {
+  if (!ws || !fs.existsSync(ws)) return 'папка не найдена';
+  const norm = path.resolve(ws);
+  if (norm === path.resolve(os.homedir()) || norm === path.parse(norm).root) return 'рабочая папка — это весь профиль/диск; выберите папку проекта слева';
+  if (folderSize(norm, LIMIT) > LIMIT) return 'папка проекта больше 300 МБ';
+  return null;
+}
+function uploadSnapshot(chatId, ws) {
+  const s = H.getSettings();
+  if (status !== 'online' || !s.cloudToken) return;
+  const why = snapshotable(ws);
+  if (why) { H.log('snapshot skipped:', why); H.send('cloud:snapshot', { chatId, ok: false, why }); return; }
+  const u = new URL(s.cloudUrl + '/api/pc/snapshot?chat=' + encodeURIComponent(chatId) + '&folder=' + encodeURIComponent(path.basename(ws)));
+  const mod = u.protocol === 'https:' ? require('https') : require('http');
+  const args = ['-czf', '-'];
+  for (const x of EXCLUDE) args.push('--exclude', x);
+  args.push('-C', ws, '.');
+  const tar = require('child_process').spawn('tar', args, { windowsHide: true });
+  const req = mod.request(u, { method: 'POST', headers: { authorization: 'Bearer ' + s.cloudToken, 'content-type': 'application/gzip', 'transfer-encoding': 'chunked' }, timeout: 300000 }, res => {
+    let b = ''; res.on('data', d => b += d);
+    res.on('end', () => { H.log('snapshot', chatId, res.statusCode, b.slice(0, 120)); H.send('cloud:snapshot', { chatId, ok: res.statusCode === 200 }); });
+  });
+  req.on('error', e => H.log('snapshot upload error', e.message));
+  tar.on('error', e => { H.log('tar error', e.message); req.destroy(); });
+  tar.stdout.pipe(req);
+}
+function taskStarted(chatId, ws) {
+  taskDone(chatId);
+  uploadSnapshot(chatId, ws);
+  snapTimers.set(chatId, setInterval(() => uploadSnapshot(chatId, ws), 3 * 60 * 1000));
+}
+function taskDone(chatId) { clearInterval(snapTimers.get(chatId)); snapTimers.delete(chatId); }
+
+// download what the server produced into "<workspace>-с-сервера-<date>" (never overwrites your files)
+async function pullFolder(folder, workspace) {
+  const s = H.getSettings();
+  const r = await fetch(s.cloudUrl + '/api/server/folder?name=' + encodeURIComponent(folder), { headers: { authorization: 'Bearer ' + s.cloudToken } });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'сервер ответил ' + r.status); }
+  const tmp = path.join(os.tmpdir(), 'stella-pull-' + Date.now() + '.tar.gz');
+  fs.writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const base = workspace && fs.existsSync(workspace) && path.resolve(workspace) !== path.resolve(os.homedir()) ? path.resolve(workspace) : path.join(os.homedir(), 'Documents', folder);
+  const dest = base + '-с-сервера-' + stamp;
+  fs.mkdirSync(dest, { recursive: true });
+  await new Promise((resolve, reject) => {
+    const p = require('child_process').spawn('tar', ['-xzf', tmp, '-C', dest], { windowsHide: true });
+    p.on('close', c => c === 0 ? resolve() : reject(new Error('tar exit ' + c)));
+    p.on('error', reject);
+  });
+  try { fs.unlinkSync(tmp); } catch {}
+  return dest;
+}
+
+module.exports = { takeFailover, taskStarted, taskDone, pullFolder, pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };

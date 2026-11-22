@@ -10,6 +10,7 @@ const { WebSocketServer } = require('ws');
 const users = require('./lib/users');
 const agent = require('./lib/agent');
 const wa = require('./lib/whatsapp');
+const failover = require('./lib/failover');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';          // behind Caddy (HTTPS) by default
@@ -30,6 +31,7 @@ const toPc = (name, msg) => { let n = 0; for (const c of devices(name)) if (c.de
 
 agent.setup({ emit, port: PORT });
 wa.setup({ emit, agent });
+failover.setup({ agent, emit, toPc, toPhones });
 
 /* ================================================================== */
 /* HTTP                                                                */
@@ -84,6 +86,17 @@ async function api(req, res, url) {
     return json(res, 200, { user: users.publicUser(u), agy: !!agent.agyPath(u) });
   }
 
+  // PC uploads a snapshot of the project folder while a task runs (for failover)
+  if (req.method === 'POST' && p === '/api/pc/snapshot') {
+    const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
+    try { const r = await failover.saveSnapshot(u, url.searchParams.get('chat'), url.searchParams.get('folder'), req); return json(res, 200, r); }
+    catch (e) { return json(res, 413, { error: e.message }); }
+  }
+  // PC downloads results that the server produced
+  if (req.method === 'GET' && p === '/api/server/folder') {
+    const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
+    return failover.exportFolder(u, url.searchParams.get('name'), res);
+  }
   // tools for the agent (WhatsApp MCP). Server agents use the account's mcpToken, the PC uses its session token.
   const m = p.match(/^\/api\/mcp\/([a-z_]+)$/);
   if (req.method === 'POST' && m) {
@@ -125,6 +138,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'no-referrer');
+  if (req.headers['x-forwarded-proto'] === 'https') res.setHeader('strict-transport-security', 'max-age=31536000');
   if (url.pathname.startsWith('/api/')) return api(req, res, url).catch(e => json(res, 500, { error: e.message }));
   serveStatic(req, res, url);
 });
@@ -136,6 +150,8 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 8 * 1024 * 10
 wss.on('connection', (ws) => {
   let me = null, conn = null;
   const authTimer = setTimeout(() => ws.close(), 10000);
+  ws.alive = true;
+  ws.on('pong', () => { ws.alive = true; });
   ws.on('message', async raw => {
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!me) {
@@ -145,7 +161,7 @@ wss.on('connection', (ws) => {
       clearTimeout(authTimer);
       conn = { ws, device: m.device === 'pc' ? 'pc' : 'phone', label: String(m.label || '').slice(0, 60) };
       devices(me.name).add(conn);
-      if (conn.device === 'pc') { pc(me.name).online = true; toPhones(me.name, { t: 'pc.online', online: true, label: conn.label }); }
+      if (conn.device === 'pc') { pc(me.name).online = true; toPhones(me.name, { t: 'pc.online', online: true, label: conn.label }); setTimeout(() => failover.pcReconnected(me), 1500); }
       sendTo(conn, {
         t: 'hello', user: users.publicUser(me), agy: !!agent.agyPath(me),
         pcOnline: pc(me.name).online,
@@ -162,9 +178,21 @@ wss.on('connection', (ws) => {
     clearTimeout(authTimer);
     if (!me) return;
     devices(me.name).delete(conn);
-    if (conn.device === 'pc' && ![...devices(me.name)].some(c => c.device === 'pc')) { pc(me.name).online = false; toPhones(me.name, { t: 'pc.online', online: false }); }
+    if (conn.device === 'pc' && ![...devices(me.name)].some(c => c.device === 'pc')) {
+      pc(me.name).online = false; toPhones(me.name, { t: 'pc.online', online: false });
+      failover.pcDisconnected(me, pc(me.name));
+    }
   });
 });
+
+// heartbeat: a PC that lost power never closes its socket — detect it within ~30 s
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.alive) { try { ws.terminate(); } catch {} continue; }
+    ws.alive = false;
+    try { ws.ping(); } catch {}
+  }
+}, 15000);
 
 async function onMsg(u, conn, m) {
   const P = pc(u.name);
@@ -184,9 +212,9 @@ async function onMsg(u, conn, m) {
     case 'term.resize': agent.termResize(u, m.cols | 0 || 100, m.rows | 0 || 30); break;
 
     /* ---- PC (Stella desktop) -> server ---- */
-    case 'pc.chats': if (conn.device === 'pc') { P.chats = new Map((m.chats || []).slice(0, 100).map(c => [c.id, c])); toPhones(u.name, { t: 'chats', where: 'pc', list: [...P.chats.values()].map(c => agent.summary(c)) }); } break;
+    case 'pc.chats': if (conn.device === 'pc') { const live = P.running || new Map(); const keep = [...live.keys()].map(id => P.chats.get(id)).filter(Boolean); P.chats = new Map((m.chats || []).slice(0, 100).map(c => [c.id, c])); keep.forEach(c => P.chats.set(c.id, c)); toPhones(u.name, { t: 'chats', where: 'pc', list: [...P.chats.values()].map(c => agent.summary(c)) }); } break;
     case 'pc.chat': if (conn.device === 'pc' && m.chat) { P.chats.set(m.chat.id, m.chat); toPhones(u.name, { t: 'chat', where: 'pc', chat: m.chat }); if (m.forTransfer) agent.importFromPc(u, m.chat, m.continueText); } break;
-    case 'pc.ev': if (conn.device === 'pc') { if (m.started) agent.lastOrigin.set(u.name, { where: 'pc', chatId: m.chatId }); toPhones(u.name, Object.assign({}, m, { t: 'ev', where: 'pc' })); } break;
+    case 'pc.ev': if (conn.device === 'pc') { failover.applyPcEvent(P, m); if (m.started) agent.lastOrigin.set(u.name, { where: 'pc', chatId: m.chatId }); toPhones(u.name, Object.assign({}, m, { t: 'ev', where: 'pc' })); } break;
     case 'pc.status': if (conn.device === 'pc') toPhones(u.name, { t: 'pc.status', status: m.status }); break;
 
     /* ---- phone -> PC ---- */
@@ -214,7 +242,7 @@ async function onMsg(u, conn, m) {
     case 'admin.invite': requireAdmin(u); users.createInvite(u.name, m.note, m.maxUses || 1); sendTo(conn, adminState()); break;
     case 'admin.revoke': requireAdmin(u); users.revokeInvite(m.code); sendTo(conn, adminState()); break;
     case 'admin.disable': requireAdmin(u); users.setDisabled(m.name, !!m.on); if (m.on) kick(m.name); sendTo(conn, adminState()); break;
-    case 'admin.delete': requireAdmin(u); { const t = users.get(m.name); if (t) agent.stopAll(t); kick(m.name); users.remove(m.name); } sendTo(conn, adminState()); break;
+    case 'admin.delete': requireAdmin(u); { const t = users.get(m.name); if (t) { agent.stopAll(t); require('./lib/sandbox').removeContainer(t); } kick(m.name); users.remove(m.name); } sendTo(conn, adminState()); break;
 
     /* ---- WhatsApp ---- */
     case 'wa.connect': sendTo(conn, Object.assign({ t: 'wa.status' }, await wa.connect(u))); break;
