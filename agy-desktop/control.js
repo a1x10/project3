@@ -12,6 +12,7 @@ const http = require('http');
 const crypto = require('crypto');
 
 const isWin = process.platform === 'win32';
+const FAKE = !!process.env.STELLA_FAKE_INPUT;      // tests on non-Windows: input layer is simulated
 const BROWSER_PORT = 9333;
 const MCP_NAME = 'stella-browser';
 
@@ -32,7 +33,7 @@ let shotCounter = 0;
 /* ================================================================== */
 function init(hooks) {
   H = Object.assign(H, hooks);
-  if (!isWin) return;
+  if (!isWin && !FAKE) return;
   try {
     fs.mkdirSync(queueDir(), { recursive: true });
     fs.mkdirSync(binDir(), { recursive: true });
@@ -40,6 +41,9 @@ function init(hooks) {
     for (const f of fs.readdirSync(queueDir())) { try { fs.unlinkSync(path.join(queueDir(), f)); } catch {} }
     try { fs.watch(queueDir(), () => setTimeout(scan, 100)); } catch {}
     setInterval(scan, 700);
+    startFastBridge();
+    const st = H.getSettings();
+    if (st.browserControl || st.screenControl) { try { setBrowserMcp(); } catch (e) { H.log('mcp refresh', e.message); } }
     H.log('control bridge ready', helper());
   } catch (e) { H.log('control init failed', e.message); }
 }
@@ -101,6 +105,116 @@ function scan() {
   }
 }
 
+/* ================================================================== */
+/* fast bridge for the stella-desktop MCP server (no process per action) */
+/* ================================================================== */
+let bridgePort = 0;
+function startFastBridge() {
+  const srv = http.createServer((req, res) => {
+    if (req.method !== 'POST' || req.url !== '/call' || req.headers.authorization !== 'Bearer ' + token) { res.writeHead(403); return res.end(); }
+    let b = ''; req.on('data', d => { b += d; if (b.length > 1e6) req.destroy(); });
+    req.on('end', async () => {
+      let j; try { j = JSON.parse(b); } catch { res.writeHead(400); return res.end(); }
+      const t0 = Date.now();
+      try {
+        const r = await call(String(j.tool || ''), j.args || {});
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(Object.assign({ ok: true, ms: Date.now() - t0 }, typeof r === 'string' ? { text: r } : r)));
+      } catch (e) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, text: e.message }));
+      }
+    });
+  });
+  srv.listen(0, '127.0.0.1', () => {
+    bridgePort = srv.address().port;
+    try { fs.writeFileSync(path.join(base(), 'bridge.json'), JSON.stringify({ port: bridgePort, token })); } catch {}
+    H.log('fast bridge on 127.0.0.1:' + bridgePort);
+  });
+}
+
+// MCP tool -> action. Most actions can return a fresh screenshot in the same call.
+let lastElements = [];
+async function call(tool, a) {
+  const shotAfter = async (text) => {
+    if (!a.screenshot) return text;
+    await sleep(Number(a.settle_ms ?? 250));
+    const s = await shoot();
+    return { text: text + '\n' + s.text, image: s.image };
+  };
+  const xy = () => [String(a.x), String(a.y)];
+  switch (tool) {
+    case 'open': return handle('open', [String(a.target || '')]);
+    case 'browser': return handle('browser', [String(a.url || '')]);
+    case 'screenshot': guard(); return shoot();
+    case 'click': await handle('click', [...xy(), a.double ? 'double' : (a.button || 'left')]); return shotAfter(`clicked ${a.x},${a.y}`);
+    case 'move': await handle('move', xy()); return shotAfter('moved');
+    case 'scroll': await handle('scroll', [...xy(), String(a.amount ?? 3)]); return shotAfter('scrolled');
+    case 'drag': await handle('drag', [String(a.x1), String(a.y1), String(a.x2), String(a.y2)]); return shotAfter('dragged');
+    case 'type_text': await handle('type', [String(a.text ?? '')]); if (a.enter) await handle('key', ['enter']); return shotAfter('typed');
+    case 'press_keys': await handle('key', [String(a.keys || '')]); return shotAfter('pressed ' + a.keys);
+    case 'wait': await handle('wait', [String(a.ms ?? 800)]); return shotAfter('waited');
+    case 'list_elements': return listElements();
+    case 'click_element': {
+      guard();
+      let el = null;
+      if (a.index != null) el = lastElements[Number(a.index) - 1];
+      if (!el && a.name) {
+        if (!lastElements.length || a.refresh !== false) await listElements();
+        const q = String(a.name).toLowerCase();
+        el = lastElements.find(e => e.n.toLowerCase() === q) || lastElements.find(e => e.n.toLowerCase().includes(q));
+      }
+      if (!el) throw new Error('Element not found. Call list_elements and use an index.');
+      beginControl();
+      await ps({ op: 'click', x: el.x, y: el.y, button: a.button === 'right' ? 'right' : 'left', double: !!a.double });
+      action(`Нажал «${el.n}»`);
+      await sleep(60);
+      return shotAfter(`clicked "${el.n}" [${el.t}]`);
+    }
+    case 'actions': {                                   // several steps in one call
+      const out = [];
+      for (const step of (a.steps || []).slice(0, 30)) {
+        const { action: act, ...rest } = step || {};
+        if (!act || act === 'actions' || act === 'screenshot') continue;
+        const r = await call(act, Object.assign({}, rest, { screenshot: false }));
+        out.push(act + ': ' + (typeof r === 'string' ? r : r.text).split('\n')[0]);
+        if (step.pause_ms) await sleep(Math.min(5000, Number(step.pause_ms)));
+      }
+      return shotAfter(out.join('\n'));
+    }
+  }
+  throw new Error('unknown tool ' + tool);
+}
+function guard() {
+  const s = H.getSettings();
+  if (!s.screenControl) throw new Error('Screen control is turned off in Stella. Ask the user to enable "Управление экраном".');
+  if (stopped) throw new Error('The user stopped screen control (Esc). Do not continue; tell the user it was stopped.');
+}
+async function shoot() {
+  guard(); beginControl();
+  fs.mkdirSync(shotsDir(), { recursive: true });
+  const file = path.join(shotsDir(), `screen-${Date.now()}-${++shotCounter}.jpg`);
+  overlay.hideFor(true);
+  await sleep(40);
+  const r = await ps({ op: 'shot', path: file, max: 1280, fmt: 'jpg' });
+  overlay.hideFor(false);
+  lastScale = r.scale || 1;
+  cleanupShots();
+  action('Снимок экрана');
+  const w = Math.round(r.w * lastScale), h = Math.round(r.h * lastScale);
+  let data = '';
+  try { data = fs.readFileSync(file).toString('base64'); } catch {}
+  return { text: `Screen ${w}x${h} (use these image coordinates).`, image: data ? { data, mime: 'image/jpeg' } : null };
+}
+async function listElements() {
+  guard(); beginControl();
+  const r = await ps({ op: 'elements', max: 150 });
+  lastElements = r.items || [];
+  const sc = lastScale || 1;
+  const lines = lastElements.map((e, i) => `${i + 1}. [${e.t}] ${e.n || '(без имени)'} @ ${Math.round(e.x * sc)},${Math.round(e.y * sc)}`);
+  return `Active window: ${r.window || '?'}\n` + (lines.join('\n') || '(no interactive elements found — use screenshot)') + '\nUse click_element with index or name.';
+}
+
 function action(text, ok = true) { H.send('bridge:action', { text, ok }); }
 
 async function handle(cmd, args) {
@@ -148,7 +262,7 @@ async function handle(cmd, args) {
       const kind = (args[2] || 'left').toLowerCase();
       await ps({ op: 'click', x: real(args[0]), y: real(args[1]), button: kind === 'right' ? 'right' : 'left', double: kind === 'double' });
       action(`${kind === 'double' ? 'Двойной клик' : kind === 'right' ? 'Правый клик' : 'Клик'} ${args[0]},${args[1]}`);
-      await sleep(250);
+      await sleep(60);
       return 'clicked';
     }
     case 'scroll': {
@@ -182,7 +296,7 @@ async function handle(cmd, args) {
         if (hasEsc) { await sleep(100); try { globalShortcut.register('Escape', () => stopControl('esc')); } catch {} }
       }
       action('Нажал ' + combo);
-      await sleep(150);
+      await sleep(50);
       return 'pressed ' + combo;
     }
     case 'wait': { const ms = Math.min(15000, num(args[0] ?? 1000, 'ms')); await sleep(ms); return 'waited'; }
@@ -319,23 +433,35 @@ function setBrowserMcp(enabled) {
     fs.writeFileSync(f, JSON.stringify(v, null, 2));
   };
 
+  const s = H.getSettings();
   const mcp = readJ(mcpFile);
   mcp.mcpServers = mcp.mcpServers || {};
-  if (enabled) {
-    mcp.mcpServers[MCP_NAME] = isWin
-      ? { command: 'cmd', args: ['/c', 'npx', '-y', 'chrome-devtools-mcp@latest', `--browser-url=http://127.0.0.1:${BROWSER_PORT}`] }
-      : { command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest', `--browser-url=http://127.0.0.1:${BROWSER_PORT}`] };
-  } else delete mcp.mcpServers[MCP_NAME];
-  writeJ(mcpFile, mcp);
-
   const st = readJ(setFile);
   st.permissions = st.permissions || {};
   const allow = new Set(st.permissions.allow || []);
-  const rule = `mcp(${MCP_NAME}/*)`;
-  if (enabled) allow.add(rule); else allow.delete(rule);
+  const unpacked = p => p.replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+  // browser: chrome-devtools-mcp bundled inside Stella, started with Stella's own Node (no npx download)
+  const browserOn = enabled === undefined ? !!s.browserControl : enabled;
+  if (browserOn) {
+    let script = null;
+    try { script = unpacked(require.resolve('chrome-devtools-mcp/package.json').replace(/package\.json$/, path.join('out', 'Default', 'gen', 'src', 'bin', 'chrome-devtools-mcp.js'))); } catch {}
+    const flags = [`--browserUrl=http://127.0.0.1:${BROWSER_PORT}`, '--categoryPerformance=false', '--categoryEmulation=false', '--categoryMemory=false', '--categoryNetwork=false',
+      '--screenshotFormat=jpeg', '--screenshotQuality=70', '--screenshotMaxWidth=1280', '--pageIdRouting=false', '--no-usage-statistics'];
+    mcp.mcpServers[MCP_NAME] = script && fs.existsSync(script)
+      ? { command: process.execPath, args: [script, ...flags], env: { ELECTRON_RUN_AS_NODE: '1' } }
+      : (isWin ? { command: 'cmd', args: ['/c', 'npx', '-y', 'chrome-devtools-mcp@1.13.0', ...flags] } : { command: 'npx', args: ['-y', 'chrome-devtools-mcp@1.13.0', ...flags] });
+    allow.add(`mcp(${MCP_NAME}/*)`);
+  } else { delete mcp.mcpServers[MCP_NAME]; allow.delete(`mcp(${MCP_NAME}/*)`); }
+  // desktop: fast screen/mouse/keyboard tools (resident MCP process -> Stella's local bridge)
+  const desktopOn = !!s.screenControl || browserOn;
+  if (desktopOn) {
+    mcp.mcpServers['stella-desktop'] = { command: process.execPath, args: [unpacked(path.join(__dirname, 'mcp-desktop.js'))], env: { ELECTRON_RUN_AS_NODE: '1', STELLA_BRIDGE: path.join(base(), 'bridge.json') } };
+    allow.add('mcp(stella-desktop/*)');
+  } else { delete mcp.mcpServers['stella-desktop']; allow.delete('mcp(stella-desktop/*)'); }
   st.permissions.allow = [...allow];
+  writeJ(mcpFile, mcp);
   writeJ(setFile, st);
-  H.log('browser MCP', enabled ? 'registered' : 'removed');
+  H.log('MCP tools updated: browser=' + browserOn + ' desktop=' + desktopOn);
 }
 
 /* ================================================================== */
@@ -354,6 +480,7 @@ public static class StellaInput {
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public UNION u; }
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
   static void Send(INPUT i) { SendInput(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT))); }
   public static void Mouse(uint flags, int data) { INPUT i = new INPUT(); i.type = 0; i.u.mi.dwFlags = flags; i.u.mi.mouseData = (uint)data; Send(i); }
@@ -370,7 +497,15 @@ public static class StellaInput {
 }
 "@
 [StellaInput]::SetProcessDPIAware() | Out-Null
-function Shot($p, $max) {
+function SaveImg($bmp, $p, $fmt) {
+  if ($fmt -eq 'jpg') {
+    $enc = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+    $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+    $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), ([long]70)
+    $bmp.Save($p, $enc, $ep)
+  } else { $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png) }
+}
+function Shot($p, $max, $fmt) {
   $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
   $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -385,8 +520,8 @@ function Shot($p, $max) {
     $g2 = [System.Drawing.Graphics]::FromImage($r)
     $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $g2.DrawImage($bmp, 0, 0, $w, $h)
-    $r.Save($p, [System.Drawing.Imaging.ImageFormat]::Png); $g2.Dispose(); $r.Dispose()
-  } else { $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png) }
+    SaveImg $r $p $fmt; $g2.Dispose(); $r.Dispose()
+  } else { SaveImg $bmp $p $fmt }
   $g.Dispose(); $bmp.Dispose()
   return @{ w = $b.Width; h = $b.Height; scale = $s }
 }
@@ -398,7 +533,30 @@ while ($true) {
     $c = $line | ConvertFrom-Json
     $o = @{ ok = $true; id = $c.id }
     switch ($c.op) {
-      'shot'   { $r = Shot $c.path $c.max; $o.w = $r.w; $o.h = $r.h; $o.scale = $r.scale }
+      'shot'   { $r = Shot $c.path $c.max $c.fmt; $o.w = $r.w; $o.h = $r.h; $o.scale = $r.scale }
+      'elements' {
+        $AE = [System.Windows.Automation.AutomationElement]
+        $win = $null
+        try { $h = [StellaInput]::GetForegroundWindow(); if ($h -ne [IntPtr]::Zero) { $win = $AE::FromHandle($h) } } catch {}
+        if ($win -eq $null) { $win = $AE::RootElement }
+        $want = @('Button','Edit','Hyperlink','MenuItem','ListItem','TabItem','CheckBox','RadioButton','ComboBox','TreeItem','SplitButton','DataItem','MenuBarItem')
+        $items = New-Object System.Collections.ArrayList
+        $all = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Automation]::ControlViewCondition)
+        foreach ($e in $all) {
+          if ($items.Count -ge $c.max) { break }
+          try { $cur = $e.Current } catch { continue }
+          if ($cur.IsOffscreen -or -not $cur.IsEnabled) { continue }
+          $t = $cur.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+          if ($want -notcontains $t) { continue }
+          $nm = [string]$cur.Name
+          if (-not $nm -and $t -ne 'Edit') { continue }
+          $r = $cur.BoundingRectangle
+          if ($r.IsEmpty -or $r.Width -lt 3 -or $r.Height -lt 3) { continue }
+          if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
+          [void]$items.Add(@{ n = $nm; t = $t; x = [int]($r.X + $r.Width / 2); y = [int]($r.Y + $r.Height / 2) })
+        }
+        $o.items = @($items); $o.window = [string]$win.Current.Name
+      }
       'move'   { [StellaInput]::SetCursorPos($c.x, $c.y) | Out-Null }
       'click'  {
         [StellaInput]::SetCursorPos($c.x, $c.y) | Out-Null; Start-Sleep -Milliseconds 70
@@ -421,7 +579,7 @@ while ($true) {
       default  { throw "unknown op" }
     }
   } catch { $o = @{ ok = $false; id = $(if ($c) { $c.id } else { 0 }); error = $_.Exception.Message } }
-  [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress)); [Console]::Out.Flush()
+  [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 6)); [Console]::Out.Flush()
 }
 `;
 
@@ -446,7 +604,17 @@ function startWorker() {
   worker.stderr.on('data', d => H.log('input worker:', d.toString().trim().slice(0, 500)));
   worker.on('exit', () => { worker = null; for (const p of pending.values()) p.reject(new Error('input worker exited')); pending.clear(); });
 }
+// 1x1 jpeg for the simulated input layer
+const FAKE_JPG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+async function fakePs(cmd) {
+  await sleep(5);
+  if (cmd.op === 'shot') { fs.writeFileSync(cmd.path, Buffer.from(FAKE_JPG, 'base64')); return { w: 1920, h: 1080, scale: 1280 / 1920 }; }
+  if (cmd.op === 'elements') return { window: 'Блокнот', items: [{ n: 'Файл', t: 'MenuItem', x: 30, y: 40 }, { n: 'Сохранить', t: 'Button', x: 400, y: 600 }, { n: 'Текст', t: 'Edit', x: 900, y: 500 }] };
+  if (cmd.op === 'ispwd') return { pwd: false };
+  return {};
+}
 function ps(cmd) {
+  if (FAKE) return fakePs(cmd);
   if (!isWin) return Promise.reject(new Error('screen control works on Windows only'));
   startWorker();
   return new Promise((resolve, reject) => {
@@ -540,13 +708,16 @@ function agentNote() {
     'Stella (the app the user is chatting in) can act on the real desktop for you via this command:\n' +
     `- ${h} open "<file|folder|url>"  — open it on the user's screen with the default app (e.g. .pptx in WPS Office, a folder in Explorer).\n`;
   if (s.browserControl) {
-    t += `- Browser: a visible Chrome on the user's screen is controlled with the "${MCP_NAME}" MCP tools (navigate, click, fill, screenshot...). ` +
-      `If those tools cannot connect, run ${h} browser "<url>" first, then retry.\n`;
+    t += `- Browser (FAST): a visible Chrome on the user's screen via the "${MCP_NAME}" MCP tools. Work from take_snapshot (page structure with uids) and click/fill by uid — ` +
+      'do NOT take screenshots unless you really need to see the visual. Use fill_form for several fields at once. ' +
+      'If the tools cannot connect, call stella-desktop "browser" with the URL first.\n';
   }
   if (s.screenControl) {
-    t += `- Screen control (real mouse/keyboard): ${h} screenshot  → saves a PNG of the screen and prints its path; VIEW that image, then use its pixel coordinates:\n` +
-      `  ${h} click X Y [left|right|double] · ${h} move X Y · ${h} scroll X Y N (N>0 down) · ${h} drag X1 Y1 X2 Y2 · ${h} type "text" · ${h} key ctrl+s · ${h} wait 1000\n` +
-      '  Take a new screenshot after each important action to check the result. Prefer the browser tools for web pages. Never type passwords.\n';
+    t += '- Screen control (FAST): use the "stella-desktop" MCP tools, not shell commands.\n' +
+      '  1) list_elements → buttons/fields of the active window by name; click_element {name} clicks without any screenshot (fastest).\n' +
+      '  2) screenshot returns the image directly. Every action (click, type_text, press_keys, scroll, click_element) accepts screenshot:true to get the new screen in the SAME call — use it instead of a separate screenshot.\n' +
+      '  3) actions {steps:[...]} runs several steps in one call, e.g. [{"action":"click","x":100,"y":200},{"action":"type_text","text":"hi","enter":true}].\n' +
+      '  Be decisive: chain steps, avoid re-checking after trivial actions. Never type passwords.\n';
   }
   t += 'Never tell the user you cannot show windows because of isolation — use these commands.\n\n';
   return t;

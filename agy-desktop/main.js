@@ -792,6 +792,7 @@ ipcMain.handle('control:browser', async (_e, on) => {
 });
 ipcMain.handle('control:screen', (_e, on) => {
   const s = getSettings(); s.screenControl = !!on; writeJson(settingsFile(), s);
+  try { control.setBrowserMcp(); } catch (e) { log('mcp update', e.message); }
   if (!on) control.stopControl('disabled');
   return { ok: true };
 });
