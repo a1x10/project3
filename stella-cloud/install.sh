@@ -17,13 +17,14 @@ command -v apt-get >/dev/null || { echo "This installer supports Ubuntu/Debian (
 
 say "System packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q curl ca-certificates git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https gnupg
+APT="apt-get -o DPkg::Lock::Timeout=600"
+$APT update -q
+$APT install -y -q curl ca-certificates git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https gnupg
 
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
   say "Node.js 22"
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y -q nodejs
+  $APT install -y -q nodejs
 fi
 
 say "Stella Cloud code -> $APP"
@@ -102,7 +103,13 @@ fi
 if ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -q && apt-get install -y -q caddy
+  $APT update -q && $APT install -y -q caddy
+fi
+# ports 80/443 must be free for Caddy (Let's Encrypt)
+BUSY=$(ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null | grep -v caddy || true)
+if [ -n "$BUSY" ]; then
+  echo "ВНИМАНИЕ: порты 80/443 уже заняты другой программой:"; echo "$BUSY"
+  echo "Caddy не сможет выдать HTTPS. Освободите порты (или настройте свой веб-сервер проксировать на 127.0.0.1:$PORT) и запустите установку ещё раз."
 fi
 cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
