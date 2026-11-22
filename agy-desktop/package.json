@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^5.5.0",
+    "ws": "^8.23.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
@@ -31,6 +32,8 @@
       "main.js",
       "preload.js",
       "control.js",
+      "mcp-whatsapp.js",
+      "cloud.js",
       "renderer/**",
       "package.json",
       "!node_modules/node-pty/build/**",
@@ -41,7 +44,8 @@
       "!**/*.pdb"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "mcp-whatsapp.js"
     ],
     "npmRebuild": false,
     "nodeGypRebuild": false,

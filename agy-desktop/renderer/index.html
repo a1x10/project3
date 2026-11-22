@@ -73,6 +73,7 @@
         <svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 1.5L10 19z"/></svg>
         <span>Управление экраном</span><input type="checkbox" id="tg-screen"><i></i>
       </label>
+      <button class="side-link" id="cloud-open"><span class="dot" id="cloud-dot"></span><span id="cloud-label">Облако</span></button>
       <button class="side-link" id="toggle-term">
         <svg viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></svg> Терминал
       </button>
@@ -84,6 +85,7 @@
     <header id="topbar">
       <div id="chat-title">Новый чат</div>
       <div class="top-actions">
+        <button class="btn tiny" id="to-server" hidden title="Перенести этот чат на сервер">↗ На сервер</button>
         <span class="chip" id="admin-chip" title="Приложение запущено от имени администратора">🛡 Admin</span>
       </div>
     </header>
@@ -151,6 +153,26 @@
       <div class="hint muted small">Enter — отправить · Shift+Enter — новая строка · команды, начинающиеся с <code>/</code>, выполняются как команды</div>
     </div>
   </main>
+
+  <!-- Stella Cloud -->
+  <div id="cloud-modal" class="modal-bg" hidden>
+    <div class="modal">
+      <div class="row"><h3>Stella Cloud</h3><span class="spacer"></span><button class="icon-btn" id="cloud-close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <p class="muted small">Подключите Stella к своему серверу: агент сможет продолжать работу без компьютера, а вы — следить и управлять с телефона. WhatsApp-инструменты тоже работают через сервер.</p>
+      <div id="cloud-form">
+        <input id="cloud-url" placeholder="Адрес сервера, например 1-2-3-4.sslip.io">
+        <input id="cloud-user" placeholder="Имя аккаунта" autocapitalize="none">
+        <input id="cloud-pass" type="password" placeholder="Пароль">
+        <button class="btn primary wide" id="cloud-login">Войти</button>
+        <p class="muted small">Нет аккаунта? Создайте его в приложении на телефоне (адрес сервера → «Регистрация»).</p>
+      </div>
+      <div id="cloud-in" hidden>
+        <p id="cloud-who"></p>
+        <button class="btn wide" id="cloud-logout">Отключить</button>
+      </div>
+      <p class="err-line" id="cloud-err"></p>
+    </div>
+  </div>
 
   <!-- hidden terminal drawer -->
   <div id="term-drawer" class="hidden">

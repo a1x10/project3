@@ -28,7 +28,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 body { overflow: hidden; }
 button { font: inherit; color: inherit; cursor: pointer; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.hidden { display: none !important; }
+.hidden, [hidden] { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
 .spacer { flex: 1; }
@@ -248,3 +248,13 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .side-toggle input:checked + i { background: var(--accent); }
 .side-toggle input:checked + i::after { transform: translateX(12px); }
 .side-toggle input:disabled + i { opacity: .5; }
+
+/* cloud modal */
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 60; }
+.modal { width: min(440px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 18px 20px; box-shadow: var(--shadow); }
+.modal .row { display: flex; align-items: center; }
+.modal h3 { margin: 0; }
+.modal input { width: 100%; margin: 6px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; outline: none; }
+.modal input:focus { border-color: var(--accent); }
+.modal .btn { margin-top: 8px; }
+.err-line { color: #d0463b; font-size: 13px; min-height: 1em; margin: 8px 0 0; }

@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const control = require('./control');
+const cloud = require('./cloud');
 
 // show "Stella" in dialogs / taskbar, but keep the old data folder (chats, settings)
 try {
@@ -263,6 +264,11 @@ app.whenReady().then(() => { log('ready'); disableAgySandbox();
     isBusy: () => running.size > 0,
     onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
   });
+  cloud.init({
+    log, send, getSettings,
+    saveSettings: (patch) => { Object.assign(getSettings(), patch); writeJson(settingsFile(), getSettings()); },
+    readJsonLoose: control.readJsonLoose
+  });
   createWindow(); })
   .catch(e => { log('ready error', e.stack); dialog.showErrorBox('Stella', String(e.stack || e)); });
 app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d)));
@@ -436,12 +442,18 @@ function disableAgySandbox() {
   } catch (e) { log('disableAgySandbox skipped:', e.message); }
 }
 
+function agentNotes() {
+  const base = control.agentNote();
+  const extra = cloud.agentNote();
+  return base + (extra ? '[Stella note — more tools]\n' + extra + '\n' : '');
+}
+
 function runPrompt({ reqId, prompt, conversationId, continueLast }) {
   const s = getSettings();
   control.newPrompt();
   // stream-json (default) = live steps + text deltas (documented: init / step_update / result)
   const fmt = ['json', 'text'].includes(s.outputFormat) ? s.outputFormat : 'stream-json';
-  const args = ['-p', control.agentNote() + prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
+  const args = ['-p', agentNotes() + prompt, '--output-format', fmt, '--print-timeout', '30m', ...modeArgs(s)];
   if (conversationId) args.push('--conversation', conversationId);
   else if (continueLast) args.push('-c');
 
@@ -752,6 +764,12 @@ ipcMain.on('chat:send', (_e, req) => runPrompt(req));
 ipcMain.on('chat:stop', (_e, reqId) => { const c = running.get(reqId); if (c) treeKill(c.pid); });
 
 ipcMain.handle('settings:get', () => getSettings());
+ipcMain.handle('cloud:login', async (_e, { url, user, pass }) => { try { return Object.assign({ ok: true }, await cloud.login(url, user, pass)); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('cloud:logout', () => { cloud.logout(); return { ok: true }; });
+ipcMain.handle('cloud:status', () => cloud.getStatus());
+ipcMain.on('cloud:sync', (_e, chats) => cloud.syncChats(chats));
+ipcMain.handle('cloud:chat', (_e, { chat, extra }) => cloud.sendChat(chat, extra || {}));
+ipcMain.on('cloud:ev', (_e, ev) => cloud.event(ev));
 ipcMain.handle('control:browser', async (_e, on) => {
   const s = getSettings();
   try {

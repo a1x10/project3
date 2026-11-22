@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1b19" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stella">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/styles.css">
+<title>Stella</title>
+</head>
+<body>
+
+<!-- ============ AUTH ============ -->
+<section id="auth" class="screen">
+  <div class="auth-card">
+    <img src="/icon.png" class="auth-logo" alt="">
+    <h1>Stella</h1>
+    <p class="muted">Ваш агент — на компьютере, на сервере и в телефоне.</p>
+    <div class="seg" id="auth-seg">
+      <button data-mode="login" class="on">Вход</button>
+      <button data-mode="register">Регистрация</button>
+    </div>
+    <form id="auth-form">
+      <input id="auth-user" autocomplete="username" autocapitalize="none" placeholder="Имя (латиница)" required>
+      <input id="auth-pass" type="password" autocomplete="current-password" placeholder="Пароль (мин. 8 символов)" required>
+      <input id="auth-invite" autocomplete="off" autocapitalize="none" placeholder="Код приглашения" hidden>
+      <button class="btn primary wide" id="auth-btn">Войти</button>
+      <p id="auth-err" class="err-text"></p>
+      <p class="muted small" id="auth-note"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ============ APP ============ -->
+<section id="app" class="screen">
+  <!-- list views -->
+  <div id="views">
+    <div class="view" id="v-server">
+      <header class="bar"><h2>Сервер</h2><span class="spacer"></span><button class="icon-btn" id="new-server-chat" aria-label="Новый чат"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></header>
+      <div class="hint-card" id="agy-missing" hidden>На сервере не найден Antigravity CLI. Запустите <code>install.sh</code> ещё раз.</div>
+      <ul class="chat-list" id="server-list"></ul>
+      <div class="empty-list" id="server-empty">Агент на сервере работает, даже когда компьютер выключен.<br>Нажмите <b>+</b>, чтобы дать задачу.</div>
+    </div>
+
+    <div class="view" id="v-pc">
+      <header class="bar"><h2>Компьютер</h2><span class="spacer"></span><span class="pill" id="pc-pill">не в сети</span></header>
+      <div class="hint-card" id="pc-offline">Откройте Stella на компьютере и войдите в этот аккаунт (Stella → «Облако»), чтобы видеть и управлять агентом на ПК.</div>
+      <ul class="chat-list" id="pc-list"></ul>
+      <button class="btn wide" id="new-pc-chat" hidden>Новая задача на компьютере</button>
+    </div>
+
+    <div class="view" id="v-wa">
+      <header class="bar"><h2>WhatsApp</h2><span class="spacer"></span><span class="pill" id="wa-pill">отключён</span></header>
+      <div id="wa-connect" class="wa-box">
+        <p class="muted">Подключите свой WhatsApp, чтобы агент мог писать контактам по вашей просьбе и пересылать вам ответы.</p>
+        <p class="warn-text small">Неофициальное подключение (как WhatsApp Web). WhatsApp может заблокировать номер за автоматизацию — используйте на свой риск.</p>
+        <button class="btn primary wide" id="wa-start">Подключить по QR-коду</button>
+        <div id="wa-qr" hidden><img id="wa-qr-img" alt="QR"><p class="small muted">WhatsApp на телефоне → Настройки → Связанные устройства → Привязка устройства. QR можно отсканировать с экрана другого устройства.</p></div>
+      </div>
+      <div id="wa-main" hidden>
+        <input id="wa-search" class="search" placeholder="Поиск чата…">
+        <p class="small muted pad">Автоответчик: агент сам отвечает этому контакту в вашем стиле. По умолчанию выключен.</p>
+        <ul class="chat-list" id="wa-list"></ul>
+        <h3 class="sub">Журнал автоответчика</h3>
+        <ul class="log-list" id="wa-log"></ul>
+        <button class="btn wide danger-outline" id="wa-logout">Отвязать WhatsApp</button>
+      </div>
+    </div>
+
+    <div class="view" id="v-more">
+      <header class="bar"><h2>Ещё</h2></header>
+      <div class="card">
+        <h3>Агент на сервере</h3>
+        <p class="small muted">Сначала один раз войдите в Google в терминале агента: откройте ссылку, которую он покажет, и вставьте код обратно.</p>
+        <button class="btn wide" id="open-term">Открыть терминал агента</button>
+      </div>
+      <div class="card">
+        <h3>Разрешения агента на сервере</h3>
+        <select id="mode-select">
+          <option value="yolo">Полный автомат (рекомендуется для сервера)</option>
+          <option value="accept-edits">Только правки файлов</option>
+          <option value="plan">Только план</option>
+          <option value="default">Спрашивать (действия будут отклоняться)</option>
+        </select>
+        <p class="small muted">На сервере некому подтверждать действия, поэтому «Спрашивать» = агент ничего не сможет сделать.</p>
+      </div>
+      <div class="card">
+        <h3>Уведомления</h3>
+        <button class="btn wide" id="notif-btn">Включить уведомления</button>
+        <p class="small muted" id="install-hint">Добавьте Stella на главный экран: в браузере «Поделиться» → «На экран Домой» (iPhone) или меню ⋮ → «Установить приложение» (Android).</p>
+      </div>
+      <div class="card">
+        <h3>Аккаунт</h3>
+        <p class="small" id="acc-name"></p>
+        <button class="btn wide danger-outline" id="logout">Выйти</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- chat view (server or pc) -->
+  <div id="chat" hidden>
+    <header class="bar chat-bar">
+      <button class="icon-btn" id="chat-back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="chat-head"><div id="chat-title">Чат</div><div class="small muted" id="chat-where"></div></div>
+      <button class="btn tiny" id="chat-transfer">→ Сервер</button>
+    </header>
+    <div id="messages"></div>
+    <form id="composer">
+      <textarea id="input" rows="1" placeholder="Напишите задачу…"></textarea>
+      <button id="send-btn" class="round-btn" aria-label="Отправить">
+        <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+      </button>
+    </form>
+  </div>
+
+  <!-- terminal -->
+  <div id="term-view" hidden>
+    <header class="bar dark">
+      <button class="icon-btn" id="term-back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h2>Терминал агента</h2><span class="spacer"></span>
+      <button class="btn tiny" id="term-restart">Перезапуск</button>
+    </header>
+    <div id="term"></div>
+    <div class="term-keys"><button data-k="\r">Enter</button><button data-k="\x1b">Esc</button><button data-k="\t">Tab</button><button data-k="\x1b[A">↑</button><button data-k="\x1b[B">↓</button><button id="term-paste">Вставить</button></div>
+  </div>
+
+  <nav id="tabs">
+    <button data-tab="server" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span>Сервер</span><i class="badge" id="b-server"></i></button>
+    <button data-tab="pc"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>Компьютер</span><i class="dot-on" id="b-pc"></i></button>
+    <button data-tab="wa"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>WhatsApp</span><i class="badge" id="b-wa"></i></button>
+    <button data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Ещё</span></button>
+  </nav>
+  <div id="toast" hidden></div>
+</section>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/markdown.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

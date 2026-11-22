@@ -215,7 +215,7 @@ async function loadChats() {
   renderChatList(); renderMessages();
 }
 let saveT = null;
-function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => api.saveChats(JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => (k === '_view' || k === '_open' || k === '_allSteps') ? undefined : v))), 300); }
+function saveChats() { clearTimeout(saveT); saveT = setTimeout(() => { const clean = JSON.parse(JSON.stringify(state.chats.slice(0, 200), (k, v) => (k === '_view' || k === '_open' || k === '_allSteps') ? undefined : v)); api.saveChats(clean); api.cloudSync(clean); renderTransferBtn(); }, 300); }
 
 function newChat() {
   const existing = state.chats.find(c => !c.messages.length);
@@ -397,7 +397,7 @@ function scrollDown(force) {
 /* ================================================================== */
 /* Sending                                                             */
 /* ================================================================== */
-function sendText(raw) {
+function sendText(raw, opts = {}) {
   let text = (raw ?? $('#input').value).trim();
   if (!text && !state.attachments.length) return;
   if (state.busy) return;
@@ -417,15 +417,17 @@ function sendText(raw) {
   if (state.attachments.length) text = state.attachments.map(p => '@' + (p.includes(' ') ? `"${p}"` : p)).join(' ') + '\n' + text;
   state.attachments = []; renderAttachments();
 
-  const user = { id: uid(), role: 'user', text };
+  const user = { id: uid(), role: 'user', text: opts.display || text };
   const agent = { id: uid(), role: 'agent', text: '', tools: [], busy: true, started: Date.now(), status: 'Думает…', log: '' };
   c.messages.push(user, agent);
-  if (c.title === 'Новый чат') c.title = text.replace(/^@\S+\s*/gm, '').split('\n')[0].slice(0, 48) || 'Чат';
+  if (c.title === 'Новый чат') c.title = (opts.display || text).replace(/^@\S+\s*/gm, '').split('\n')[0].slice(0, 48) || 'Чат';
   $('#input').value = ''; autoGrow();
   renderChatList(); renderMessages();
 
   const reqId = uid();
   state.busy = { reqId, chatId: c.id, msg: agent, gotDelta: false };
+  c.updated = Date.now();
+  api.cloudEv({ type: 'start', chatId: c.id, started: true, messages: [user, agent] });
   setStatus('busy', 'агент работает…');
   updateSendBtn();
   api.send({
@@ -451,12 +453,13 @@ api.onEvent(ev => {
     case 'tool': m.tools.push({ name: ev.name, detail: ev.detail, error: ev.error, secs: ev.secs }); break;
     case 'denied': m.denied = m.denied || []; if (!m.denied.includes(ev.text)) m.denied.push(ev.text); break;
     case 'activity': m.status = ev.text; break;
-    case 'log': m.log = ((m.log || '') + ev.text).slice(-30000); updateActivity(m); return;
+    case 'log': m.log = ((m.log || '') + ev.text).slice(-30000); updateActivity(m); api.cloudEv({ chatId: b.chatId, msgId: m.id, type: 'log', text: ev.text }); return;
     case 'error': m.error = (m.error ? m.error + '\n' : '') + ev.text; break;
     case 'conversation': if (c) c.convId = ev.id; break;
     case 'auth-required': m.authRequired = true; break;
   }
   updateMsg(m);
+  if (['delta', 'final', 'tool', 'activity', 'error'].includes(ev.type)) api.cloudEv({ chatId: b.chatId, msgId: m.id, type: ev.type, text: ev.text, name: ev.name, detail: ev.detail, error: ev.error });
 });
 
 api.onBridgeAction(({ text, ok }) => {
@@ -495,6 +498,7 @@ api.onDone(({ reqId, code }) => {
   if (!b || b.reqId !== reqId) return;
   b.msg.busy = false;
   b.msg.duration = Math.round((Date.now() - (b.msg.started || Date.now())) / 1000);
+  api.cloudEv({ chatId: b.chatId, msgId: b.msg.id, type: 'done', duration: b.msg.duration });
   if (!b.msg.text && !b.msg.error && code !== 0) b.msg.error = 'Stella не смогла ответить (код ' + code + '). Откройте «Терминал» для подробностей.';
   updateMsg(b.msg);
   state.busy = null;
@@ -643,4 +647,82 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && state.voice) setVoice(false);
 });
 
+/* ================================================================== */
+/* Stella Cloud (server + phone)                                       */
+/* ================================================================== */
+let cloudState = { status: 'off' };
+function renderCloud() {
+  const st = cloudState.status;
+  const on = st !== 'off' && st !== 'error';
+  $('#cloud-dot').className = 'dot ' + (st === 'online' ? 'on' : on ? 'busy' : '');
+  $('#cloud-label').textContent = st === 'online' ? 'Облако · ' + cloudState.user : on ? 'Облако · подключение…' : 'Облако';
+  $('#cloud-form').hidden = on;
+  $('#cloud-in').hidden = !on;
+  $('#cloud-who').textContent = (cloudState.user || '') + ' @ ' + (cloudState.url || '').replace(/^https?:\/\//, '') + (st === 'online' ? ' · в сети' : ' · ' + st);
+  $('#cloud-err').textContent = cloudState.error || '';
+  renderTransferBtn();
+}
+function renderTransferBtn() {
+  const b = $('#to-server'); if (!b) return;
+  const c = state.chats.find(x => x.id === state.current);
+  b.hidden = !(cloudState.status === 'online' && c && c.messages.length && !state.busy);
+}
+api.onCloudStatus(s => { cloudState = s; renderCloud(); });
+api.cloudStatus().then(s => { cloudState = s; renderCloud(); });
+$('#cloud-open').onclick = () => { $('#cloud-modal').hidden = false; renderCloud(); };
+$('#cloud-close').onclick = () => { $('#cloud-modal').hidden = true; };
+$('#cloud-login').onclick = async () => {
+  $('#cloud-err').textContent = '';
+  $('#cloud-login').disabled = true;
+  const r = await api.cloudLogin($('#cloud-url').value, $('#cloud-user').value, $('#cloud-pass').value);
+  $('#cloud-login').disabled = false;
+  if (!r.ok) { $('#cloud-err').textContent = r.error; return; }
+  $('#cloud-pass').value = '';
+  cloudState = r; renderCloud();
+  saveChats();
+};
+$('#cloud-logout').onclick = async () => { await api.cloudLogout(); cloudState = { status: 'off' }; renderCloud(); };
+const plain = c => JSON.parse(JSON.stringify(c, (k, v) => k.startsWith('_') ? undefined : v));
+$('#to-server').onclick = async () => {
+  const c = chat(); if (!c || state.busy) return;
+  if (!confirm('Перенести этот чат на сервер? Агент на сервере продолжит работу, даже если компьютер выключат. Следить можно с телефона.')) return;
+  const ok = await api.cloudChat(plain(c), { forTransfer: true, continueText: '' });
+  if (!ok) return alert('Нет связи с сервером');
+  c.messages.push({ id: uid(), role: 'agent', text: '↗ **Перенесено на сервер.** Агент продолжает там — следите в приложении Stella на телефоне.', tools: [], note: true });
+  renderMessages(); saveChats();
+};
+
+// commands from the phone
+api.onCloudCommand(async m => {
+  if (m.t === 'pc.run') {
+    if (state.busy) return;
+    if (m.chatId && state.chats.some(c => c.id === m.chatId)) state.current = m.chatId; else newChat();
+    renderChatList(); renderMessages();
+    sendText(m.text, { display: '📱 ' + m.text });
+  } else if (m.t === 'pc.stop') {
+    if (state.busy && (!m.chatId || state.busy.chatId === m.chatId)) api.stop(state.busy.reqId);
+  } else if (m.t === 'pc.export') {
+    const c = state.chats.find(x => x.id === m.chatId); if (!c) return;
+    await api.cloudChat(plain(c), { forTransfer: !!m.forTransfer, continueText: m.continueText || '' });
+    if (m.forTransfer) { c.messages.push({ id: uid(), role: 'agent', text: '↗ **Перенесено на сервер** с телефона. Агент продолжает там.', tools: [], note: true }); if (c.id === state.current) renderMessages(); saveChats(); }
+  } else if (m.t === 'pc.import') {
+    if (state.busy) return;
+    const c = { id: uid(), title: (m.chat.title || 'Чат') + ' ↙', convId: null, messages: [], created: Date.now() };
+    state.chats.unshift(c); state.current = c.id;
+    const history = (m.chat.messages || []).slice(-14).map(x => (x.role === 'user' ? 'USER: ' : 'ASSISTANT: ') + String(x.text).slice(0, 2500)).join('\n\n');
+    c.messages = (m.chat.messages || []).map(x => ({ id: uid(), role: x.role === 'user' ? 'user' : 'agent', text: x.text, tools: [] }));
+    renderChatList(); renderMessages();
+    const prompt = 'Context — this conversation started on the user\'s server and was moved to this PC:\n' + history + '\n\nNow continue. ' + (m.continueText || 'Продолжи работу над задачей с того места, где остановились. Если всё сделано — кратко отчитайся.');
+    sendText(prompt, { display: '↙ Продолжи здесь, на компьютере' });
+  }
+});
+api.onCloudWaReply(m => {
+  const c = state.chats.find(x => x.id === (m.origin && m.origin.chatId)); if (!c) return;
+  c.messages.push({ id: uid(), role: 'agent', text: `📩 **${m.name}** ответил(а) в WhatsApp:\n\n> ${String(m.text).replace(/\n/g, '\n> ')}`, tools: [], note: true });
+  if (c.id === state.current) renderMessages();
+  saveChats();
+  try { new Notification(m.name + ' ответил(а)', { body: m.text }); } catch {}
+});
+
+setInterval(() => { try { renderTransferBtn(); } catch {} }, 1500);
 if (api) boot().catch(e => fatal(e.stack || e));
