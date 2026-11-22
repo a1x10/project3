@@ -73,6 +73,17 @@ EOF
 fi
 INVITE=$(grep '^STELLA_INVITE=' "$ENVF" | cut -d= -f2)
 
+# --- free local port for Stella (another program may already use 8787) ---
+systemctl stop stella-cloud 2>/dev/null || true
+port_busy() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
+PORT=$(grep '^PORT=' "$ENVF" | cut -d= -f2); PORT=${PORT:-8787}
+if port_busy "$PORT"; then
+  echo "Порт $PORT занят другой программой — ищу свободный…"
+  for p in $(seq 18787 18887); do if ! port_busy "$p"; then PORT=$p; break; fi; done
+  sed -i "s/^PORT=.*/PORT=$PORT/" "$ENVF"
+  echo "Stella будет работать на 127.0.0.1:$PORT"
+fi
+
 say "systemd service"
 cat > /etc/systemd/system/stella-cloud.service <<EOF
 [Unit]
@@ -92,32 +103,70 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now stella-cloud
+systemctl enable stella-cloud >/dev/null
 systemctl restart stella-cloud
+for i in $(seq 1 20); do curl -fsS "http://127.0.0.1:$PORT/api/info" >/dev/null 2>&1 && break; sleep 1; done
+if curl -fsS "http://127.0.0.1:$PORT/api/info" >/dev/null 2>&1; then echo "Stella запущена на 127.0.0.1:$PORT"
+else echo "ВНИМАНИЕ: Stella не отвечает. Логи: journalctl -u stella-cloud -n 50 --no-pager"; fi
 
-say "HTTPS (Caddy)"
 if [ -z "${DOMAIN:-}" ]; then
   IP=$(curl -fsS4 --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
   DOMAIN="${IP//./-}.sslip.io"
 fi
-if ! command -v caddy >/dev/null; then
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  $APT update -q && $APT install -y -q caddy
-fi
-# ports 80/443 must be free for Caddy (Let's Encrypt)
-BUSY=$(ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null | grep -v caddy || true)
-if [ -n "$BUSY" ]; then
-  echo "ВНИМАНИЕ: порты 80/443 уже заняты другой программой:"; echo "$BUSY"
-  echo "Caddy не сможет выдать HTTPS. Освободите порты (или настройте свой веб-сервер проксировать на 127.0.0.1:$PORT) и запустите установку ещё раз."
-fi
-cat > /etc/caddy/Caddyfile <<EOF
+
+WEB=$(ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null || true)
+if echo "$WEB" | grep -q nginx; then
+  # ---------- nginx already serves 80/443: add a separate site for Stella + certbot ----------
+  say "HTTPS через ваш nginx ($DOMAIN)"
+  if systemctl is-enabled caddy >/dev/null 2>&1; then systemctl disable --now caddy >/dev/null 2>&1 || true; fi
+  if [ -d /etc/nginx/sites-available ]; then CONF=/etc/nginx/sites-available/stella-cloud.conf; else CONF=/etc/nginx/conf.d/stella-cloud.conf; fi
+  cat > "$CONF" <<EOF
+# Stella Cloud — only for $DOMAIN, other sites are not touched
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+    client_max_body_size 20m;
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+EOF
+  if [ -d /etc/nginx/sites-enabled ]; then ln -sf "$CONF" /etc/nginx/sites-enabled/stella-cloud.conf; fi
+  nginx -t && systemctl reload nginx
+  command -v certbot >/dev/null || $APT install -y -q certbot python3-certbot-nginx
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring \
+    || echo "ВНИМАНИЕ: сертификат не выдан. Проверьте, что порт 80 открыт снаружи, и запустите установку ещё раз."
+  nginx -t && systemctl reload nginx
+else
+  # ---------- Caddy (automatic HTTPS) ----------
+  say "HTTPS (Caddy)"
+  if [ -n "$WEB" ] && ! echo "$WEB" | grep -q caddy; then
+    echo "ВНИМАНИЕ: порты 80/443 заняты другой программой:"; echo "$WEB"
+    echo "Настройте её проксировать $DOMAIN на 127.0.0.1:$PORT (с поддержкой WebSocket) или освободите порты."
+  fi
+  if ! command -v caddy >/dev/null; then
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
+    $APT update -q && $APT install -y -q caddy
+  fi
+  cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
   encode gzip
   reverse_proxy 127.0.0.1:$PORT
 }
 EOF
-systemctl reload caddy || systemctl restart caddy
+  systemctl enable caddy >/dev/null 2>&1 || true
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy
+fi
 if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 80/tcp; ufw allow 443/tcp; fi
 
 sleep 2
