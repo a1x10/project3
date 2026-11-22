@@ -764,7 +764,25 @@ ipcMain.on('chat:send', (_e, req) => runPrompt(req));
 ipcMain.on('chat:stop', (_e, reqId) => { const c = running.get(reqId); if (c) treeKill(c.pid); });
 
 ipcMain.handle('settings:get', () => getSettings());
-ipcMain.handle('cloud:login', async (_e, { url, user, pass, invite, mode }) => { try { return Object.assign({ ok: true }, await cloud.login(url, user, pass, invite, mode)); } catch (e) { return { ok: false, error: e.message }; } });
+// Cloudflare Turnstile for the PC app: a small window shows the server's captcha page and hands the token back via its title
+function captchaWindow(base) {
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({ width: 420, height: 320, parent: win, modal: true, title: 'Проверка — Stella', autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true } });
+    let done = false;
+    const finish = t => { if (done) return; done = true; resolve(t); try { w.close(); } catch {} };
+    w.on('page-title-updated', (e, title) => { if (title.startsWith('STELLA_CAPTCHA:')) { e.preventDefault(); finish(title.slice(15) === 'none' ? '' : title.slice(15)); } });
+    w.on('closed', () => finish(null));
+    w.loadURL(base + '/captcha.html');
+  });
+}
+ipcMain.handle('cloud:login', async (_e, { url, user, pass, invite, mode, totp }) => {
+  try {
+    const info = await cloud.serverInfo(url);
+    let captcha = '';
+    if (info.turnstile) { captcha = await captchaWindow(info.url); if (captcha === null) return { ok: false, error: 'Проверка «Я не робот» не пройдена' }; }
+    return Object.assign({ ok: true }, await cloud.login(info.url, user, pass, invite, mode, totp, captcha));
+  } catch (e) { return { ok: false, error: e.message, need2fa: !!e.need2fa }; }
+});
 ipcMain.handle('cloud:pair', async () => { try { return Object.assign({ ok: true }, await cloud.pairQr()); } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('cloud:logout', () => { cloud.logout(); return { ok: true }; });
 ipcMain.handle('cloud:status', () => cloud.getStatus());

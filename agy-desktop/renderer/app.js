@@ -696,12 +696,13 @@ $('#cloud-logout').onclick = async () => {
 api.onCloudSignedOut(() => { $('#cloud-modal').hidden = true; showAccount('Сессия закончилась или аккаунт заблокирован — войдите снова'); });
 
 /* ---------- Stella account screen (required) ---------- */
-let accMode = 'login';
+let accMode = 'login', accFixed = false;
 async function showAccount(err) {
   const st = await api.cloudStatus();
   show('account');
   $('#acc-err').textContent = err || '';
   $('#acc-server').value = st.url ? st.url.replace(/^https?:\/\//, '') : '';
+  accFixed = !!st.fixedServer;
   $('#acc-server-row').hidden = st.fixedServer;
   $('#acc-server-fixed').hidden = !st.fixedServer;
   $('#acc-server-fixed').textContent = 'Сервер: ' + (st.url || '').replace(/^https?:\/\//, '');
@@ -712,19 +713,21 @@ document.querySelectorAll('#acc-seg button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#acc-seg button').forEach(x => x.classList.toggle('on', x === b));
   $('#acc-invite').hidden = accMode !== 'register';
   $('#acc-go').textContent = accMode === 'register' ? 'Создать аккаунт' : 'Войти';
+  $('#acc-pass').placeholder = accMode === 'register' ? 'Пароль (мин. 10 символов, не только цифры)' : 'Пароль';
   $('#acc-note').textContent = accMode === 'register' ? 'Код приглашения даёт владелец сервера. На сервере для вас создастся своё рабочее место и свой агент.' : '';
 });
 $('#acc-go').onclick = async () => {
   $('#acc-err').textContent = '';
   $('#acc-go').disabled = true;
-  const r = await api.cloudLogin($('#acc-server').value, $('#acc-user').value.trim(), $('#acc-pass').value, $('#acc-invite').value.trim(), accMode);
+  const r = await api.cloudLogin(accFixed ? '' : $('#acc-server').value, $('#acc-user').value.trim(), $('#acc-pass').value, $('#acc-invite').value.trim(), accMode, $('#acc-totp').value.trim());
   $('#acc-go').disabled = false;
+  if (r.need2fa) { $('#acc-totp').hidden = false; $('#acc-totp').focus(); }
   if (!r.ok) { $('#acc-err').textContent = r.error; return; }
-  $('#acc-pass').value = '';
+  $('#acc-pass').value = ''; $('#acc-totp').value = ''; $('#acc-totp').hidden = true;
   cloudState = r; renderCloud();
   show('login');
 };
-['#acc-user', '#acc-pass', '#acc-invite', '#acc-server'].forEach(sel => $(sel).addEventListener('keydown', e => { if (e.key === 'Enter') $('#acc-go').click(); }));
+['#acc-user', '#acc-pass', '#acc-invite', '#acc-server', '#acc-totp'].forEach(sel => $(sel).addEventListener('keydown', e => { if (e.key === 'Enter') $('#acc-go').click(); }));
 const plain = c => JSON.parse(JSON.stringify(c, (k, v) => k.startsWith('_') ? undefined : v));
 $('#to-server').onclick = async () => {
   const c = chat(); if (!c || state.busy) return;

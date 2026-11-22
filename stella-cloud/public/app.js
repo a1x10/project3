@@ -25,6 +25,7 @@ document.querySelectorAll('#auth-seg button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#auth-seg button').forEach(x => x.classList.toggle('on', x === b));
   $('#auth-btn').textContent = authMode === 'login' ? 'Войти' : 'Создать аккаунт';
   $('#auth-pass').autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
+  $('#auth-pass').placeholder = authMode === 'login' ? 'Пароль' : 'Пароль (мин. 10 символов, не только цифры)';
   $('#auth-note').textContent = authMode === 'register' ? 'Для аккаунта на сервере создаётся отдельное рабочее место со своим агентом.' : '';
   $('#auth-invite').hidden = !(authMode === 'register' && S.signup === 'invite');
 });
@@ -33,9 +34,10 @@ $('#auth-form').onsubmit = async e => {
   $('#auth-err').textContent = '';
   $('#auth-btn').disabled = true;
   try {
-    const r = await fetch('/api/' + authMode, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: $('#auth-user').value, password: $('#auth-pass').value, invite: $('#auth-invite').value }) });
+    const r = await fetch('/api/' + authMode, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: $('#auth-user').value, password: $('#auth-pass').value, invite: $('#auth-invite').value, totp: $('#auth-totp').value, captcha: captchaToken() }) });
     const j = await r.json();
-    if (!r.ok || j.error) throw new Error(j.error || 'Ошибка');
+    if (j.need2fa) { $('#auth-totp').hidden = false; $('#auth-totp').focus(); }
+    if (!r.ok || j.error) { resetCaptcha(); throw new Error(j.error || 'Ошибка'); }
     S.token = j.token; localStorage.setItem('stella.token', j.token);
     start();
   } catch (err) { $('#auth-err').textContent = err.message; }
@@ -62,6 +64,7 @@ function onMsg(m) {
       S.lists.server = m.serverChats; S.lists.pc = m.pcChats; S.wa = m.wa;
       $('#acc-name').textContent = 'Аккаунт: ' + m.user.name + (m.user.admin ? ' (администратор)' : '');
       $('#admin-card').hidden = !m.user.admin;
+      send({ t: 'security.get' });
       if (m.user.admin) send({ t: 'admin.list' });
       $('#shared-key-note').hidden = !m.sharedKey; $('#google-note').hidden = !!m.sharedKey;
       $('#mode-select').value = S.settings.mode || 'yolo';
@@ -88,6 +91,8 @@ function onMsg(m) {
     case 'wa.reply': toast(`📩 ${m.name}: ${m.text.slice(0, 80)}`, 6000); break;
     case 'wa.sent': if (!m.auto) toast(`Отправлено ${m.name}: ${m.text.slice(0, 60)}`); break;
     case 'admin.state': renderAdmin(m); break;
+    case 'security': renderSecurity(m); break;
+    case 'security.2fa.qr': $('#sec-2fa-setup').hidden = false; $('#sec-qr').src = m.qr; $('#sec-secret').textContent = m.secret; $('#sec-code').focus(); break;
     case 'error': toast(m.text, 5000); if (S.open) { S.open.pendingNew = false; } break;
   }
 }
@@ -377,10 +382,56 @@ async function handleHash() {
   return false;
 }
 
+/* ================================================================== */
+/* security: 2FA, sessions, password                                   */
+/* ================================================================== */
+function deviceName(s) {
+  const ua = s.ua || '';
+  const d = /Electron|Stella/i.test(ua) || s.kind === 'pc' ? 'Компьютер (Stella)' : /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Устройство';
+  return d + (s.kind === 'qr' ? ' · по QR' : '');
+}
+function renderSecurity(m) {
+  const box = $('#sec-2fa');
+  if (m.twofa) {
+    box.innerHTML = '<p class="small">✅ Двухфакторная защита <b>включена</b>. Без кода из приложения войти нельзя.</p><button class="btn wide" id="sec-off">Отключить 2FA</button>';
+    $('#sec-off').onclick = () => { const pw = prompt('Пароль от аккаунта:'); if (!pw) return; const code = prompt('Код из приложения-аутентификатора:'); if (code) send({ t: 'security.2fa.disable', password: pw, code }); };
+    $('#sec-2fa-setup').hidden = true;
+  } else {
+    box.innerHTML = '<p class="small warn-text">⚠️ Двухфакторная защита выключена. Включите её — тогда даже узнав пароль, войти в аккаунт не смогут.</p><button class="btn primary wide" id="sec-on">Включить двухфакторную защиту</button>';
+    $('#sec-on').onclick = () => send({ t: 'security.2fa.setup' });
+  }
+  const ul = $('#sec-sessions'); ul.innerHTML = '';
+  for (const s of m.sessions || []) {
+    const li = document.createElement('li');
+    li.innerHTML = `<div class="acc-row"><b>${esc(deviceName(s))}</b>${s.current ? ' <span class="pill on">это устройство</span>' : ''}<span class="spacer"></span><span class="muted">${esc(s.ip || '')} · ${ago(s.last)}</span>${s.current ? '' : '<button class="btn">Выйти</button>'}</div>`;
+    const b = li.querySelector('button'); if (b) b.onclick = () => send({ t: 'security.revoke', id: s.id });
+    ul.appendChild(li);
+  }
+}
+$('#sec-enable').onclick = () => send({ t: 'security.2fa.enable', code: $('#sec-code').value.trim() });
+$('#sec-revoke-all').onclick = () => { if (confirm('Выйти из аккаунта на всех других устройствах?')) send({ t: 'security.revokeOthers' }); };
+$('#pw-change').onclick = () => { send({ t: 'security.password', old: $('#pw-old').value, new: $('#pw-new').value }); $('#pw-old').value = ''; $('#pw-new').value = ''; };
+
 function start() { setTab('server'); connect(); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+/* ---------- Cloudflare Turnstile ---------- */
+let tsWidget = null;
+function loadCaptcha(sitekey) {
+  if (!sitekey || window.turnstile) return renderCaptcha(sitekey);
+  const sc = document.createElement('script');
+  sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+  sc.async = true; sc.onload = () => renderCaptcha(sitekey);
+  document.head.appendChild(sc);
+}
+function renderCaptcha(sitekey) {
+  if (!window.turnstile || tsWidget !== null) return;
+  tsWidget = turnstile.render('#captcha-box', { sitekey, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light', language: 'ru' });
+}
+function captchaToken() { try { return tsWidget !== null ? turnstile.getResponse(tsWidget) : ''; } catch { return ''; } }
+function resetCaptcha() { try { if (tsWidget !== null) turnstile.reset(tsWidget); } catch {} }
+
 (async () => {
-  try { const j = await fetch('/api/info').then(r => r.json()); S.signup = j.signup; } catch {}
+  try { const j = await fetch('/api/info').then(r => r.json()); S.signup = j.signup; if (j.turnstile) loadCaptcha(j.turnstile); } catch {}
   await handleHash();
   if (S.token) start(); else show('auth');
 })();

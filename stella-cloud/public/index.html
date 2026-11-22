@@ -30,6 +30,8 @@
       <input id="auth-user" autocomplete="username" autocapitalize="none" placeholder="Имя (латиница)" required>
       <input id="auth-pass" type="password" autocomplete="current-password" placeholder="Пароль (мин. 8 символов)" required>
       <input id="auth-invite" autocomplete="off" autocapitalize="none" placeholder="Код приглашения" hidden>
+      <input id="auth-totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Код из приложения-аутентификатора" hidden>
+      <div id="captcha-box"></div>
       <button class="btn primary wide" id="auth-btn">Войти</button>
       <p id="auth-err" class="err-text"></p>
       <p class="muted small" id="auth-note"></p>
@@ -105,6 +107,25 @@
         <ul class="log-list" id="inv-list"></ul>
         <h3 class="sub0">Аккаунты</h3>
         <ul class="log-list" id="acc-list"></ul>
+      </div>
+      <div class="card" id="sec-card">
+        <h3>🔐 Безопасность</h3>
+        <div id="sec-2fa"></div>
+        <div id="sec-2fa-setup" hidden class="sec-setup">
+          <p class="small">1. Откройте Google Authenticator / Aegis / 1Password → «Добавить» → отсканируйте QR:</p>
+          <img id="sec-qr" alt="QR">
+          <p class="small muted">или введите ключ вручную: <code id="sec-secret"></code></p>
+          <p class="small">2. Введите 6-значный код из приложения:</p>
+          <div class="inv-row"><input id="sec-code" class="search" inputmode="numeric" maxlength="6" placeholder="123456"><button class="btn" id="sec-enable">Включить</button></div>
+        </div>
+        <h3 class="sub0">Устройства, где выполнен вход</h3>
+        <ul class="log-list" id="sec-sessions"></ul>
+        <button class="btn wide" id="sec-revoke-all">Выйти на всех других устройствах</button>
+        <details class="sec-pw"><summary class="small">Сменить пароль</summary>
+          <input id="pw-old" type="password" class="search" placeholder="Текущий пароль" autocomplete="current-password">
+          <input id="pw-new" type="password" class="search" placeholder="Новый пароль (мин. 10 символов)" autocomplete="new-password">
+          <button class="btn wide" id="pw-change">Сменить пароль</button>
+        </details>
       </div>
       <div class="card">
         <h3>Аккаунт</h3>

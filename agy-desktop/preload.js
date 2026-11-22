@@ -32,7 +32,7 @@ contextBridge.exposeInMainWorld('agy', {
   onEvent: on('chat:event'),
   onDone: on('chat:done'),
   onBridgeAction: on('bridge:action'),
-  cloudLogin: (url, user, pass, invite, mode) => ipcRenderer.invoke('cloud:login', { url, user, pass, invite, mode }),
+  cloudLogin: (url, user, pass, invite, mode, totp) => ipcRenderer.invoke('cloud:login', { url, user, pass, invite, mode, totp }),
   cloudPair: () => ipcRenderer.invoke('cloud:pair'),
   onCloudSignedOut: on('cloud:signed-out'),
   onCloudFailover: on('cloud:failover'),

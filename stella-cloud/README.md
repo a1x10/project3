@@ -57,6 +57,33 @@ curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie
 
 Чтобы снимки работали, выберите в Stella слева **папку проекта** (а не весь профиль).
 
+## Защита (что включено и как усилить)
+
+Включено всегда:
+- пароли: scrypt + соль, минимум 10 символов, проверка простых паролей; **блокировка аккаунта** после 5 неверных попыток (15 мин, дальше дольше);
+- **двухфакторная защита** (Google Authenticator / Aegis / 1Password): телефон → «Ещё» → «Безопасность»;
+- сессии хранятся только как хеши, истекают через 30 дней бездействия, список устройств и «Выйти на всех устройствах», уведомление о каждом новом входе;
+- лимиты запросов по IP (nginx + сервер), подделка X-Forwarded-For не помогает; журнал входов: `/var/lib/stella/security.log`;
+- заголовки безопасности (CSP, HSTS, запрет фреймов), версия nginx скрыта;
+- контейнеры агентов в отдельной сети: не видят сервер, соседей, внутренние адреса и метаданные Hetzner.
+
+Капча Cloudflare Turnstile (бесплатно): dash.cloudflare.com → Turnstile → Add widget → домен `stellalive.duckdns.org` → получите Site Key и Secret Key, затем:
+```bash
+curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/stella-cloud/install.sh | sudo DUCKDNS=stellalive TURNSTILE=1 bash
+```
+
+Защита самого сервера (файрвол, fail2ban, SSH, автообновления) — интерактивно, с вопросами:
+```bash
+curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/stella-cloud/scripts/harden.sh | sudo bash
+```
+
+Спрятать сервер и защититься от DDoS — Cloudflare Tunnel (нужен свой домен в Cloudflare; DuckDNS по своей природе показывает IP):
+Cloudflare → Zero Trust → Networks → Tunnels → Create → скопируйте токен →
+```bash
+curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/stella-cloud/install.sh | sudo TUNNEL=stella.вашдомен.com bash
+```
+затем в туннеле Public Hostname: `stella.вашдомен.com` → `http://localhost:<порт Stella>`. Stella перестаёт быть доступной по IP вообще.
+
 ## Безопасность
 
 - **Каждый аккаунт работает в своём Docker-контейнере** (`stella-<имя>`): не root, без Linux-привилегий (`--cap-drop ALL`, `no-new-privileges`), лимиты памяти/CPU/процессов, примонтирована только его домашняя папка. Docker-сокет, настройки сервера и код Stella внутри не видны — агент не может «попросить систему» что-то сделать.

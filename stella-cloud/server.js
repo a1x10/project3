@@ -52,34 +52,64 @@ function body(req) {
 }
 function bearer(req) { const h = req.headers.authorization || ''; return h.startsWith('Bearer ') ? h.slice(7) : ''; }
 
-const attempts = new Map();       // ip -> [timestamps]  (simple brute-force protection)
-function limited(req) {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
-  const now = Date.now(); const list = (attempts.get(ip) || []).filter(t => now - t < 10 * 60 * 1000);
-  list.push(now); attempts.set(ip, list);
-  return list.length > 20;
+// The server listens on 127.0.0.1 only, so every request comes through our own proxy:
+//  - Cloudflare Tunnel (cloudflared) sets CF-Connecting-IP
+//  - our nginx site sets X-Real-IP and strips any client-supplied CF-Connecting-IP
+// The left-most X-Forwarded-For entry is client-controlled and is never trusted.
+function clientIp(req) {
+  return String(req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.socket.remoteAddress || '').slice(0, 64);
 }
+const buckets = new Map();        // key -> [timestamps]
+function limited(req, kind = 'auth', max = 10, windowMs = 10 * 60 * 1000) {
+  const key = kind + '|' + clientIp(req);
+  const now = Date.now(); const list = (buckets.get(key) || []).filter(t => now - t < windowMs);
+  list.push(now); buckets.set(key, list);
+  return list.length > max;
+}
+setInterval(() => { const now = Date.now(); for (const [k, l] of buckets) if (!l.some(t => now - t < 3600e3)) buckets.delete(k); }, 600e3);
+
+// Cloudflare Turnstile (captcha) — enabled when STELLA_TURNSTILE_SITEKEY + STELLA_TURNSTILE_SECRET are set
+const TURNSTILE = !!(process.env.STELLA_TURNSTILE_SITEKEY && process.env.STELLA_TURNSTILE_SECRET);
+async function captchaOk(req, token) {
+  if (!TURNSTILE) return true;
+  if (!token || String(token).length > 4096) return false;
+  try {
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ secret: process.env.STELLA_TURNSTILE_SECRET, response: String(token), remoteip: clientIp(req) }),
+      signal: AbortSignal.timeout(10000)
+    });
+    const j = await r.json();
+    return !!j.success;
+  } catch (e) { console.error('turnstile verify failed', e.message); return false; }
+}
+const meta = req => ({ ip: clientIp(req), ua: req.headers['user-agent'] || '' });
 
 async function api(req, res, url) {
   const p = url.pathname;
   if (req.method === 'POST' && (p === '/api/register' || p === '/api/login')) {
-    if (limited(req)) return json(res, 429, { error: 'Слишком много попыток, подождите 10 минут' });
+    const reg = p === '/api/register';
+    if (limited(req, reg ? 'register' : 'login', reg ? 5 : 15, reg ? 3600e3 : 600e3)) return json(res, 429, { error: 'Слишком много попыток с вашего адреса. Подождите и попробуйте позже.' });
     try {
       const b = await body(req);
-      const r = p === '/api/register' ? users.register(b.username, b.password, b.invite) : users.login(b.username, b.password);
-      return json(res, 200, r);
-    } catch (e) { return json(res, 400, { error: e.message }); }
+      if (!(await captchaOk(req, b.captcha))) return json(res, 400, { error: 'Пройдите проверку «Я не робот»', captcha: true });
+      const m = Object.assign(meta(req), { totp: b.totp, kind: b.device === 'pc' ? 'pc' : 'web' });
+      const r = reg ? users.register(b.username, b.password, b.invite, m) : users.login(b.username, b.password, m);
+      const u = users.get(r.user.name);
+      emit(r.user.name, { t: 'notify', title: '🔐 Новый вход в аккаунт', body: `${m.kind === 'pc' ? 'Компьютер' : 'Браузер/телефон'} · IP ${m.ip}. Если это не вы — «Ещё» → «Безопасность» → «Выйти на всех устройствах» и смените пароль.` });
+      return json(res, 200, Object.assign(r, { user: users.publicUser(u) }));
+    } catch (e) { return json(res, e.status || 400, { error: e.message, need2fa: !!e.need2fa }); }
   }
   if (req.method === 'POST' && p === '/api/logout') { users.logout(bearer(req)); return json(res, 200, { ok: true }); }
-  if (req.method === 'GET' && p === '/api/info') return json(res, 200, { signup: process.env.STELLA_SIGNUP || 'invite', sharedKey: !!process.env.STELLA_GEMINI_API_KEY, name: 'Stella Cloud' });
+  if (req.method === 'GET' && p === '/api/info') return json(res, 200, { signup: process.env.STELLA_SIGNUP || 'invite', sharedKey: !!process.env.STELLA_GEMINI_API_KEY, name: 'Stella Cloud', turnstile: TURNSTILE ? process.env.STELLA_TURNSTILE_SITEKEY : null });
   // pairing: a signed-in device (PC) shows a QR, the phone claims it
   if (req.method === 'POST' && p === '/api/pair') {
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
     return json(res, 200, { code: users.createPair(u) });
   }
   if (req.method === 'POST' && p === '/api/pair/claim') {
-    if (limited(req)) return json(res, 429, { error: 'Слишком много попыток, подождите 10 минут' });
-    try { const b = await body(req); return json(res, 200, users.claimPair(b.code)); } catch (e) { return json(res, 400, { error: e.message }); }
+    if (limited(req, 'pair', 10)) return json(res, 429, { error: 'Слишком много попыток, подождите 10 минут' });
+    try { const b = await body(req); return json(res, 200, users.claimPair(b.code, meta(req))); } catch (e) { return json(res, 400, { error: e.message }); }
   }
   if (req.method === 'GET' && p === '/api/me') {
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
@@ -138,7 +168,12 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'no-referrer');
-  if (req.headers['x-forwarded-proto'] === 'https') res.setHeader('strict-transport-security', 'max-age=31536000');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('cross-origin-opener-policy', 'same-origin');
+  res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('content-security-policy', "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' wss: ws:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+  if (req.headers['x-forwarded-proto'] === 'https' || req.headers['cf-connecting-ip']) res.setHeader('strict-transport-security', 'max-age=63072000; includeSubDomains');
+  if (url.pathname.startsWith('/api/') && limited(req, 'api', 600, 60e3)) return json(res, 429, { error: 'Слишком много запросов' });
   if (url.pathname.startsWith('/api/')) return api(req, res, url).catch(e => json(res, 500, { error: e.message }));
   serveStatic(req, res, url);
 });
@@ -152,12 +187,17 @@ wss.on('connection', (ws) => {
   const authTimer = setTimeout(() => ws.close(), 10000);
   ws.alive = true;
   ws.on('pong', () => { ws.alive = true; });
+  let msgCount = 0, msgWindow = Date.now();
   ws.on('message', async raw => {
+    if (Date.now() - msgWindow > 1000) { msgWindow = Date.now(); msgCount = 0; }
+    if (++msgCount > 60) return;                                   // flood protection: max 60 messages/s per connection
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!me) {
       if (m.t !== 'auth') return;
       me = users.byToken(m.token);
       if (!me) { ws.send(JSON.stringify({ t: 'auth.error' })); return ws.close(); }
+      if (devices(me.name).size >= 20) { ws.send(JSON.stringify({ t: 'error', text: 'Слишком много подключённых устройств' })); return ws.close(); }
+      ws.token = m.token;
       clearTimeout(authTimer);
       conn = { ws, device: m.device === 'pc' ? 'pc' : 'phone', label: String(m.label || '').slice(0, 60) };
       devices(me.name).add(conn);
@@ -203,6 +243,16 @@ async function onMsg(u, conn, m) {
     case 'server.chat.delete': agent.deleteChat(u, m.chatId); emit(u.name, { t: 'chat.deleted', where: 'server', chatId: m.chatId }); break;
     case 'server.send': agent.send(u, m.chatId, String(m.text || '').slice(0, 20000)); break;
     case 'server.stop': agent.stop(u, m.chatId); break;
+    /* ---- account security ---- */
+    case 'security.get': sendTo(conn, { t: 'security', twofa: !!u.totp, sessions: users.sessions(u, conn.ws.token) }); break;
+    case 'security.2fa.setup': { const r = users.totpSetup(u); const qr = await require('qrcode').toDataURL(r.uri, { margin: 1, width: 240 }); sendTo(conn, { t: 'security.2fa.qr', secret: r.secret, qr }); break; }
+    case 'security.2fa.enable': users.totpEnable(u, m.code); sendTo(conn, { t: 'security', twofa: true, sessions: users.sessions(u, conn.ws.token) }); sendTo(conn, { t: 'notify', title: 'Двухфакторная защита включена' }); break;
+    case 'security.2fa.disable': users.totpDisable(u, m.password, m.code); sendTo(conn, { t: 'security', twofa: false, sessions: users.sessions(u, conn.ws.token) }); break;
+    case 'security.revoke': users.revokeSession(u, m.id); sendTo(conn, { t: 'security', twofa: !!u.totp, sessions: users.sessions(u, conn.ws.token) }); break;
+    case 'security.revokeOthers': users.revokeOthers(u, conn.ws.token); for (const c of devices(u.name)) if (c !== conn && c.ws.token !== conn.ws.token) { try { c.ws.close(); } catch {} } sendTo(conn, { t: 'security', twofa: !!u.totp, sessions: users.sessions(u, conn.ws.token) }); break;
+    case 'security.password': users.changePassword(u, m.old, m.new, conn.ws.token); for (const c of devices(u.name)) if (c.ws.token !== conn.ws.token) { try { c.ws.close(); } catch {} } sendTo(conn, { t: 'notify', title: 'Пароль изменён', body: 'Все остальные устройства вышли из аккаунта.' }); break;
+    case 'admin.unlock': requireAdmin(u); users.unlock(m.name); sendTo(conn, adminState()); break;
+
     case 'settings.set': u.settings = Object.assign(u.settings || {}, { mode: ['yolo', 'accept-edits', 'plan', 'default'].includes(m.mode) ? m.mode : 'yolo' }); users._save(); emit(u.name, { t: 'settings', settings: u.settings }); break;
 
     /* ---- terminal (agy sign-in) ---- */

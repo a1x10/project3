@@ -3,6 +3,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/stella-cloud/install.sh | sudo bash
 # Optional:  DOMAIN=stella.example.com  (otherwise <your-ip>.sslip.io is used, HTTPS via Let's Encrypt)
 #            DUCKDNS=myname   (free name myname.duckdns.org; the token is asked for, hidden)
+#            TURNSTILE=1      (Cloudflare captcha; site key + secret are asked for, hidden)
+#            TUNNEL=stella.example.com  (Cloudflare Tunnel: hides the server IP, no open ports for Stella; tunnel token asked for)
 set -euo pipefail
 
 REPO="${STELLA_REPO:-https://github.com/a1x10/project3.git}"
@@ -47,6 +49,22 @@ if docker info >/dev/null 2>&1; then
 else
   echo "ВНИМАНИЕ: Docker не запущен — агенты будут работать без Docker (отдельные Linux-пользователи)"
 fi
+
+install -m 755 "$APP/scripts/stella-firewall.sh" /usr/local/sbin/stella-firewall
+cat > /etc/systemd/system/stella-firewall.service <<'UNIT'
+[Unit]
+Description=Stella: isolate agent containers from this server
+After=docker.service network-online.target
+Wants=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/stella-firewall
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+command -v iptables >/dev/null && systemctl enable --now stella-firewall >/dev/null 2>&1 && systemctl restart stella-firewall && echo "Сеть агентов изолирована (stella-firewall)"
 
 say "Antigravity CLI (agy)"
 if [ ! -x /usr/local/bin/agy ]; then
@@ -143,30 +161,75 @@ if [ -z "${DOMAIN:-}" ]; then
   IP=$(curl -fsS4 --max-time 10 https://api.ipify.org || hostname -I | awk '{print $1}')
   DOMAIN="${IP//./-}.sslip.io"
 fi
+# ---------- Cloudflare Turnstile (captcha) ----------
+setenv() { if grep -q "^$1=" "$ENVF"; then sed -i "s|^$1=.*|$1=$2|" "$ENVF"; else echo "$1=$2" >> "$ENVF"; fi; }
+if [ "${TURNSTILE:-}" = 1 ]; then
+  read -rp "Turnstile Site Key: " TS_SITE < /dev/tty
+  read -rsp "Turnstile Secret Key (ввод скрыт): " TS_SECRET < /dev/tty; echo
+  if [ -n "$TS_SITE" ] && [ -n "$TS_SECRET" ]; then setenv STELLA_TURNSTILE_SITEKEY "$TS_SITE"; setenv STELLA_TURNSTILE_SECRET "$TS_SECRET"; echo "Капча Cloudflare включена"; fi
+fi
+# ---------- Cloudflare Tunnel (hide the server) ----------
+if [ -n "${TUNNEL:-}" ]; then
+  say "Cloudflare Tunnel ($TUNNEL)"
+  if ! command -v cloudflared >/dev/null; then
+    mkdir -p --mode=0755 /usr/share/keyrings
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list
+    $APT update -q && $APT install -y -q cloudflared
+  fi
+  read -rsp "Cloudflare Tunnel token (ввод скрыт): " CF_TOKEN < /dev/tty; echo
+  if [ -n "$CF_TOKEN" ]; then
+    cloudflared service uninstall >/dev/null 2>&1 || true
+    cloudflared service install "$CF_TOKEN" && echo "Туннель запущен. В Cloudflare → Zero Trust → Tunnels → Public Hostname укажите: $TUNNEL → http://localhost:$PORT"
+  fi
+  DOMAIN="$TUNNEL"
+fi
+
 # agents inside containers reach Stella (WhatsApp tools) through the public HTTPS address
 if grep -q '^STELLA_PUBLIC_URL=' "$ENVF"; then sed -i "s|^STELLA_PUBLIC_URL=.*|STELLA_PUBLIC_URL=https://$DOMAIN|" "$ENVF"; else echo "STELLA_PUBLIC_URL=https://$DOMAIN" >> "$ENVF"; fi
 systemctl restart stella-cloud
 
 WEB=$(ss -ltnpH '( sport = :80 or sport = :443 )' 2>/dev/null || true)
-if echo "$WEB" | grep -q nginx; then
+if [ -n "${TUNNEL:-}" ]; then
+  # Stella is reachable only through Cloudflare: remove its public nginx site if it existed
+  rm -f /etc/nginx/sites-enabled/stella-cloud.conf /etc/nginx/conf.d/stella-cloud.conf 2>/dev/null || true
+  command -v nginx >/dev/null && nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+  echo "Stella доступна только через Cloudflare: https://$DOMAIN (IP сервера скрыт)"
+elif echo "$WEB" | grep -q nginx; then
   # ---------- nginx already serves 80/443: add a separate site for Stella + certbot ----------
   say "HTTPS через ваш nginx ($DOMAIN)"
   if systemctl is-enabled caddy >/dev/null 2>&1; then systemctl disable --now caddy >/dev/null 2>&1 || true; fi
   if [ -d /etc/nginx/sites-available ]; then CONF=/etc/nginx/sites-available/stella-cloud.conf; else CONF=/etc/nginx/conf.d/stella-cloud.conf; fi
   cat > "$CONF" <<EOF
 # Stella Cloud — only for $DOMAIN, other sites are not touched
+limit_req_zone \$binary_remote_addr zone=stella_api:10m rate=20r/s;
+limit_req_zone \$binary_remote_addr zone=stella_auth:10m rate=10r/m;
+limit_conn_zone \$binary_remote_addr zone=stella_conn:10m;
 server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
-    client_max_body_size 20m;
+    client_max_body_size 300m;
+    server_tokens off;
+    limit_conn stella_conn 50;
+    location ~ ^/api/(login|register|pair/claim)\$ {
+        limit_req zone=stella_auth burst=10 nodelay;
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header CF-Connecting-IP "";
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
     location / {
+        limit_req zone=stella_api burst=100 nodelay;
         proxy_pass http://127.0.0.1:$PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header CF-Connecting-IP "";
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;

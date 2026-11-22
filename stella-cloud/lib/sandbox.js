@@ -36,14 +36,30 @@ const HOME_IN = '/home/agent';
 // docker CPU quota from "100%" -> "1.0"
 const cpus = s => String(Math.max(0.1, (parseFloat(s) || 100) / 100));
 
+// isolated network for agent containers: no traffic between containers (icc=false);
+// stella-firewall.sh blocks it from the host itself, private ranges and cloud metadata
+const NET = 'stella-net';
+let netReady = false;
+function ensureNetwork() {
+  if (netReady) return;
+  try { execFileSync('docker', ['network', 'inspect', NET], { stdio: 'ignore', timeout: 15000 }); }
+  catch {
+    execFileSync('docker', ['network', 'create', '--driver', 'bridge', '--subnet', '172.30.0.0/16',
+      '-o', 'com.docker.network.bridge.name=stella0', '-o', 'com.docker.network.bridge.enable_icc=false', NET], { stdio: 'ignore', timeout: 30000 });
+  }
+  netReady = true;
+}
+
 function ensureContainer(u) {
   const name = cname(u);
+  ensureNetwork();
   let state = '';
-  try { state = execFileSync('docker', ['inspect', '-f', '{{.State.Running}}', name], { encoding: 'utf8', timeout: 15000 }).trim(); } catch {}
-  if (state === 'true') return name;
-  if (state === 'false') { execFileSync('docker', ['start', name], { stdio: 'ignore', timeout: 30000 }); return name; }
+  try { state = execFileSync('docker', ['inspect', '-f', '{{.State.Running}} {{json .NetworkSettings.Networks}}', name], { encoding: 'utf8', timeout: 15000 }).trim(); } catch {}
+  if (state && !state.includes('"' + NET + '"')) { removeContainer(u); state = ''; }   // created before the isolated network existed
+  if (state.startsWith('true')) return name;
+  if (state.startsWith('false')) { execFileSync('docker', ['start', name], { stdio: 'ignore', timeout: 30000 }); return name; }
   const L = lim();
-  const args = ['run', '-d', '--init', '--name', name, '--hostname', name, '--restart', 'unless-stopped',
+  const args = ['run', '-d', '--init', '--network', NET, '--name', name, '--hostname', name, '--restart', 'unless-stopped',
     '--user', `${u.uid}:${u.gid}`,
     '--memory', L.mem, '--memory-swap', L.mem, '--cpus', cpus(L.cpu), '--pids-limit', L.tasks,
     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',

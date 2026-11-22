@@ -28,14 +28,19 @@ async function pairQr() {
   return { link, qr, code: j.code };
 }
 
-async function login(url, username, password, invite, mode = 'login') {
+async function serverInfo(url) {
+  url = norm(url || defaultServer());
+  const r = await fetch(url + '/api/info', { signal: AbortSignal.timeout(15000) });
+  return Object.assign(await r.json(), { url });
+}
+async function login(url, username, password, invite, mode = 'login', totp = '', captcha = '') {
   url = norm(url || defaultServer());
   if (!/^https?:\/\/[^/]+/.test(url)) throw new Error('Укажите адрес сервера');
   let r;
-  try { r = await fetch(url + '/api/' + (mode === 'register' ? 'register' : 'login'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password, invite }), signal: AbortSignal.timeout(20000) }); }
+  try { r = await fetch(url + '/api/' + (mode === 'register' ? 'register' : 'login'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password, invite, totp, captcha, device: 'pc' }), signal: AbortSignal.timeout(20000) }); }
   catch (e) { throw new Error('Сервер не отвечает: ' + url); }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.token) throw new Error(j.error || ('Сервер ответил ' + r.status));
+  if (!r.ok || !j.token) { const e = new Error(j.error || ('Сервер ответил ' + r.status)); e.need2fa = !!j.need2fa; throw e; }
   H.saveSettings({ cloudUrl: url, cloudToken: j.token, cloudUser: j.user.name, cloudAdmin: !!j.user.admin });
   registerWhatsAppMcp(true);
   connect();
@@ -210,4 +215,4 @@ async function pullFolder(folder, workspace) {
   return dest;
 }
 
-module.exports = { takeFailover, taskStarted, taskDone, pullFolder, pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
+module.exports = { serverInfo, takeFailover, taskStarted, taskDone, pullFolder, pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
