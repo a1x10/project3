@@ -60,7 +60,10 @@ function onMsg(m) {
     case 'hello':
       S.user = m.user; S.agy = m.agy; S.pcOnline = m.pcOnline; S.settings = m.settings || S.settings;
       S.lists.server = m.serverChats; S.lists.pc = m.pcChats; S.wa = m.wa;
-      $('#acc-name').textContent = 'Аккаунт: ' + m.user.name;
+      $('#acc-name').textContent = 'Аккаунт: ' + m.user.name + (m.user.admin ? ' (администратор)' : '');
+      $('#admin-card').hidden = !m.user.admin;
+      if (m.user.admin) send({ t: 'admin.list' });
+      $('#shared-key-note').hidden = !m.sharedKey; $('#google-note').hidden = !!m.sharedKey;
       $('#mode-select').value = S.settings.mode || 'yolo';
       renderAll();
       if (S.open) send({ t: S.open.where + '.chat.get', chatId: S.open.chat.id });
@@ -84,6 +87,7 @@ function onMsg(m) {
     case 'wa.auto': S.wa.autoLog = [m.entry].concat(S.wa.autoLog || []).slice(0, 40); renderWaLog(); break;
     case 'wa.reply': toast(`📩 ${m.name}: ${m.text.slice(0, 80)}`, 6000); break;
     case 'wa.sent': if (!m.auto) toast(`Отправлено ${m.name}: ${m.text.slice(0, 60)}`); break;
+    case 'admin.state': renderAdmin(m); break;
     case 'error': toast(m.text, 5000); if (S.open) { S.open.pendingNew = false; } break;
   }
 }
@@ -315,7 +319,69 @@ async function notify(title, body) {
   try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, { body, icon: '/icon.png', badge: '/icon.png' }); } catch { new Notification(title, { body }); }
 }
 
+/* ================================================================== */
+/* admin: invites + accounts                                           */
+/* ================================================================== */
+function inviteLink(code) { return location.origin + '/#invite=' + encodeURIComponent(code); }
+let lastInviteCount = null;
+function renderAdmin(st) {
+  const inv = $('#inv-list'); inv.innerHTML = '';
+  for (const i of st.invites.slice(0, 20)) {
+    const used = (i.uses || 0) >= (i.maxUses || 1);
+    const li = document.createElement('li');
+    li.innerHTML = `<div class="acc-row"><code>${esc(i.code)}</code> <span>${esc(i.note || '')}</span><span class="spacer"></span><span class="muted">${i.revoked ? 'отозван' : used ? 'использован: ' + esc((i.usedBy || []).join(', ')) : 'ждёт'}</span>${!i.revoked && !used ? '<button class="btn" data-copy>Ссылка</button><button class="btn" data-revoke>Отозвать</button>' : ''}</div>`;
+    const c = li.querySelector('[data-copy]'); if (c) c.onclick = () => shareLink(inviteLink(i.code), i.note);
+    const r = li.querySelector('[data-revoke]'); if (r) r.onclick = () => send({ t: 'admin.revoke', code: i.code });
+    inv.appendChild(li);
+  }
+  if (!inv.children.length) inv.innerHTML = '<li class="muted">Пока нет</li>';
+  // show the newest invite right after creating it
+  if (lastInviteCount !== null && st.invites.length > lastInviteCount) { $('#inv-new').hidden = false; $('#inv-link').textContent = inviteLink(st.invites[0].code); }
+  lastInviteCount = st.invites.length;
+  const acc = $('#acc-list'); acc.innerHTML = '';
+  for (const u of st.users) {
+    const li = document.createElement('li');
+    const online = u.online.length ? '🟢 ' + [...new Set(u.online)].map(d => d === 'pc' ? 'ПК' : 'телефон').join(', ') : (u.seen ? 'был ' + ago(u.seen) : 'не заходил');
+    li.innerHTML = `<div class="acc-row"><b>${esc(u.name)}</b>${u.admin ? ' <span class="pill">админ</span>' : ''}${u.disabled ? ' <span class="pill">заблокирован</span>' : ''}<span class="muted">${esc(u.note || '')}</span><span class="spacer"></span><span class="muted">${online}${u.running ? ' · задач: ' + u.running : ''}</span>${u.admin ? '' : `<button class="btn" data-dis>${u.disabled ? 'Разблокировать' : 'Блок'}</button><button class="btn" data-del>Удалить</button>`}</div>`;
+    const d = li.querySelector('[data-dis]'); if (d) d.onclick = () => send({ t: 'admin.disable', name: u.name, on: !u.disabled });
+    const x = li.querySelector('[data-del]'); if (x) x.onclick = () => { if (confirm(`Удалить аккаунт «${u.name}» вместе с его файлами, чатами и WhatsApp на сервере? Это нельзя отменить.`)) send({ t: 'admin.delete', name: u.name }); };
+    acc.appendChild(li);
+  }
+}
+$('#inv-create').onclick = () => { send({ t: 'admin.invite', note: $('#inv-note').value }); $('#inv-note').value = ''; };
+$('#inv-share').onclick = () => shareLink($('#inv-link').textContent);
+async function shareLink(url, note) {
+  const text = 'Приглашение в Stella' + (note ? ' (' + note + ')' : '') + ': ' + url;
+  try { if (navigator.share) { await navigator.share({ title: 'Stella', text, url }); return; } } catch {}
+  try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована'); } catch { prompt('Скопируйте ссылку:', url); }
+}
+
+/* links: #invite=CODE (register) and #pair=CODE (sign in from the PC's QR) */
+async function handleHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('invite')) {
+    history.replaceState(null, '', '/');
+    if (!S.token) { document.querySelector('#auth-seg button[data-mode=register]').click(); $('#auth-invite').hidden = false; $('#auth-invite').value = h.get('invite'); }
+  }
+  if (h.get('pair')) {
+    history.replaceState(null, '', '/');
+    try {
+      const r = await fetch('/api/pair/claim', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: h.get('pair') }) });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error);
+      S.token = j.token; localStorage.setItem('stella.token', j.token);
+      if (S.ws) { const old = S.ws; S.ws = null; old.close(); }
+      toast('Телефон привязан к аккаунту ' + j.user.name);
+      return true;
+    } catch (e) { toast('Привязка не удалась: ' + e.message, 6000); }
+  }
+  return false;
+}
+
 function start() { setTab('server'); connect(); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-fetch('/api/info').then(r => r.json()).then(j => { S.signup = j.signup; }).catch(() => {});
-if (S.token) start(); else show('auth');
+(async () => {
+  try { const j = await fetch('/api/info').then(r => r.json()); S.signup = j.signup; } catch {}
+  await handleHash();
+  if (S.token) start(); else show('auth');
+})();
+window.addEventListener('hashchange', () => handleHash().then(ok => { if (ok) start(); }));

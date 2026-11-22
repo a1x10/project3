@@ -249,6 +249,17 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .side-toggle input:checked + i::after { transform: translateX(12px); }
 .side-toggle input:disabled + i { opacity: .5; }
 
+/* account screen */
+.seg { display: flex; background: var(--hover); border-radius: 12px; padding: 3px; margin: 18px 0 12px; }
+.seg button { flex: 1; border: 0; background: none; padding: 8px; border-radius: 10px; color: var(--muted); }
+.seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.acc-form { display: grid; gap: 8px; text-align: left; }
+.acc-form input { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; outline: none; }
+.acc-form input:focus { border-color: var(--accent); }
+.pair-box { text-align: center; margin: 10px 0; }
+.pair-box img { width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 6px; }
+.pair-box code { display: block; font-size: 11px; word-break: break-all; }
+
 /* cloud modal */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 60; }
 .modal { width: min(440px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 18px 20px; box-shadow: var(--shadow); }

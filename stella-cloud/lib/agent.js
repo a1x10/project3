@@ -25,13 +25,31 @@ function agyPath(u) {
 }
 
 function envFor(u) {
-  return Object.assign({}, process.env, {
+  const shared = process.env.STELLA_GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.STELLA_GEMINI_API_KEY } : {};
+  const base = Object.assign({}, process.env);
+  for (const k of Object.keys(base)) if (/^STELLA_|_KEY$|TOKEN|SECRET|PASSWORD/i.test(k)) delete base[k];   // never leak server secrets to agents
+  return Object.assign(base, shared, {
     HOME: u.home, USER: u.sys || process.env.USER, LOGNAME: u.sys || process.env.LOGNAME,
     PATH: `${path.join(u.home, '.local', 'bin')}:/usr/local/bin:/usr/bin:/bin`,
     TERM: 'xterm-256color', NO_COLOR: '1', LANG: 'C.UTF-8'
   });
 }
 const spawnOpts = (u, extra = {}) => Object.assign({ cwd: path.join(u.home, 'workspace'), env: envFor(u), uid: u.uid, gid: u.gid }, extra);
+
+// per-account resource limits (systemd scope): memory, CPU, number of processes
+let systemdOk = null;
+function limited(u, bin, args) {
+  if (systemdOk === null) systemdOk = u.uid != null && fs.existsSync('/run/systemd/system') && (() => { try { execSync('command -v systemd-run', { shell: '/bin/bash', stdio: 'ignore' }); return true; } catch { return false; } })();
+  if (!systemdOk || u.uid == null) return { cmd: bin, args, opts: {} };
+  const mem = process.env.STELLA_LIMIT_MEM || '2G', cpu = process.env.STELLA_LIMIT_CPU || '100%', tasks = process.env.STELLA_LIMIT_TASKS || '256';
+  return {
+    cmd: 'systemd-run',
+    args: ['--quiet', '--scope', '--collect', `--uid=${u.uid}`, `--gid=${u.gid}`, '-p', `MemoryMax=${mem}`, '-p', `CPUQuota=${cpu}`, '-p', `TasksMax=${tasks}`, '--', bin, ...args],
+    opts: { uid: undefined, gid: undefined }                       // systemd-run (root) switches to the account's user itself
+  };
+}
+function runningCount(u) { return chats(u).filter(c => c.busy).length; }
+function stopAll(u) { for (const c of chats(u)) if (c.busy) stop(u, c.id); }
 
 // write MCP config (WhatsApp tools) + permissions into the account's agy config
 function prepareAgyConfig(u) {
@@ -44,6 +62,7 @@ function prepareAgyConfig(u) {
     env: { STELLA_URL: `http://127.0.0.1:${PORT}`, STELLA_TOKEN: u.mcpToken }
   };
   const st = readJson(setFile, {});
+  if (process.env.STELLA_GEMINI_API_KEY) st.modelProvider = 'gemini';     // shared key from the server owner: no Google sign-in needed
   st.permissions = st.permissions || {};
   st.permissions.allow = Array.from(new Set([...(st.permissions.allow || []), 'mcp(stella-whatsapp/*)']));
   for (const [f, v] of [[mcpFile, mcp], [setFile, st]]) {
@@ -103,6 +122,8 @@ function send(u, chatId, text, opts = {}) {
   let c = chatId && findChat(u, chatId);
   if (!c) c = newChat(u, null, 'server');
   if (c.busy) throw new Error('Агент ещё работает в этом чате');
+  const maxRuns = Number(process.env.STELLA_MAX_RUNS || 2);
+  if (runningCount(u) >= maxRuns) throw new Error(`Одновременно можно запускать не больше ${maxRuns} задач. Дождитесь окончания или остановите одну.`);
   if (!bin) throw new Error('На сервере не установлен Antigravity CLI (agy). Запустите install.sh ещё раз.');
 
   const userMsg = { id: uid(), role: 'user', text, ts: Date.now() };
@@ -125,7 +146,8 @@ function send(u, chatId, text, opts = {}) {
   if ((s.mode || 'yolo') === 'yolo') args.push('--dangerously-skip-permissions');   // nobody can approve on a server
   else if (s.mode === 'accept-edits' || s.mode === 'plan') args.push('--mode', s.mode);
 
-  const child = spawn(bin, args, spawnOpts(u, { stdio: ['ignore', 'pipe', 'pipe'] }));
+  const L = limited(u, bin, args);
+  const child = spawn(L.cmd, L.args, spawnOpts(u, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, L.opts)));
   running.set(c.id, child);
   const ev = e => { applyEvent(m, c, e); emit(u.name, Object.assign({ t: 'ev', where: 'server', chatId: c.id, msgId: m.id }, e)); };
 
@@ -246,7 +268,8 @@ function runOnce(u, prompt, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const bin = agyPath(u); if (!bin) return reject(new Error('agy not installed'));
     prepareAgyConfig(u);
-    const child = spawn(bin, ['-p', prompt, '--output-format', 'json'], spawnOpts(u, { stdio: ['ignore', 'pipe', 'pipe'] }));
+    const L = limited(u, bin, ['-p', prompt, '--output-format', 'json']);
+    const child = spawn(L.cmd, L.args, spawnOpts(u, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, L.opts)));
     let out = '', err = '';
     const t = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, timeoutMs);
     child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d);
@@ -275,4 +298,4 @@ function describeTool(name, params) {
   return n.replace(/_/g, ' ') + (first ? ' ' + short(String(first)) : '');
 }
 
-module.exports = { setup, chats, summary, findChat, newChat, deleteChat, send, stop, addNote, importFromPc, termOpen, termInput, termResize, termRestart, runOnce, lastOrigin, agyPath, prepareAgyConfig };
+module.exports = { runningCount, stopAll, setup, chats, summary, findChat, newChat, deleteChat, send, stop, addNote, importFromPc, termOpen, termInput, termResize, termRestart, runOnce, lastOrigin, agyPath, prepareAgyConfig };

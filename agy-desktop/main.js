@@ -764,7 +764,8 @@ ipcMain.on('chat:send', (_e, req) => runPrompt(req));
 ipcMain.on('chat:stop', (_e, reqId) => { const c = running.get(reqId); if (c) treeKill(c.pid); });
 
 ipcMain.handle('settings:get', () => getSettings());
-ipcMain.handle('cloud:login', async (_e, { url, user, pass }) => { try { return Object.assign({ ok: true }, await cloud.login(url, user, pass)); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('cloud:login', async (_e, { url, user, pass, invite, mode }) => { try { return Object.assign({ ok: true }, await cloud.login(url, user, pass, invite, mode)); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('cloud:pair', async () => { try { return Object.assign({ ok: true }, await cloud.pairQr()); } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('cloud:logout', () => { cloud.logout(); return { ok: true }; });
 ipcMain.handle('cloud:status', () => cloud.getStatus());
 ipcMain.on('cloud:sync', (_e, chats) => cloud.syncChats(chats));

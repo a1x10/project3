@@ -27,6 +27,26 @@
   </div>
 </section>
 
+<!-- ============ STELLA ACCOUNT ============ -->
+<section id="account" class="screen">
+  <div class="login-card">
+    <div class="logo big"><span class="logo-mark">✳</span></div>
+    <h1>Аккаунт Stella</h1>
+    <p class="muted">Один аккаунт для компьютера, телефона и сервера.</p>
+    <div class="seg" id="acc-seg"><button data-mode="login" class="on">Вход</button><button data-mode="register">Регистрация</button></div>
+    <div class="acc-form">
+      <div id="acc-server-row"><input id="acc-server" placeholder="Адрес сервера, например 1-2-3-4.sslip.io"></div>
+      <div id="acc-server-fixed" class="muted small" hidden></div>
+      <input id="acc-user" placeholder="Имя (латиница, 3–24 символа)" autocapitalize="none">
+      <input id="acc-pass" type="password" placeholder="Пароль (мин. 8 символов)">
+      <input id="acc-invite" placeholder="Код приглашения" hidden>
+      <button class="btn primary wide" id="acc-go">Войти</button>
+      <p class="err-line" id="acc-err"></p>
+      <p class="muted small" id="acc-note"></p>
+    </div>
+  </div>
+</section>
+
 <!-- ============ LOGIN ============ -->
 <section id="login" class="screen">
   <div class="login-card">
@@ -159,16 +179,16 @@
     <div class="modal">
       <div class="row"><h3>Stella Cloud</h3><span class="spacer"></span><button class="icon-btn" id="cloud-close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
       <p class="muted small">Подключите Stella к своему серверу: агент сможет продолжать работу без компьютера, а вы — следить и управлять с телефона. WhatsApp-инструменты тоже работают через сервер.</p>
-      <div id="cloud-form">
-        <input id="cloud-url" placeholder="Адрес сервера, например 1-2-3-4.sslip.io">
-        <input id="cloud-user" placeholder="Имя аккаунта" autocapitalize="none">
-        <input id="cloud-pass" type="password" placeholder="Пароль">
-        <button class="btn primary wide" id="cloud-login">Войти</button>
-        <p class="muted small">Нет аккаунта? Создайте его в приложении на телефоне (адрес сервера → «Регистрация»).</p>
-      </div>
-      <div id="cloud-in" hidden>
+      <div id="cloud-in">
         <p id="cloud-who"></p>
-        <button class="btn wide" id="cloud-logout">Отключить</button>
+        <button class="btn primary wide" id="cloud-pair-btn">📱 Привязать телефон</button>
+        <div id="cloud-pair" hidden class="pair-box">
+          <img id="cloud-qr" alt="QR">
+          <p class="small muted">Наведите камеру телефона на QR-код — откроется Stella, уже с вашим аккаунтом. Затем «Добавить на главный экран». Код действует 10 минут.</p>
+          <code id="cloud-link"></code>
+        </div>
+        <button class="btn wide" id="cloud-web">Открыть Stella в браузере</button>
+        <button class="btn wide" id="cloud-logout">Выйти из аккаунта</button>
       </div>
       <p class="err-line" id="cloud-err"></p>
     </div>

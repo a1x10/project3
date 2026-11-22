@@ -87,7 +87,8 @@ async function boot() {
   step('st-term', state.info.pty ? 'ok' : 'warn', state.info.pty ? 'pty' : 'без node-pty');
   setStatus('on', 'Stella готова');
   await sleep(350);
-  show('login');
+  const cs = await api.cloudStatus();
+  if (cs.signedIn) show('login'); else showAccount();
 }
 $('#boot-retry').onclick = () => boot().catch(e => fatal(e.stack || e));
 
@@ -656,8 +657,6 @@ function renderCloud() {
   const on = st !== 'off' && st !== 'error';
   $('#cloud-dot').className = 'dot ' + (st === 'online' ? 'on' : on ? 'busy' : '');
   $('#cloud-label').textContent = st === 'online' ? 'Облако · ' + cloudState.user : on ? 'Облако · подключение…' : 'Облако';
-  $('#cloud-form').hidden = on;
-  $('#cloud-in').hidden = !on;
   $('#cloud-who').textContent = (cloudState.user || '') + ' @ ' + (cloudState.url || '').replace(/^https?:\/\//, '') + (st === 'online' ? ' · в сети' : ' · ' + st);
   $('#cloud-err').textContent = cloudState.error || '';
   renderTransferBtn();
@@ -671,17 +670,49 @@ api.onCloudStatus(s => { cloudState = s; renderCloud(); });
 api.cloudStatus().then(s => { cloudState = s; renderCloud(); });
 $('#cloud-open').onclick = () => { $('#cloud-modal').hidden = false; renderCloud(); };
 $('#cloud-close').onclick = () => { $('#cloud-modal').hidden = true; };
-$('#cloud-login').onclick = async () => {
+$('#cloud-pair-btn').onclick = async () => {
   $('#cloud-err').textContent = '';
-  $('#cloud-login').disabled = true;
-  const r = await api.cloudLogin($('#cloud-url').value, $('#cloud-user').value, $('#cloud-pass').value);
-  $('#cloud-login').disabled = false;
+  const r = await api.cloudPair();
   if (!r.ok) { $('#cloud-err').textContent = r.error; return; }
-  $('#cloud-pass').value = '';
-  cloudState = r; renderCloud();
-  saveChats();
+  $('#cloud-qr').src = r.qr; $('#cloud-link').textContent = r.link; $('#cloud-pair').hidden = false;
 };
-$('#cloud-logout').onclick = async () => { await api.cloudLogout(); cloudState = { status: 'off' }; renderCloud(); };
+$('#cloud-web').onclick = () => { if (cloudState.url) api.openExternal(cloudState.url); };
+$('#cloud-logout').onclick = async () => {
+  if (!confirm('Выйти из аккаунта Stella на этом компьютере?')) return;
+  await api.cloudLogout(); cloudState = { status: 'off' }; $('#cloud-modal').hidden = true; showAccount();
+};
+api.onCloudSignedOut(() => { $('#cloud-modal').hidden = true; showAccount('Сессия закончилась или аккаунт заблокирован — войдите снова'); });
+
+/* ---------- Stella account screen (required) ---------- */
+let accMode = 'login';
+async function showAccount(err) {
+  const st = await api.cloudStatus();
+  show('account');
+  $('#acc-err').textContent = err || '';
+  $('#acc-server').value = st.url ? st.url.replace(/^https?:\/\//, '') : '';
+  $('#acc-server-row').hidden = st.fixedServer;
+  $('#acc-server-fixed').hidden = !st.fixedServer;
+  $('#acc-server-fixed').textContent = 'Сервер: ' + (st.url || '').replace(/^https?:\/\//, '');
+  (st.fixedServer ? $('#acc-user') : ($('#acc-server').value ? $('#acc-user') : $('#acc-server'))).focus();
+}
+document.querySelectorAll('#acc-seg button').forEach(b => b.onclick = () => {
+  accMode = b.dataset.mode;
+  document.querySelectorAll('#acc-seg button').forEach(x => x.classList.toggle('on', x === b));
+  $('#acc-invite').hidden = accMode !== 'register';
+  $('#acc-go').textContent = accMode === 'register' ? 'Создать аккаунт' : 'Войти';
+  $('#acc-note').textContent = accMode === 'register' ? 'Код приглашения даёт владелец сервера. На сервере для вас создастся своё рабочее место и свой агент.' : '';
+});
+$('#acc-go').onclick = async () => {
+  $('#acc-err').textContent = '';
+  $('#acc-go').disabled = true;
+  const r = await api.cloudLogin($('#acc-server').value, $('#acc-user').value.trim(), $('#acc-pass').value, $('#acc-invite').value.trim(), accMode);
+  $('#acc-go').disabled = false;
+  if (!r.ok) { $('#acc-err').textContent = r.error; return; }
+  $('#acc-pass').value = '';
+  cloudState = r; renderCloud();
+  show('login');
+};
+['#acc-user', '#acc-pass', '#acc-invite', '#acc-server'].forEach(sel => $(sel).addEventListener('keydown', e => { if (e.key === 'Enter') $('#acc-go').click(); }));
 const plain = c => JSON.parse(JSON.stringify(c, (k, v) => k.startsWith('_') ? undefined : v));
 $('#to-server').onclick = async () => {
   const c = chat(); if (!c || state.busy) return;

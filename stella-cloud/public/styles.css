@@ -77,6 +77,12 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
 .switch input:checked + i { background: var(--accent); }
 .switch input:checked + i::after { transform: translateX(18px); }
+.inv-row { display: flex; gap: 8px; margin-top: 8px; } .inv-row .search { flex: 1; padding: 9px 12px; }
+.inv-new { margin-top: 10px; padding: 10px; border-radius: 12px; background: var(--hover); display: grid; gap: 6px; }
+.inv-new code { word-break: break-all; font-size: 12px; }
+.sub0 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); }
+.acc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.acc-row .btn { padding: 3px 8px; font-size: 12px; border-radius: 8px; }
 .log-list { list-style: none; margin: 0; padding: 0 16px; font-size: 13px; }
 .log-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .log-list b { font-weight: 600; }

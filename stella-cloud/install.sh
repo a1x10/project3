@@ -59,7 +59,14 @@ STELLA_DATA=$DATA
 STELLA_HOMES=$HOMES
 # invite | open | closed
 STELLA_SIGNUP=invite
+# master invite code (the first account registered becomes the administrator)
 STELLA_INVITE=$INVITE
+# optional: one shared Gemini API key for all accounts (friends don't need a Google sign-in; usage is billed to you)
+# STELLA_GEMINI_API_KEY=
+# limits per account
+STELLA_MAX_RUNS=2
+STELLA_LIMIT_MEM=2G
+STELLA_LIMIT_CPU=100%
 EOF
   chmod 600 "$ENVF"
 fi
@@ -109,6 +116,8 @@ if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 80/t
 sleep 2
 say "Done!"
 echo "  Открой на телефоне:   https://$DOMAIN"
-echo "  Код приглашения:      $INVITE"
+echo "  Код приглашения:      $INVITE   (зарегистрируйтесь ПЕРВЫМ — первый аккаунт = администратор)"
+echo "  Друзей/клиентов:      Stella на телефоне → Ещё → «Друзья и клиенты» → создать приглашение"
+echo "  Общий ключ Gemini:    по желанию — STELLA_GEMINI_API_KEY в /etc/stella-cloud.env, затем systemctl restart stella-cloud"
 echo "  Логи:                 journalctl -u stella-cloud -f"
 echo "  Обновить:             запусти эту же команду ещё раз"

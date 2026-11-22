@@ -64,17 +64,21 @@ async function api(req, res, url) {
     if (limited(req)) return json(res, 429, { error: 'Слишком много попыток, подождите 10 минут' });
     try {
       const b = await body(req);
-      if (p === '/api/register') {
-        const mode = process.env.STELLA_SIGNUP || 'invite';          // invite | open | closed
-        if (mode === 'closed') return json(res, 403, { error: 'Регистрация закрыта администратором' });
-        if (mode === 'invite' && String(b.invite || '').trim() !== String(process.env.STELLA_INVITE || '')) return json(res, 403, { error: 'Неверный код приглашения' });
-      }
-      const r = p === '/api/register' ? users.register(b.username, b.password) : users.login(b.username, b.password);
+      const r = p === '/api/register' ? users.register(b.username, b.password, b.invite) : users.login(b.username, b.password);
       return json(res, 200, r);
     } catch (e) { return json(res, 400, { error: e.message }); }
   }
   if (req.method === 'POST' && p === '/api/logout') { users.logout(bearer(req)); return json(res, 200, { ok: true }); }
-  if (req.method === 'GET' && p === '/api/info') return json(res, 200, { signup: process.env.STELLA_SIGNUP || 'invite' });
+  if (req.method === 'GET' && p === '/api/info') return json(res, 200, { signup: process.env.STELLA_SIGNUP || 'invite', sharedKey: !!process.env.STELLA_GEMINI_API_KEY, name: 'Stella Cloud' });
+  // pairing: a signed-in device (PC) shows a QR, the phone claims it
+  if (req.method === 'POST' && p === '/api/pair') {
+    const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
+    return json(res, 200, { code: users.createPair(u) });
+  }
+  if (req.method === 'POST' && p === '/api/pair/claim') {
+    if (limited(req)) return json(res, 429, { error: 'Слишком много попыток, подождите 10 минут' });
+    try { const b = await body(req); return json(res, 200, users.claimPair(b.code)); } catch (e) { return json(res, 400, { error: e.message }); }
+  }
   if (req.method === 'GET' && p === '/api/me') {
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
     return json(res, 200, { user: users.publicUser(u), agy: !!agent.agyPath(u) });
@@ -147,7 +151,7 @@ wss.on('connection', (ws) => {
         pcOnline: pc(me.name).online,
         serverChats: agent.chats(me).map(agent.summary),
         pcChats: [...pc(me.name).chats.values()].map(c => agent.summary(c)),
-        wa: wa.overview(me),
+        wa: wa.overview(me), sharedKey: !!process.env.STELLA_GEMINI_API_KEY,
         settings: me.settings || { mode: 'yolo' }
       });
       return;
@@ -205,6 +209,13 @@ async function onMsg(u, conn, m) {
       break;
     }
 
+    /* ---- admin: invites and accounts ---- */
+    case 'admin.list': requireAdmin(u); sendTo(conn, adminState()); break;
+    case 'admin.invite': requireAdmin(u); users.createInvite(u.name, m.note, m.maxUses || 1); sendTo(conn, adminState()); break;
+    case 'admin.revoke': requireAdmin(u); users.revokeInvite(m.code); sendTo(conn, adminState()); break;
+    case 'admin.disable': requireAdmin(u); users.setDisabled(m.name, !!m.on); if (m.on) kick(m.name); sendTo(conn, adminState()); break;
+    case 'admin.delete': requireAdmin(u); { const t = users.get(m.name); if (t) agent.stopAll(t); kick(m.name); users.remove(m.name); } sendTo(conn, adminState()); break;
+
     /* ---- WhatsApp ---- */
     case 'wa.connect': sendTo(conn, Object.assign({ t: 'wa.status' }, await wa.connect(u))); break;
     case 'wa.logout': await wa.logout(u); break;
@@ -213,6 +224,17 @@ async function onMsg(u, conn, m) {
     case 'wa.auto': { const r = wa.setAuto(u, m.jid, !!m.on); emit(u.name, { t: 'wa.autoChanged', jid: m.jid, on: !!m.on, chat: r }); break; }
   }
 }
+
+function requireAdmin(u) { if (!u.admin) throw new Error('Только для администратора'); }
+function adminState() {
+  return {
+    t: 'admin.state',
+    users: users.all().map(x => Object.assign(users.adminView(x), { online: [...devices(x.name)].map(c => c.device), running: agent.runningCount(x) })),
+    invites: users.listInvites(),
+    signup: process.env.STELLA_SIGNUP || 'invite', sharedKey: !!process.env.STELLA_GEMINI_API_KEY
+  };
+}
+function kick(name) { for (const c of devices(name)) { try { c.ws.close(); } catch {} } }
 
 server.listen(PORT, HOST, () => {
   console.log(`Stella Cloud on http://${HOST}:${PORT}  (data: ${require('./lib/store').DATA}, root: ${users.isRoot})`);

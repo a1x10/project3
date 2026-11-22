@@ -12,6 +12,7 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "qrcode": "^1.5.4",
     "ws": "^8.23.0"
   },
   "optionalDependencies": {
@@ -32,6 +33,7 @@
       "main.js",
       "preload.js",
       "control.js",
+      "config.json",
       "mcp-whatsapp.js",
       "cloud.js",
       "renderer/**",

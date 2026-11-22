@@ -77,7 +77,8 @@
       <header class="bar"><h2>Ещё</h2></header>
       <div class="card">
         <h3>Агент на сервере</h3>
-        <p class="small muted">Сначала один раз войдите в Google в терминале агента: откройте ссылку, которую он покажет, и вставьте код обратно.</p>
+        <p class="small muted" id="shared-key-note" hidden>Сервер использует общий ключ Gemini — входить в Google не нужно.</p>
+        <p class="small muted" id="google-note">Сначала один раз войдите в Google в терминале агента: откройте ссылку, которую он покажет, и вставьте код обратно.</p>
         <button class="btn wide" id="open-term">Открыть терминал агента</button>
       </div>
       <div class="card">
@@ -94,6 +95,16 @@
         <h3>Уведомления</h3>
         <button class="btn wide" id="notif-btn">Включить уведомления</button>
         <p class="small muted" id="install-hint">Добавьте Stella на главный экран: в браузере «Поделиться» → «На экран Домой» (iPhone) или меню ⋮ → «Установить приложение» (Android).</p>
+      </div>
+      <div class="card" id="admin-card" hidden>
+        <h3>Друзья и клиенты <span class="pill">админ</span></h3>
+        <p class="small muted">Каждый получает своё рабочее место и своего агента на этом сервере. Создайте приглашение и отправьте ссылку.</p>
+        <div class="inv-row"><input id="inv-note" class="search" placeholder="Для кого (например: Дима, клиент ООО Ромашка)"><button class="btn" id="inv-create">Создать</button></div>
+        <div id="inv-new" hidden class="inv-new"><div class="small muted">Ссылка-приглашение (одноразовая):</div><code id="inv-link"></code><button class="btn tiny" id="inv-share">Поделиться / копировать</button></div>
+        <h3 class="sub0">Приглашения</h3>
+        <ul class="log-list" id="inv-list"></ul>
+        <h3 class="sub0">Аккаунты</h3>
+        <ul class="log-list" id="acc-list"></ul>
       </div>
       <div class="card">
         <h3>Аккаунт</h3>

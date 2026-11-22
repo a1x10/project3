@@ -9,17 +9,34 @@ let H = { log: () => {}, send: () => {}, getSettings: () => ({}), saveSettings: 
 let ws = null, timer = null, retry = 0, status = 'off', lastChats = [];
 
 function init(hooks) { H = Object.assign(H, hooks); const s = H.getSettings(); if (s.cloudUrl && s.cloudToken) connect(); }
+function defaultServer() {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).server || ''; } catch { return ''; }
+}
 const norm = u => String(u || '').trim().replace(/\/+$/, '').replace(/^(?!https?:\/\/)/, 'https://');
 
 function setStatus(st, extra = {}) { status = st; H.send('cloud:status', Object.assign({ status: st, user: H.getSettings().cloudUser || '', url: H.getSettings().cloudUrl || '' }, extra)); }
-function getStatus() { const s = H.getSettings(); return { status, user: s.cloudUser || '', url: s.cloudUrl || '' }; }
+function getStatus() { const s = H.getSettings(); return { status, user: s.cloudUser || '', url: s.cloudUrl || defaultServer(), signedIn: !!s.cloudToken, fixedServer: !!defaultServer() }; }
 
-async function login(url, username, password) {
-  url = norm(url);
-  const r = await fetch(url + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }), signal: AbortSignal.timeout(20000) });
+// QR code for the phone: opens the server and signs in to the same account
+async function pairQr() {
+  const s = H.getSettings();
+  const r = await fetch(s.cloudUrl + '/api/pair', { method: 'POST', headers: { authorization: 'Bearer ' + s.cloudToken }, signal: AbortSignal.timeout(15000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.code) throw new Error(j.error || 'Сервер не дал код');
+  const link = s.cloudUrl + '/#pair=' + j.code;
+  const qr = await require('qrcode').toDataURL(link, { margin: 1, width: 300 });
+  return { link, qr, code: j.code };
+}
+
+async function login(url, username, password, invite, mode = 'login') {
+  url = norm(url || defaultServer());
+  if (!/^https?:\/\/[^/]+/.test(url)) throw new Error('Укажите адрес сервера');
+  let r;
+  try { r = await fetch(url + '/api/' + (mode === 'register' ? 'register' : 'login'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password, invite }), signal: AbortSignal.timeout(20000) }); }
+  catch (e) { throw new Error('Сервер не отвечает: ' + url); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.token) throw new Error(j.error || ('Сервер ответил ' + r.status));
-  H.saveSettings({ cloudUrl: url, cloudToken: j.token, cloudUser: j.user.name });
+  H.saveSettings({ cloudUrl: url, cloudToken: j.token, cloudUser: j.user.name, cloudAdmin: !!j.user.admin });
   registerWhatsAppMcp(true);
   connect();
   return getStatus();
@@ -50,7 +67,7 @@ function connect() {
   });
   sock.on('message', raw => {
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
-    if (m.t === 'auth.error') { H.saveSettings({ cloudToken: '' }); setStatus('error', { error: 'Сессия устарела — войдите снова' }); try { sock.close(); } catch {} return; }
+    if (m.t === 'auth.error') { H.saveSettings({ cloudToken: '' }); setStatus('error', { error: 'Сессия закончилась или аккаунт заблокирован — войдите снова' }); H.send('cloud:signed-out'); try { sock.close(); } catch {} return; }
     if (m.t === 'hello') { setStatus('online'); if (lastChats.length) push({ t: 'pc.chats', chats: lastChats }); registerWhatsAppMcp(true); return; }
     // commands from the phone / server
     if (['pc.run', 'pc.stop', 'pc.export', 'pc.import'].includes(m.t)) H.send('cloud:command', m);
@@ -114,4 +131,4 @@ function agentNote() {
     'Message people ONLY when the user explicitly asks; write in the user\'s own style (call writing_style first). Replies are forwarded to the user automatically.\n';
 }
 
-module.exports = { init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
+module.exports = { pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
