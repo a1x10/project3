@@ -79,6 +79,21 @@ else echo "agy will be installed into each account's home on registration."; fi
 say "Settings"
 mkdir -p "$DATA" "$HOMES"; chmod 700 "$DATA"; chmod 711 "$HOMES"
 ENVF=/etc/stella-cloud.env
+# write KEY=value safely: strip pasted terminal junk (escape codes, spaces, quotes), no sed injection
+clean() { printf '%s' "$1" | sed -E $'s/\x1b\\[[0-9;]*[~A-Za-z]//g; s/\\[20[01]~//g' | LC_ALL=C tr -cd 'A-Za-z0-9._:/@+=-'; }
+setenv() {
+  local v; v=$(clean "$2")
+  grep -v "^$1=" "$ENVF" > "$ENVF.tmp" || true
+  printf '%s=%s\n' "$1" "$v" >> "$ENVF.tmp"
+  mv "$ENVF.tmp" "$ENVF"; chmod 600 "$ENVF"
+}
+# repair a settings file damaged by an earlier paste (control characters / missing newline)
+fix_envfile() {
+  [ -f "$ENVF" ] || return 0
+  LC_ALL=C tr -d '\r\033\000' < "$ENVF" | sed -E 's/\[20[01]~//g' | grep -E '^(#.*|[A-Z_][A-Z0-9_]*=.*|)$' > "$ENVF.tmp" || true
+  mv "$ENVF.tmp" "$ENVF"; chmod 600 "$ENVF"
+}
+fix_envfile
 if [ ! -f "$ENVF" ]; then
   INVITE=$(head -c 9 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 10)
   cat > "$ENVF" <<EOF
@@ -116,6 +131,7 @@ if port_busy "$PORT"; then
   echo "Stella будет работать на 127.0.0.1:$PORT"
 fi
 
+fix_envfile 2>/dev/null || true
 say "systemd service"
 cat > /etc/systemd/system/stella-cloud.service <<EOF
 [Unit]
@@ -162,11 +178,15 @@ if [ -z "${DOMAIN:-}" ]; then
   DOMAIN="${IP//./-}.sslip.io"
 fi
 # ---------- Cloudflare Turnstile (captcha) ----------
-setenv() { if grep -q "^$1=" "$ENVF"; then sed -i "s|^$1=.*|$1=$2|" "$ENVF"; else echo "$1=$2" >> "$ENVF"; fi; }
 if [ "${TURNSTILE:-}" = 1 ]; then
   read -rp "Turnstile Site Key: " TS_SITE < /dev/tty
   read -rsp "Turnstile Secret Key (ввод скрыт): " TS_SECRET < /dev/tty; echo
-  if [ -n "$TS_SITE" ] && [ -n "$TS_SECRET" ]; then setenv STELLA_TURNSTILE_SITEKEY "$TS_SITE"; setenv STELLA_TURNSTILE_SECRET "$TS_SECRET"; echo "Капча Cloudflare включена"; fi
+  TS_SITE=$(clean "$TS_SITE"); TS_SECRET=$(clean "$TS_SECRET")
+  if [[ "$TS_SITE" =~ ^0x[A-Za-z0-9_-]{10,}$ ]] && [[ "$TS_SECRET" =~ ^0x[A-Za-z0-9_-]{10,}$ ]]; then
+    setenv STELLA_TURNSTILE_SITEKEY "$TS_SITE"; setenv STELLA_TURNSTILE_SECRET "$TS_SECRET"; echo "Капча Cloudflare включена"
+  else
+    echo "ВНИМАНИЕ: ключи Turnstile выглядят неправильно (должны начинаться с 0x…) — капча НЕ включена. Запустите ещё раз с TURNSTILE=1."
+  fi
 fi
 # ---------- Cloudflare Tunnel (hide the server) ----------
 if [ -n "${TUNNEL:-}" ]; then
