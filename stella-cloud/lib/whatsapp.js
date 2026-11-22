@@ -28,7 +28,7 @@ function session(u) {
   return s;
 }
 
-function publicStatus(s) { return { status: s.status, qr: s.qr, me: s.me }; }
+function publicStatus(s) { return { status: s.status, qr: s.qr, me: s.me, error: s.status === 'error' ? s.error : null }; }
 function setStatus(s, status, extra = {}) { Object.assign(s, { status }, extra); emit(s.u.name, Object.assign({ t: 'wa.status' }, publicStatus(s))); }
 
 /* ------------------------------------------------------------------ */
@@ -37,13 +37,16 @@ function setStatus(s, status, extra = {}) { Object.assign(s, { status }, extra);
 async function connect(u) {
   const s = session(u);
   if (s.sock && (s.status === 'connected' || s.status === 'connecting' || s.status === 'qr')) return publicStatus(s);
-  const { default: makeWASocket, useMultiFileAuthState, Browsers, DisconnectReason, fetchLatestBaileysVersion } = await lib();
+  if (s.status === 'error' || s.status === 'off' || s.status === 'logged_out') s.fails = 0;     // explicit retry by the user
+  const { default: makeWASocket, useMultiFileAuthState, Browsers, DisconnectReason, fetchLatestBaileysVersion, fetchLatestWaWebVersion } = await lib();
   const pino = require('pino');
   const authDir = path.join(dirOf(u), 'auth');
   fs.mkdirSync(authDir, { recursive: true, mode: 0o700 });
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   let version;
-  try { version = (await fetchLatestBaileysVersion()).version; } catch {}
+  // WhatsApp rejects outdated clients (428 Connection Terminated): use the current WhatsApp Web revision
+  try { version = (await fetchLatestWaWebVersion({})).version; } catch {}
+  if (!version) { try { version = (await fetchLatestBaileysVersion()).version; } catch {} }
   setStatus(s, 'connecting', { qr: null });
 
   // optional outbound proxy (servers that can reach the internet only through a proxy)
@@ -52,13 +55,14 @@ async function connect(u) {
   if (proxyUrl) { const { HttpsProxyAgent } = require('https-proxy-agent'); const ag = new HttpsProxyAgent(proxyUrl); agentOpt = { agent: ag, fetchAgent: ag }; }
   const sock = makeWASocket(Object.assign(agentOpt, {
     auth: state, version, logger: pino({ level: 'silent' }),
-    browser: Browsers.macOS('Desktop'), syncFullHistory: true, markOnlineOnConnect: false
+    browser: Browsers.macOS('Desktop'), syncFullHistory: false, markOnlineOnConnect: false
   }));
   s.sock = sock;
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) setStatus(s, 'qr', { qr: await QRCode.toDataURL(qr, { margin: 1, width: 320 }) });
     if (connection === 'open') {
+      s.fails = 0;
       const id = sock.user && sock.user.id;
       setStatus(s, 'connected', { qr: null, me: { id, name: sock.user && sock.user.name } });
       s.data.linked = true; s.save();
@@ -72,8 +76,11 @@ async function connect(u) {
         s.data.linked = false; s.save();
         setStatus(s, 'logged_out', { qr: null, me: null });
       } else if (s.status !== 'off') {
+        // growing pause between attempts; give up after ~10 failures in a row with a clear status
+        s.fails = (s.fails || 0) + 1;
+        if (s.fails > 10) { setStatus(s, 'error', { qr: null, error: `WhatsApp не принимает подключение (код ${code}). Попробуйте позже или обновите Stella на сервере.` }); return; }
         setStatus(s, 'reconnecting', { qr: null });
-        setTimeout(() => connect(u).catch(e => console.error('wa reconnect', e.message)), 3000);
+        setTimeout(() => connect(u).catch(e => console.error('wa reconnect', e.message)), Math.min(120000, 3000 * 2 ** (s.fails - 1)));
       }
     }
   });

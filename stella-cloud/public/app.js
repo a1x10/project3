@@ -83,7 +83,7 @@ function onMsg(m) {
     case 'settings': S.settings = m.settings; break;
     case 'notify': notify(m.title, m.body); break;
     case 'term.data': if (xterm) xterm.write(m.data); break;
-    case 'wa.status': Object.assign(S.wa, { status: m.status, qr: m.qr, me: m.me }); renderWa(); if (m.status === 'connected') send({ t: 'wa.overview' }); break;
+    case 'wa.status': Object.assign(S.wa, { status: m.status, qr: m.qr, me: m.me, error: m.error }); renderWa(); if (m.status === 'connected') send({ t: 'wa.overview' }); break;
     case 'wa.overview': S.wa = m; renderWa(); break;
     case 'wa.chats': S.wa.chats = m.list; renderWaList(); break;
     case 'wa.autoChanged': { const c = S.wa.chats.find(x => x.jid === m.jid); if (c) c.auto = m.on; renderWaList(); break; }
@@ -248,13 +248,15 @@ $('#chat-transfer').onclick = () => {
 /* ================================================================== */
 function renderWa() {
   const st = S.wa.status;
-  const label = { off: 'отключён', connecting: 'подключение…', qr: 'ждёт QR', connected: 'подключён', reconnecting: 'переподключение…', logged_out: 'отвязан' }[st] || st;
+  const label = { off: 'отключён', connecting: 'подключение…', qr: 'ждёт QR', connected: 'подключён', reconnecting: 'переподключение…', logged_out: 'отвязан', error: 'ошибка' }[st] || st;
   $('#wa-pill').textContent = label; $('#wa-pill').classList.toggle('on', st === 'connected');
   $('#wa-connect').hidden = st === 'connected';
   $('#wa-main').hidden = st !== 'connected';
   $('#wa-qr').hidden = st !== 'qr' || !S.wa.qr;
   if (S.wa.qr) $('#wa-qr-img').src = S.wa.qr;
   $('#wa-start').hidden = st === 'qr' || st === 'connecting';
+  $('#wa-start').textContent = st === 'error' ? 'Попробовать снова' : 'Подключить по QR-коду';
+  $('#wa-error').hidden = !S.wa.error; $('#wa-error').textContent = S.wa.error || '';
   renderWaList(); renderWaLog();
 }
 function renderWaList() {
