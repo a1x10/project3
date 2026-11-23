@@ -1,10 +1,70 @@
 // «Конференция»: a small always-on-top window that listens to the meeting (your microphone + the sound of the call),
 // shows a live transcript and gives instant hints (what to answer, questions, summary, explain the screen).
 // Speech is recognised and answered on the Stella server with the fastest Gemini models.
-const { BrowserWindow, ipcMain, desktopCapturer, session, screen } = require('electron');
+const { BrowserWindow, ipcMain, desktopCapturer, session, screen, app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+const { spawn, execFile } = require('child_process');
+
+/* ------------------------------------------------------------------ */
+/* Stella Conference (Windows app based on Pluely, GPL-3.0): downloaded */
+/* next to Stella, checked by SHA-256, started with the Stella account.  */
+/* The built-in window below stays as a fallback.                        */
+/* ------------------------------------------------------------------ */
+const CONF_URL = 'https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/agy-desktop/release/conference.json';
+let proc = null;
+const confDir = () => path.join(app.getPath('userData'), 'conference');
+const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+
+async function ensureApp() {
+  const dir = confDir(); fs.mkdirSync(dir, { recursive: true });
+  const exe = path.join(dir, 'StellaConference.exe'), meta = path.join(dir, 'installed.json');
+  let have = null; try { have = JSON.parse(fs.readFileSync(meta, 'utf8')); } catch {}
+  let info = null;
+  try {
+    let u = process.env.STELLA_CONF_URL || CONF_URL; if (!process.env.STELLA_CONF_URL) try { u = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).conferenceUrl || u; } catch {}
+    const r = await fetch(u + '?t=' + Date.now(), { signal: AbortSignal.timeout(15000) });
+    if (r.ok) info = await r.json();
+  } catch (e) { H.log('conference: info', e.message); }
+  if (info && /^[0-9a-f]{64}$/.test(info.sha256 || '') && !(have && have.sha256 === info.sha256 && fs.existsSync(exe))) {
+    H.send('conf:progress', { text: 'скачиваю Stella Conference ' + (info.version || '') + '…' });
+    const r = await fetch(info.url, { signal: AbortSignal.timeout(10 * 60 * 1000) });
+    if (!r.ok) throw new Error('загрузка: ' + r.status);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (crypto.createHash('sha256').update(buf).digest('hex') !== info.sha256) throw new Error('контрольная сумма не совпала — файл отклонён');
+    if (proc) stopApp();
+    fs.writeFileSync(exe + '.new', buf, { mode: 0o755 }); fs.renameSync(exe + '.new', exe);
+    fs.writeFileSync(meta, JSON.stringify({ version: info.version, sha256: info.sha256 }));
+    have = info;
+  }
+  if (!fs.existsSync(exe)) throw new Error('Stella Conference ещё не загружена');
+  if (have && have.sha256 && sha(exe) !== have.sha256) throw new Error('файл Stella Conference изменён — скачаю заново в следующий раз');
+  return exe;
+}
+
+async function startApp() {
+  if (proc) return true;
+  const s = server();
+  const exe = await ensureApp();
+  proc = spawn(exe, [], {
+    cwd: path.dirname(exe), detached: false, windowsHide: false, stdio: 'ignore',
+    env: Object.assign({}, process.env, { STELLA_SERVER: s.cloudUrl, STELLA_TOKEN: s.cloudToken, STELLA_USER: s.cloudUser || '' })
+  });
+  const p = proc;
+  try { await new Promise((ok, fail) => { p.once('spawn', ok); p.once('error', fail); }); }
+  catch (e) { proc = null; throw new Error('не запустилась (' + e.message + ')'); }
+  p.on('exit', () => { if (proc === p) { proc = null; H.send('conf:closed'); } });
+  p.on('error', e => H.log('conference', e.message));
+  H.send('conf:progress', { text: 'Stella Conference запущена' });
+  return true;
+}
+function stopApp() {
+  if (!proc) return;
+  const pid = proc.pid; proc = null;                 // cleared first: this exit is not reported as "closed by the user"
+  if (process.platform === 'win32') execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {}); else { try { process.kill(pid); } catch {} }
+}
 
 let H = { log: () => {}, send: () => {}, getSettings: () => ({}) };
 let win = null;
@@ -42,8 +102,14 @@ function init(hooks) {
   // microphone / screen sound only for Stella's own pages (never for web pages like the captcha window)
   session.defaultSession.setPermissionRequestHandler((wc, perm, cb) => cb(['media', 'display-capture', 'clipboard-sanitized-write'].includes(perm) && String(wc.getURL()).startsWith('file://')));
 
-  ipcMain.handle('conf:open', () => { open(); return true; });
-  ipcMain.handle('conf:close', () => { close(); return true; });
+  ipcMain.handle('conf:open', async () => {
+    if (process.platform === 'win32' || process.env.STELLA_CONF_APP_TEST) {
+      try { await startApp(); return { ok: true, app: true }; }
+      catch (e) { H.log('conference app', e.message); H.send('conf:progress', { text: 'Stella Conference: ' + e.message + ' — открываю встроенное окно' }); }
+    }
+    open(); return { ok: true, app: false };
+  });
+  ipcMain.handle('conf:close', () => { stopApp(); close(); return true; });
   ipcMain.handle('conf:status', async () => {
     try { const s = server(); const r = await fetch(s.cloudUrl + '/api/conf/status', { headers: { authorization: 'Bearer ' + s.cloudToken }, signal: AbortSignal.timeout(10000) }); return await r.json(); }
     catch (e) { return { ready: false, error: e.message }; }
@@ -101,4 +167,4 @@ async function shot() {
   } finally { if (hide && win) win.setOpacity(1); }
 }
 
-module.exports = { init, open, close };
+module.exports = { init, open, close, stopApp };

@@ -149,16 +149,25 @@ async function api(req, res, url) {
     return json(res, 200, { login: s.login, password: s.password, url: s.url });
   }
   // "Конференция": live meeting assistant for Stella.exe (speech segments -> text, streamed hints)
-  const cf = p.match(/^\/api\/conf\/(status|transcribe|assist)$/);
+  const cf = p.match(/^\/api\/conf\/(status|transcribe|assist|v1\/chat\/completions|v1\/stt)$/);
   if (cf) {
+    // Stella Conference (desktop webview) calls these from its own origin: bearer token only, no cookies -> open CORS is safe
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-allow-headers', 'authorization, content-type');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    res.setHeader('access-control-max-age', '600');
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
     if (cf[1] === 'status') return json(res, 200, conf.status());
     if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
-    const per = cf[1] === 'transcribe' ? 120 : 30;                     // per user per minute
+    const per = cf[1] === 'transcribe' || cf[1] === 'v1/stt' ? 120 : 40;   // per user per minute
     if (limited({ headers: {}, socket: { remoteAddress: 'u:' + u.name } }, 'conf-' + cf[1], per, 60e3)) return json(res, 429, { error: 'Слишком часто, подождите немного' });
     let m;
     try { m = await bigBody(req, 12e6); } catch (e) { return json(res, 413, { error: e.message }); }
-    if (cf[1] === 'transcribe') { try { return json(res, 200, await conf.transcribe(u, m)); } catch (e) { return json(res, 502, { error: e.message }); } }
+    if (cf[1] === 'transcribe' || cf[1] === 'v1/stt') { try { return json(res, 200, await conf.transcribe(u, m)); } catch (e) { return json(res, 502, { error: e.message }); } }
+    if (cf[1] === 'v1/chat/completions') {           // OpenAI-compatible, streamed (Stella Conference)
+      try { return await conf.chatCompletions(u, m, res); } catch (e) { if (!res.headersSent) return json(res, 502, { error: { message: e.message } }); return res.end(); }
+    }
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
     try { await conf.assist(u, m, t => res.write(t)); } catch (e) { res.write('\n\n⚠ ' + e.message); }
     return res.end();

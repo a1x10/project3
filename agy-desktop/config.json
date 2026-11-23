@@ -1,4 +1,1 @@
-{
-  "server": "https://stellalive.duckdns.org",
-  "updateUrl": "https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/agy-desktop/release/version.json"
-}
+{"server": "https://stellalive.duckdns.org", "updateUrl": "https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/agy-desktop/release/version.json", "conferenceUrl": "https://raw.githubusercontent.com/a1x10/project3/claude/happy-ritchie-vx32ws/agy-desktop/release/conference.json"}

@@ -1,0 +1,61 @@
+# Builds Stella Conference (Tauri, based on Pluely GPL-3.0) for Windows and puts the exe next to Stella.exe
+name: Stella Conference (Windows)
+
+on:
+  push:
+    branches: [claude/happy-ritchie-vx32ws]
+    paths:
+      - 'stella-conference/**'
+      - '.github/workflows/stella-conference.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stella-conference
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: stella-conference
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: stella-conference/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stella-conference/src-tauri -> target
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npx tauri build --no-bundle
+
+      - name: Publish exe to the branch
+        shell: bash
+        run: |
+          EXE=src-tauri/target/release/stella-conference.exe
+          ls -la "$EXE"
+          cd ..
+          cp "stella-conference/$EXE" agy-desktop/release/StellaConference.exe
+          SUM=$(sha256sum agy-desktop/release/StellaConference.exe | cut -d' ' -f1)
+          VER=$(node -p "require('./stella-conference/package.json').version")
+          printf '{\n  "version": "%s",\n  "url": "https://github.com/a1x10/project3/raw/claude/happy-ritchie-vx32ws/agy-desktop/release/StellaConference.exe",\n  "sha256": "%s"\n}\n' "$VER" "$SUM" > agy-desktop/release/conference.json
+          cat agy-desktop/release/conference.json
+          git config user.name "stella-build"
+          git config user.email "stella-build@users.noreply.github.com"
+          git add agy-desktop/release/StellaConference.exe agy-desktop/release/conference.json
+          git commit -m "Stella Conference $VER (Windows build)" || exit 0
+          for i in 1 2 3 4; do git pull --rebase origin claude/happy-ritchie-vx32ws && git push origin HEAD:claude/happy-ritchie-vx32ws && break; sleep $((i*5)); done

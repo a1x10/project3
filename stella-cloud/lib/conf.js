@@ -23,12 +23,26 @@ async function gemini(model, body, stream) {
 }
 const textOf = j => ((j.candidates || [])[0]?.content?.parts || []).map(p => p.text || '').join('');
 
-// one speech segment (16 kHz mono WAV, base64) -> text
-async function transcribe(u, { audio, who, hint }) {
+// audio container from the first bytes (WAV from Stella.exe and system audio, WebM/Ogg/MP3 from microphone recorders)
+function mimeOf(b64) {
+  const h = Buffer.from(String(b64).slice(0, 24), 'base64');
+  if (h.slice(0, 4).toString() === 'RIFF') return 'audio/wav';
+  if (h[0] === 0x1a && h[1] === 0x45 && h[2] === 0xdf && h[3] === 0xa3) return 'audio/webm';
+  if (h.slice(0, 4).toString() === 'OggS') return 'audio/ogg';
+  if (h.slice(0, 4).toString() === 'fLaC') return 'audio/flac';
+  if (h.slice(0, 3).toString() === 'ID3' || (h[0] === 0xff && (h[1] & 0xe0) === 0xe0)) return 'audio/mp3';
+  if (h.slice(4, 8).toString() === 'ftyp') return 'audio/mp4';
+  return 'audio/wav';
+}
+const okModel = (m, def) => (typeof m === 'string' && /^gemini-[\w.-]{1,60}$/.test(m) ? m : def);
+
+// one speech segment (base64 audio) -> text
+async function transcribe(u, { audio, who, hint, model }) {
   if (!audio || typeof audio !== 'string') throw new Error('нет аудио');
-  const r = await gemini(STT_MODEL(), {
+  audio = audio.replace(/^data:[^,]*,/, '');
+  const r = await gemini(okModel(model, STT_MODEL()), {
     contents: [{ role: 'user', parts: [
-      { inline_data: { mime_type: 'audio/wav', data: audio } },
+      { inline_data: { mime_type: mimeOf(audio), data: audio } },
       { text: 'Transcribe this speech verbatim in the language it is spoken (Russian, Kazakh, English or mixed). ' +
         'Output ONLY the transcribed text with punctuation (keep "?" for questions). No comments, no translation. ' +
         'If there is no intelligible speech (silence, noise, music) output nothing.' + (hint ? ' Context words that may appear: ' + String(hint).slice(0, 300) : '') }
@@ -73,4 +87,26 @@ async function assist(u, { mode, transcript, question, image, title }, onDelta) 
   return all;
 }
 
-module.exports = { status, transcribe, assist, MODES };
+// OpenAI-compatible chat (used by Stella Conference): proxied to Gemini's OpenAI endpoint with the server key.
+// Only gemini-* models; the answer is streamed back unchanged (SSE).
+async function chatCompletions(u, body, res) {
+  if (!KEY()) throw new Error('На сервере не задан ключ Gemini для конференций (STELLA_CONF_GEMINI_KEY). Запустите установщик с GEMINI=1.');
+  if (!body || !Array.isArray(body.messages) || !body.messages.length) throw new Error('нет сообщений');
+  const profile = services.profileText(u) || '';
+  const messages = body.messages.slice(-60);
+  if (profile) messages.unshift({ role: 'system', content: 'About the user (use when it helps):\n' + profile.slice(0, 2000) });
+  const req = { model: okModel(body.model, CHAT_MODEL()), messages, stream: body.stream !== false, temperature: typeof body.temperature === 'number' ? body.temperature : 0.5, reasoning_effort: 'none' };
+  if (body.max_tokens) req.max_tokens = Math.min(Number(body.max_tokens) || 2048, 8192);
+  const call = () => fetch(BASE() + '/v1beta/openai/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + KEY() }, body: JSON.stringify(req), signal: AbortSignal.timeout(120000) });
+  let r = await call();
+  if (r.status === 400) {                   // a model that cannot switch thinking off -> its default
+    const t = await r.text(); if (!/reason|think/i.test(t)) throw new Error('Gemini 400: ' + t.slice(0, 200));
+    delete req.reasoning_effort; r = await call();
+  }
+  if (!r.ok) { const t = await r.text().catch(() => ''); let m = t; try { m = (JSON.parse(t)[0] || JSON.parse(t)).error.message; } catch {} throw new Error('Gemini ' + r.status + ': ' + String(m).slice(0, 200)); }
+  res.writeHead(200, { 'content-type': r.headers.get('content-type') || 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+  for await (const c of r.body) res.write(c);
+  res.end();
+}
+
+module.exports = { status, transcribe, assist, chatCompletions, MODES };

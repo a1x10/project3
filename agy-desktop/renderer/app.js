@@ -509,6 +509,7 @@ async function initControlToggles() {
     } else await api.confClose();
   };
   api.onConfClosed(() => { tc.checked = false; });
+  api.onConfProgress(({ text }) => setStatus('on', text));
   api.onConfSaved(({ file }) => setStatus('on', 'конференция сохранена: ' + file.split(/[\\/]/).slice(-2).join('/')));
   ts.onchange = async () => {
     if (ts.checked && !confirm('Разрешить агенту видеть экран и управлять мышью и клавиатурой?\n\nПока агент работает, сверху будет красная полоса. Нажмите Esc, чтобы остановить. Пароли агент не вводит.')) { ts.checked = false; return; }

@@ -279,7 +279,7 @@ app.whenReady().then(() => { log('ready'); disableAgySandbox();
 app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d)));
 process.on('unhandledRejection', e => log('unhandledRejection', e && e.stack || e));
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', killAll);
+app.on('before-quit', () => { killAll(); conf.stopApp(); });
 
 /* ------------------------------------------------------------------ */
 /* Hidden terminal (pty) with interactive agy                           */

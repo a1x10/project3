@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('agy', {
   confClose: () => ipcRenderer.invoke('conf:close'),
   onConfClosed: on('conf:closed'),
   onConfSaved: on('conf:saved'),
+  onConfProgress: on('conf:progress'),
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (p) => ipcRenderer.invoke('settings:set', p),
