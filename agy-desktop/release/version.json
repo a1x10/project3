@@ -1,6 +1,6 @@
 {
-  "version": "1.3.0",
+  "version": "1.3.1",
   "url": "https://github.com/a1x10/project3/raw/claude/happy-ritchie-vx32ws/agy-desktop/release/Stella.exe",
-  "sha256": "d09b1a7856edf88a7195ca18de6224fef5ebc9c291f98df4551f05d3ec6b2762",
-  "notes": "Конференция: живая расшифровка созвона и подсказки, что ответить"
+  "sha256": "f81788d2a05e0882b5192923c08c0068aa8562d6ef6e92a1bff6c66f16619372",
+  "notes": "Конференция: Stella Conference (на основе Pluely) на моделях Gemini"
 }
