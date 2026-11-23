@@ -227,6 +227,40 @@ async function api(req, res, url) {
 }
 function agentOriginFromPc(u) { return agent.lastOrigin.get(u.name) || null; }
 
+/* ---------- downloads: Stella.exe + Stella Conference straight from this server (no GitHub needed) ---------- */
+// files come from agy-desktop/release (the installer copies them to ./downloads, the nightly update refreshes them)
+const DL_DIR = [path.join(__dirname, 'downloads'), path.join(__dirname, '..', 'agy-desktop', 'release')].find(d => fs.existsSync(path.join(d, 'version.json'))) || path.join(__dirname, 'downloads');
+const DL_FILES = { 'Stella.exe': 'application/vnd.microsoft.portable-executable', 'StellaConference.exe': 'application/vnd.microsoft.portable-executable', 'version.json': 'application/json', 'conference.json': 'application/json' };
+function publicBase(req) {
+  if (process.env.STELLA_PUBLIC_URL) return process.env.STELLA_PUBLIC_URL.replace(/\/+$/, '');
+  const host = String(req.headers.host || '').replace(/[^\w.:-]/g, '');
+  return (req.headers['x-forwarded-proto'] === 'https' || req.headers['cf-connecting-ip'] ? 'https://' : 'http://') + host;
+}
+function download(req, res, url) {
+  if (limited(req, 'download', 60, 600e3)) return json(res, 429, { error: 'Слишком много загрузок, подождите' });
+  const name = decodeURIComponent(url.pathname.replace(/^\/download\/?/, ''));
+  if (!name) {                                       // a small page with the links
+    const v = (() => { try { return JSON.parse(fs.readFileSync(path.join(DL_DIR, 'version.json'), 'utf8')).version; } catch { return ''; } })();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Скачать Stella</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#f7f6f3;color:#1d1d1f;margin:0;display:grid;place-items:center;min-height:100vh}main{background:#fff;padding:32px;border-radius:20px;max-width:460px;margin:16px;box-shadow:0 10px 30px rgba(0,0,0,.08)}a.b{display:block;background:#111;color:#fff;text-align:center;padding:14px;border-radius:12px;text-decoration:none;font-weight:600;margin:18px 0 8px}small{color:#777}</style></head>
+<body><main><h1>✳ Stella для Windows</h1><p>Один файл, установка не нужна. Внутри всё нужное: при первом запуске Stella сама подготовит «Конференцию».</p>
+<a class="b" href="/download/Stella.exe">⬇ Скачать Stella.exe ${v ? 'v' + v : ''}</a><small>Дальше Stella обновляется сама с этого сервера.</small></main></body></html>`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(DL_FILES, name)) return json(res, 404, { error: 'not found' });
+  const f = path.join(DL_DIR, name);
+  if (!fs.existsSync(f)) return json(res, 404, { error: 'файл ещё не загружен на сервер' });
+  if (name.endsWith('.json')) {                      // point the update links at this server
+    let j; try { j = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return json(res, 500, { error: 'bad file' }); }
+    if (j.url) j.url = publicBase(req) + '/download/' + path.basename(new URL(j.url).pathname);
+    return json(res, 200, j);
+  }
+  const st = fs.statSync(f);
+  res.writeHead(200, { 'content-type': DL_FILES[name], 'content-length': st.size, 'content-disposition': `attachment; filename="${name}"`, 'cache-control': 'public, max-age=300' });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(f).pipe(res);
+}
+
 function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (VENDOR[p]) return fileOut(res, VENDOR[p]);
@@ -246,9 +280,10 @@ const server = http.createServer((req, res) => {
   res.setHeader('referrer-policy', 'no-referrer');
   res.setHeader('x-frame-options', 'DENY');
   res.setHeader('cross-origin-opener-policy', 'same-origin');
-  res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('permissions-policy', 'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()');   // mic: voice input, camera: photos of student work
   res.setHeader('content-security-policy', "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' wss: ws:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
   if (req.headers['x-forwarded-proto'] === 'https' || req.headers['cf-connecting-ip']) res.setHeader('strict-transport-security', 'max-age=63072000; includeSubDomains');
+  if (url.pathname === '/download' || url.pathname.startsWith('/download/')) return download(req, res, url);
   if (url.pathname.startsWith('/api/') && limited(req, 'api', 600, 60e3)) return json(res, 429, { error: 'Слишком много запросов' });
   if (url.pathname.startsWith('/api/')) return api(req, res, url).catch(e => json(res, 500, { error: e.message }));
   serveStatic(req, res, url);

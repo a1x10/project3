@@ -1,6 +1,6 @@
 {
-  "version": "1.3.1",
+  "version": "1.3.2",
   "url": "https://github.com/a1x10/project3/raw/claude/happy-ritchie-vx32ws/agy-desktop/release/Stella.exe",
-  "sha256": "f81788d2a05e0882b5192923c08c0068aa8562d6ef6e92a1bff6c66f16619372",
-  "notes": "Конференция: Stella Conference (на основе Pluely) на моделях Gemini"
+  "sha256": "e2d4c35153f14f798f57516c26f47295b558dae216c67fc4b4c5b129caabab9a",
+  "notes": "Конференция готовится заранее; загрузки и обновления с вашего сервера"
 }

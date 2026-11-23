@@ -267,7 +267,7 @@ app.whenReady().then(() => { log('ready'); disableAgySandbox();
     isBusy: () => running.size > 0,
     onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
   });
-  updater.init({ log, send, version: app.getVersion() });
+  updater.init({ log, send, version: app.getVersion(), getSettings });
   conf.init({ log, send, getSettings });
   cloud.init({
     log, send, getSettings,
@@ -785,7 +785,9 @@ ipcMain.handle('cloud:login', async (_e, { url, user, pass, invite, mode, totp }
     const info = await cloud.serverInfo(url);
     let captcha = '';
     if (info.turnstile) { captcha = await captchaWindow(info.url); if (captcha === null) return { ok: false, error: 'Проверка «Я не робот» не пройдена' }; }
-    return Object.assign({ ok: true }, await cloud.login(info.url, user, pass, invite, mode, totp, captcha));
+    const res = Object.assign({ ok: true }, await cloud.login(info.url, user, pass, invite, mode, totp, captcha));
+    setTimeout(() => conf.prepare(true), 5000);          // signed in: get the conference ready in the background
+    return res;
   } catch (e) { return { ok: false, error: e.message, need2fa: !!e.need2fa }; }
 });
 ipcMain.handle('cloud:pair', async () => { try { return Object.assign({ ok: true }, await cloud.pairQr()); } catch (e) { return { ok: false, error: e.message }; } });

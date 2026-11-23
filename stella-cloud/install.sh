@@ -35,9 +35,10 @@ fi
 say "Stella Cloud code -> $APP"
 TMP=$(mktemp -d)
 git clone -q --depth 1 --branch "$BRANCH" --filter=blob:none --sparse "$REPO" "$TMP/src"
-git -C "$TMP/src" sparse-checkout set stella-cloud
+git -C "$TMP/src" sparse-checkout set stella-cloud agy-desktop/release
 mkdir -p "$APP"
 cp -a "$TMP/src/stella-cloud/." "$APP/"
+mkdir -p "$APP/downloads" && cp -a "$TMP/src/agy-desktop/release/." "$APP/downloads/" 2>/dev/null || true
 rm -rf "$TMP"
 cd "$APP"
 npm ci --omit=dev --no-audit --no-fund 2>/dev/null || npm install --omit=dev --no-audit --no-fund
@@ -309,6 +310,8 @@ NEW=\$(git -C "\$TMP/src" rev-parse HEAD)
 OLD=\$(cat $APP/.version 2>/dev/null || true)
 if [ "\$NEW" = "\$OLD" ]; then rm -rf "\$TMP"; exit 0; fi
 cp -a "\$TMP/src/stella-cloud/." "$APP/"
+git -C "\$TMP/src" sparse-checkout add agy-desktop/release 2>/dev/null || true
+mkdir -p "$APP/downloads" && cp -a "\$TMP/src/agy-desktop/release/." "$APP/downloads/" 2>/dev/null || true
 echo "\$NEW" > $APP/.version
 rm -rf "\$TMP"
 cd "$APP" && (npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1 || npm install --omit=dev --no-audit --no-fund >/dev/null)

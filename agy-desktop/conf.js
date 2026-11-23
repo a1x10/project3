@@ -23,11 +23,10 @@ async function ensureApp() {
   const exe = path.join(dir, 'StellaConference.exe'), meta = path.join(dir, 'installed.json');
   let have = null; try { have = JSON.parse(fs.readFileSync(meta, 'utf8')); } catch {}
   let info = null;
-  try {
-    let u = process.env.STELLA_CONF_URL || CONF_URL; if (!process.env.STELLA_CONF_URL) try { u = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).conferenceUrl || u; } catch {}
-    const r = await fetch(u + '?t=' + Date.now(), { signal: AbortSignal.timeout(15000) });
-    if (r.ok) info = await r.json();
-  } catch (e) { H.log('conference: info', e.message); }
+  for (const u of confUrls()) {
+    try { const r = await fetch(u + '?t=' + Date.now(), { signal: AbortSignal.timeout(15000) }); if (r.ok) { info = await r.json(); break; } }
+    catch (e) { H.log('conference: info', u, e.message); }
+  }
   if (info && /^[0-9a-f]{64}$/.test(info.sha256 || '') && !(have && have.sha256 === info.sha256 && fs.existsSync(exe))) {
     H.send('conf:progress', { text: 'скачиваю Stella Conference ' + (info.version || '') + '…' });
     const r = await fetch(info.url, { signal: AbortSignal.timeout(10 * 60 * 1000) });
@@ -44,9 +43,54 @@ async function ensureApp() {
   return exe;
 }
 
+// where to get conference.json: your Stella server first, GitHub as a fallback
+function confUrls() {
+  if (process.env.STELLA_CONF_URL) return [process.env.STELLA_CONF_URL];
+  let gh = CONF_URL; try { gh = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')).conferenceUrl || gh; } catch {}
+  const s = H.getSettings() || {};
+  return [s.cloudUrl ? s.cloudUrl.replace(/\/+$/, '') + '/download/conference.json' : null, gh].filter(Boolean);
+}
+
+// Stella Conference needs the Microsoft Edge WebView2 runtime (built into Windows 11, usually present on Windows 10)
+const WV2_KEYS = ['HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+  'HKLM\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+  'HKCU\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'];
+const regHas = k => new Promise(r => execFile('reg', ['query', k, '/v', 'pv'], { windowsHide: true }, (e, out) => r(!e && /pv\s+REG_SZ\s+\d+\.\d+/.test(out || '') && !/\s0\.0\.0\.0/.test(out || ''))));
+async function ensureWebView2() {
+  if (process.platform !== 'win32') return true;
+  for (const k of WV2_KEYS) if (await regHas(k)) return true;
+  H.send('conf:progress', { text: 'устанавливаю компонент Windows WebView2 для Конференции…' });
+  const f = path.join(confDir(), 'MicrosoftEdgeWebview2Setup.exe');
+  const r = await fetch('https://go.microsoft.com/fwlink/p/?LinkId=2124703', { signal: AbortSignal.timeout(5 * 60 * 1000) });
+  if (!r.ok) throw new Error('WebView2: загрузка ' + r.status);
+  fs.writeFileSync(f, Buffer.from(await r.arrayBuffer()));
+  await new Promise((ok, fail) => execFile(f, ['/silent', '/install'], { windowsHide: true, timeout: 10 * 60 * 1000 }, e => e ? fail(new Error('WebView2 не установился: ' + e.message)) : ok()));
+  try { fs.unlinkSync(f); } catch {}
+  return true;
+}
+
+// everything the conference needs, prepared in the background when Stella starts (so the button opens it at once)
+let preparing = null, prepared = false;
+function prepare(quiet) {
+  if (preparing) return preparing;
+  preparing = (async () => {
+    try {
+      await ensureWebView2();
+      await ensureApp();
+      prepared = true;
+      if (!quiet) H.send('conf:progress', { text: 'Конференция готова' });
+      H.log('conference: prepared');
+    } catch (e) { H.log('conference prepare', e.message); if (!quiet) throw e; }
+    finally { preparing = null; }
+  })();
+  return preparing;
+}
+
 async function startApp() {
   if (proc) return true;
   const s = server();
+  if (preparing) { H.send('conf:progress', { text: 'готовлю Конференцию…' }); await preparing.catch(() => {}); }
+  await ensureWebView2();
   const exe = await ensureApp();
   proc = spawn(exe, [], {
     cwd: path.dirname(exe), detached: false, windowsHide: false, stdio: 'ignore',
@@ -94,6 +138,12 @@ function close() { if (win && !win.isDestroyed()) win.webContents.send('conf:sto
 
 function init(hooks) {
   H = Object.assign(H, hooks);
+  // download Stella Conference (+ WebView2) in the background soon after start, then re-check for updates every 6 h
+  if (process.platform === 'win32' || process.env.STELLA_CONF_APP_TEST) {
+    const tick = () => { const s = H.getSettings() || {}; if (s.cloudUrl && s.cloudToken && !proc) prepare(true); };
+    setTimeout(tick, Number(process.env.STELLA_CONF_PREPARE_MS || 15000));
+    setInterval(tick, 6 * 3600 * 1000);
+  }
   // the sound of the call: Windows loopback = everything the computer plays (Zoom, Meet, Teams, Telegram…)
   session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
     desktopCapturer.getSources({ types: ['screen'] }).then(src => cb(src[0] ? { video: src[0], audio: process.platform === 'win32' ? 'loopback' : undefined } : {}))
@@ -167,4 +217,4 @@ async function shot() {
   } finally { if (hide && win) win.setOpacity(1); }
 }
 
-module.exports = { init, open, close, stopApp };
+module.exports = { init, open, close, stopApp, prepare };
