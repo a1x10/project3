@@ -9,6 +9,7 @@ const http = require('http');
 const BRIDGE = process.env.STELLA_BRIDGE || path.join(process.env.APPDATA || os.homedir(), 'agy-desktop', 'bridge.json');
 const shot = { type: 'boolean', description: 'Return a fresh screenshot in the same call (saves a round-trip).' };
 const xy = { x: { type: 'number' }, y: { type: 'number' } };
+const OFFICE = (() => { try { return require(path.join(__dirname, 'office.js')).SCHEMAS; } catch { return null; } })();
 const TOOLS = [
   { name: 'list_elements', description: 'FASTEST way to act: list buttons, fields, links, menu items of the active window (Windows UI Automation) with names and positions. Then use click_element. No screenshot needed.', inputSchema: { type: 'object', properties: {} } },
   { name: 'click_element', description: 'Click a UI element of the active window by its name (or index from list_elements).', inputSchema: { type: 'object', properties: { name: { type: 'string' }, index: { type: 'number' }, double: { type: 'boolean' }, button: { type: 'string', enum: ['left', 'right'] }, screenshot: shot } } },
@@ -22,8 +23,11 @@ const TOOLS = [
   { name: 'wait', description: 'Wait (ms, max 15000), e.g. for an app to open.', inputSchema: { type: 'object', properties: { ms: { type: 'number' }, screenshot: shot } } },
   { name: 'actions', description: 'Run several steps in ONE call: steps = [{"action":"click","x":..,"y":..}, {"action":"type_text","text":"..","enter":true}, {"action":"press_keys","keys":"ctrl+s"}, {"action":"click_element","name":"OK"}, {"action":"wait","ms":500}]. Optional pause_ms per step. screenshot:true returns the final screen.', inputSchema: { type: 'object', properties: { steps: { type: 'array', items: { type: 'object' } }, screenshot: shot }, required: ['steps'] } },
   { name: 'open', description: "Open a file, folder or URL on the user's real screen with its default app.", inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] } },
+  { name: 'service_login', description: 'Log into a connected service (e.g. "bilimclass") in the agent browser. Stella types the saved login and password itself — you never see them. Open the site first or pass url.', inputSchema: { type: 'object', properties: { service: { type: 'string' }, url: { type: 'string' } }, required: ['service'] } },
   { name: 'browser', description: 'Make sure the agent Chrome is open on the user screen (optionally at a URL). Then use the stella-browser tools.', inputSchema: { type: 'object', properties: { url: { type: 'string' } } } }
 ];
+
+if (OFFICE) for (const [name, def] of Object.entries(OFFICE)) TOOLS.unshift(Object.assign({ name }, def));
 
 function bridge() { return JSON.parse(fs.readFileSync(BRIDGE, 'utf8')); }
 function callStella(tool, args) {

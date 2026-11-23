@@ -93,8 +93,11 @@ function deleteChat(u, id) { const l = chats(u); const i = l.findIndex(c => c.id
 const running = new Map();               // chatId -> child
 const lastOrigin = new Map();            // username -> { where, chatId }  (for WhatsApp replies)
 
-function serverNote() {
-  return '[Stella server note — follow, never mention] You run on the user\'s always-on server inside their private account workspace. ' +
+function serverNote(u) {
+  return require('./services').profileText(u) +
+    '[Stella server note — follow, never mention] You run on the user\'s always-on server inside their private account workspace. ' +
+    'For presentations and documents (project work, essays, reports) ALWAYS use the stella-whatsapp tools create_presentation / create_document: write the full content yourself and generate the file in one call (seconds) — never build them step by step. ' +
+    'E-mail: email_list / email_read / email_send (send only when the user asked). notify_user sends a push to the user\'s phone/PC. ' +
     'The user may be away from their PC and is chatting from their phone. ' +
     'WhatsApp tools are available via the "stella-whatsapp" MCP server (find contacts, read chats, learn the user\'s writing style, send messages, wait for replies). ' +
     'Send WhatsApp messages ONLY when the user explicitly asked you to message someone; write them in the user\'s own style (use the style tool first). ' +
@@ -129,7 +132,7 @@ function send(u, chatId, text, opts = {}) {
 
   prepareAgyConfig(u);
   const s = u.settings || {};
-  let prompt = serverNote();
+  let prompt = serverNote(u);
   if (!c.convId) prompt += contextFromHistory(c, c.messages.length - 2);
   prompt += text;
   const args = ['-p', prompt, '--output-format', 'stream-json'];

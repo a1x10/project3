@@ -7,6 +7,7 @@ const os = require('os');
 
 let H = { log: () => {}, send: () => {}, getSettings: () => ({}), saveSettings: () => {}, readJsonLoose: () => ({}) };
 let ws = null, timer = null, retry = 0, status = 'off', lastChats = [];
+let profile = {}, servicesList = {};
 
 function init(hooks) { H = Object.assign(H, hooks); const s = H.getSettings(); if (s.cloudUrl && s.cloudToken) connect(); }
 function defaultServer() {
@@ -73,9 +74,12 @@ function connect() {
   sock.on('message', raw => {
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m.t === 'auth.error') { H.saveSettings({ cloudToken: '' }); setStatus('error', { error: 'Сессия закончилась или аккаунт заблокирован — войдите снова' }); H.send('cloud:signed-out'); try { sock.close(); } catch {} return; }
-    if (m.t === 'hello') { setStatus('online'); if (lastChats.length) push({ t: 'pc.chats', chats: lastChats }); registerWhatsAppMcp(true); return; }
+    if (m.t === 'hello') { profile = m.profile || {}; servicesList = m.services || {}; H.send('cloud:profile', profile);
+      setStatus('online'); if (lastChats.length) push({ t: 'pc.chats', chats: lastChats }); registerWhatsAppMcp(true); return; }
     // commands from the phone / server
     if (['pc.run', 'pc.stop', 'pc.export', 'pc.import'].includes(m.t)) H.send('cloud:command', m);
+    if (m.t === 'profile') { profile = m.profile || {}; H.send('cloud:profile', profile); }
+    if (m.t === 'services') servicesList = m.list || {};
     if (m.t === 'pc.failover') { pendingFailover.push(...(m.moved || [])); H.send('cloud:failover', { moved: [] }); }
     if (m.t === 'wa.reply' && m.origin && m.origin.where === 'pc') H.send('cloud:wa-reply', m);
     if (m.t === 'notify' && m.where === 'pc') H.send('cloud:notify', m);
@@ -130,10 +134,37 @@ function registerWhatsAppMcp(on) {
   } catch (e) { H.log('whatsapp mcp register failed', e.message); }
 }
 
+function profileText() {
+  const p = profile || {}; const L = [];
+  if (p.name) L.push('Name: ' + p.name + (p.address ? ` (address them as: ${p.address})` : ''));
+  if (p.role) L.push('Occupation / role: ' + p.role);
+  if (p.city) L.push('City / country: ' + p.city);
+  if (p.language) L.push('Preferred language: ' + p.language);
+  if (p.style) L.push('How to talk to them: ' + p.style);
+  if (p.tasks) L.push('What they usually need help with: ' + p.tasks);
+  if (p.about) L.push('About them (in their words): ' + p.about);
+  return L.length ? '[About the user — use it to personalize, never recite it]\n' + L.join('\n') + '\n\n' : '';
+}
+function getProfile() { return profile || {}; }
+function setProfile(p) { return push({ t: 'profile.set', profile: p }); }
+function connectedServices() { return Object.keys(servicesList || {}); }
+// a site login for Stella to type into the browser itself (never shown to the model)
+async function serviceSecret(name) {
+  const s = H.getSettings();
+  const r = await fetch(s.cloudUrl + '/api/services/secret?name=' + encodeURIComponent(name), { headers: { authorization: 'Bearer ' + s.cloudToken }, signal: AbortSignal.timeout(15000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'сервис не подключён');
+  return j;
+}
+
 function agentNote() {
   const s = H.getSettings();
   if (!(status === 'online' && s.cloudToken)) return '';
-  return '- WhatsApp: the "stella-whatsapp" MCP tools (list_chats, read_chat, writing_style, send_message, wait_for_reply) use the user\'s WhatsApp. ' +
+  const sv = connectedServices();
+  return (sv.includes('email') ? '- E-mail: stella-whatsapp tools email_list / email_read / email_send (send only when asked).\n' : '') +
+    (sv.includes('bilimclass') ? '- BilimClass (bilimclass.kz) is connected: open it in the agent browser, then call stella-desktop service_login {"service":"bilimclass"} — Stella types the login itself (you never see the password). Then do the task in the site.\n' : '') +
+    '- notify_user (stella-whatsapp) pushes a notification to the user\'s phone.\n' +
+    '- WhatsApp: the "stella-whatsapp" MCP tools (list_chats, read_chat, writing_style, send_message, wait_for_reply) use the user\'s WhatsApp. ' +
     'Message people ONLY when the user explicitly asks; write in the user\'s own style (call writing_style first). Replies are forwarded to the user automatically.\n';
 }
 
@@ -215,4 +246,4 @@ async function pullFolder(folder, workspace) {
   return dest;
 }
 
-module.exports = { serverInfo, takeFailover, taskStarted, taskDone, pullFolder, pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };
+module.exports = { profileText, getProfile, setProfile, serviceSecret, connectedServices, serverInfo, takeFailover, taskStarted, taskDone, pullFolder, pairQr, defaultServer, init, login, logout, getStatus, syncChats, sendChat, event, agentNote, push };

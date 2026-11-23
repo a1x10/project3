@@ -76,8 +76,40 @@
       </div>
     </div>
 
+    <div class="view" id="v-svc">
+      <header class="bar"><h2>Сервисы</h2></header>
+      <p class="small muted pad">Подключите сервисы — агент сможет работать с ними по вашей просьбе. Пароли хранятся на вашем сервере в зашифрованном виде и <b>не показываются агенту</b>.</p>
+      <div class="card svc">
+        <div class="svc-head"><span class="svc-ico">🎓</span><div><h3>BilimClass</h3><div class="small muted" id="svc-bc-state">не подключён</div></div></div>
+        <p class="small muted">Для учителей: «зайди в BilimClass и выставь оценки 9А за контрольную…». Агент открывает сайт в браузере на компьютере, а логин и пароль вписывает сама Stella — агент их не видит.</p>
+        <input id="bc-login" class="search" placeholder="Логин BilimClass" autocomplete="off">
+        <input id="bc-pass" class="search" type="password" placeholder="Пароль" autocomplete="new-password">
+        <div class="row-btns"><button class="btn primary" id="bc-save">Сохранить</button><button class="btn" id="bc-del" hidden>Отключить</button></div>
+      </div>
+      <div class="card svc">
+        <div class="svc-head"><span class="svc-ico">✉️</span><div><h3>Почта</h3><div class="small muted" id="svc-mail-state">не подключена</div></div></div>
+        <p class="small muted">Gmail, Яндекс, Mail.ru, Outlook, iCloud. Нужен <b>пароль приложения</b> (создаётся в настройках безопасности почты), а не обычный пароль.</p>
+        <input id="mail-addr" class="search" placeholder="name@gmail.com" autocomplete="off" inputmode="email">
+        <input id="mail-pass" class="search" type="password" placeholder="Пароль приложения" autocomplete="new-password">
+        <details class="small"><summary>Другой почтовый сервер</summary><input id="mail-imap" class="search" placeholder="IMAP сервер"><input id="mail-smtp" class="search" placeholder="SMTP сервер"></details>
+        <div class="row-btns"><button class="btn primary" id="mail-save">Подключить</button><button class="btn" id="mail-del" hidden>Отключить</button></div>
+      </div>
+      <div class="card svc"><div class="svc-head"><span class="svc-ico">📊</span><div><h3>Офис — презентации и документы</h3><div class="small ok-text">встроено</div></div></div>
+        <p class="small muted">«Сделай презентацию про…», «напиши проектную работу на тему…» — агент сразу генерирует готовый .pptx / .docx за пару секунд и открывает его.</p></div>
+      <div class="card svc"><div class="svc-head"><span class="svc-ico">💬</span><div><h3>WhatsApp</h3><div class="small muted" id="svc-wa-state"></div></div></div><button class="btn wide" id="svc-wa-go">Открыть WhatsApp</button></div>
+      <div class="card svc"><div class="svc-head"><span class="svc-ico">🖥</span><div><h3>Компьютер</h3><div class="small muted" id="svc-pc-state"></div></div></div>
+        <p class="small muted">Браузер, экран, мышь и клавиатура — включаются в Stella на компьютере (переключатели слева).</p></div>
+      <div class="card svc"><div class="svc-head"><span class="svc-ico">🔔</span><div><h3>Уведомления</h3><div class="small ok-text">встроено</div></div></div>
+        <p class="small muted">Агент присылает уведомление, когда закончил долгую задачу или ему нужно ваше решение.</p></div>
+    </div>
+
     <div class="view" id="v-more">
       <header class="bar"><h2>Ещё</h2></header>
+      <div class="card">
+        <h3>👤 Обо мне</h3>
+        <p class="small muted" id="about-summary">Агент ещё не знает вас.</p>
+        <button class="btn wide" id="about-open">Рассказать о себе агенту</button>
+      </div>
       <div class="card">
         <h3>Агент на сервере</h3>
         <p class="small muted" id="shared-key-note" hidden>Сервер использует общий ключ Gemini — входить в Google не нужно.</p>
@@ -168,8 +200,29 @@
     <button data-tab="server" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span>Сервер</span><i class="badge" id="b-server"></i></button>
     <button data-tab="pc"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>Компьютер</span><i class="dot-on" id="b-pc"></i></button>
     <button data-tab="wa"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>WhatsApp</span><i class="badge" id="b-wa"></i></button>
+    <button data-tab="svc"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Сервисы</span></button>
     <button data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Ещё</span></button>
   </nav>
+  <div id="onboard" hidden>
+    <div class="ob-card">
+      <div class="ob-head"><img src="/icon.png" alt=""><div><h2>Давайте познакомимся</h2><p class="small muted">Расскажите о себе — агент будет обращаться к вам правильно и помогать именно так, как вам удобно. Это видно агенту на телефоне, компьютере и сервере. Можно изменить в любой момент.</p></div></div>
+      <label>Как вас зовут?<input id="ob-name" class="search" placeholder="Алексей"></label>
+      <label>Как к вам обращаться?<input id="ob-address" class="search" placeholder="на «ты», Лёша / на «вы», Алексей Петрович"></label>
+      <label>Чем вы занимаетесь?<input id="ob-role" class="search" placeholder="учитель математики в школе, предприниматель, студент…"></label>
+      <label>Город / страна<input id="ob-city" class="search" placeholder="Алматы, Казахстан"></label>
+      <label>Язык ответов<input id="ob-language" class="search" placeholder="русский"></label>
+      <label>Как с вами общаться?<input id="ob-style" class="search" placeholder="коротко и по делу / подробно, с примерами"></label>
+      <label>С чем чаще всего будете просить помощь?<input id="ob-tasks" class="search" placeholder="презентации, оценки в BilimClass, почта, WhatsApp…"></label>
+      <label>Расскажите о себе своими словами<textarea id="ob-about" class="search" rows="4" placeholder="Что важно знать агенту: семья, работа, привычки, кому вы чаще пишете…"></textarea></label>
+      <button class="btn primary wide" id="ob-save">Сохранить и продолжить</button>
+      <div class="ob-wa" id="ob-wa">
+        <b>Хотите, чтобы агент писал за вас в WhatsApp вашим стилем?</b>
+        <p class="small muted">Подключите WhatsApp — агент изучит, как вы пишете, и сможет отправлять сообщения по вашей просьбе («спроси жену, во сколько ужин»). Ответы придут сюда и на компьютер.</p>
+        <button class="btn wide" id="ob-wa-go">Войти в WhatsApp</button>
+      </div>
+      <button class="btn wide ghost" id="ob-skip">Позже</button>
+    </div>
+  </div>
   <div id="toast" hidden></div>
 </section>
 

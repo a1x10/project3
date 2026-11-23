@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Стелла — AI Browser Agents</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body data-state="idle">
+  <!-- Subtle White-Theme Pastel Aurora -->
+  <div class="aurora-bg" aria-hidden="true">
+    <div class="aurora-blob blob-1"></div>
+    <div class="aurora-blob blob-2"></div>
+    <div class="aurora-blob blob-3"></div>
+  </div>
+
+  <div class="app-shell">
+    <!-- Minimal White Glass Header -->
+    <header class="glass-header">
+      <div class="header-top">
+        <div class="brand-cluster">
+          <div class="siri-orb-wrap">
+            <div class="siri-orb">
+              <div class="orb-ring"></div>
+              <div class="orb-core"></div>
+              <div class="orb-highlight"></div>
+            </div>
+          </div>
+          <div class="brand-text">
+            <div class="brand-title-row">
+              <h1 class="brand-name" id="activeAgentTitle">Стелла</h1>
+              <span class="badge-pill" id="statusBadge">Готов</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="icon-btn" id="recordBtn" title="Записать сценарий (0 кредитов)">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="6"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="demoMotionBtn" title="Демо анимации курсора">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 3l14 9-6.5 1.8L10 20 5 3z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="clearChatBtn" title="Очистить экран агента">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"/>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="settingsBtn" title="Настройки OpenRouter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Multi-Agent Bar -->
+      <div class="agents-bar" id="agentsBar">
+        <div class="agents-list" id="agentsList"></div>
+        <button class="add-agent-btn" id="addAgentBtn" title="Создать нового агента">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Live Dynamic Island Pill (visible while active agent is running) -->
+    <div class="live-island hidden" id="liveIsland">
+      <div class="island-pulse" id="islandPulse"></div>
+      <div class="island-content">
+        <span class="island-step" id="islandStep">Шаг 1</span>
+        <span class="island-text" id="islandText">Думаю...</span>
+      </div>
+      <button class="island-stop-btn" id="islandStopBtn" title="Остановить агента">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="3"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Main Stage: ONLY the glowing Apple Orb icon when idle/empty -->
+    <main class="timeline-stage" id="timelineStage">
+      <section class="hero-welcome" id="heroWelcome">
+        <div class="hero-orb-stage" id="heroOrbTrigger" title="Стелла">
+          <div class="hero-orb-glow"></div>
+          <div class="hero-orb">
+            <div class="hero-orb-mesh"></div>
+            <div class="hero-orb-specular"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live Feed for currently selected agent -->
+      <section class="feed-list" id="feedList"></section>
+    </main>
+
+    <!-- Floating White Glass Input Dock -->
+    <footer class="input-dock-wrap">
+      <div class="input-dock" id="inputDock">
+        <textarea
+          id="promptInput"
+          rows="1"
+          placeholder="Задача для агента..."
+          autocomplete="off"
+        ></textarea>
+        <div class="dock-toolbar">
+          <div class="dock-meta">
+            <button class="pill-chip" id="visionToggle" title="Использовать скриншоты (Vision)">
+              <span class="chip-dot active"></span>
+              <span>Vision</span>
+            </button>
+            <button class="pill-chip" id="modelPill" title="Модель OpenRouter">
+              <span id="modelPillText">Gemini 2.5 Flash</span>
+            </button>
+          </div>
+          <button class="send-btn" id="sendBtn" title="Запустить агента">
+            <svg class="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5"/>
+              <path d="M5 12l7-7 7 7"/>
+            </svg>
+            <svg class="icon-stop hidden" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- New Agent Modal Sheet -->
+  <div class="sheet-backdrop hidden" id="newAgentSheet">
+    <div class="glass-sheet compact-sheet" role="dialog" aria-modal="true" aria-labelledby="newAgentTitle">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h2 id="newAgentTitle">Новый агент</h2>
+        <button class="icon-btn" id="closeNewAgentBtn" aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div class="form-group">
+          <label for="newAgentNameInput">Имя агента</label>
+          <input type="text" id="newAgentNameInput" placeholder="Например: Nova, Vega, Дневник..." autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Открыть в новой вкладке</div>
+            <div class="row-sub">Чтобы агенты не мешали друг другу</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="newAgentNewTabToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="sheet-footer">
+        <button class="primary-btn" id="confirmNewAgentBtn">Создать агента</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal Sheet -->
+  <div class="sheet-backdrop hidden" id="settingsSheet">
+    <div class="glass-sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h2 id="sheetTitle">Настройки</h2>
+        <button class="icon-btn" id="closeSettingsBtn" aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="sheet-body">
+        <div class="form-group" id="accountBox">
+          <label>Профиль Стелла Cloud</label>
+          <div id="accountSignedOut">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <input type="text" id="authEmailInput" placeholder="Email для входа / регистрации" />
+              <input type="password" id="authPassInput" placeholder="Пароль" />
+              <select id="authCountrySelect">
+                <option value="KZ">🇰🇿 Казахстан (Kundelik, BilimLand, eGov)</option>
+                <option value="RU" selected>🇷🇺 Россия (Дневник.ру, МЭШ, Госуслуги)</option>
+                <option value="OTHER">🌍 Другая страна (Global)</option>
+              </select>
+              <div style="display:flex;gap:6px;">
+                <button class="ghost-btn" id="extLoginBtn" type="button" style="flex:1;padding:8px;">Войти</button>
+                <button class="ghost-btn" id="extRegBtn" type="button" style="flex:1;padding:8px;background:#1d1d1f;color:#fff;">Регистрация</button>
+              </div>
+              <div id="authMsg" class="field-hint"></div>
+            </div>
+          </div>
+          <div id="accountSignedIn" class="hidden" style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:12px;background:#f5f6fa;">
+            <div>
+              <div id="authUserLabel" style="font-size:13px;font-weight:600;">Пользователь</div>
+              <div id="authRegionLabel" class="field-hint">Регион</div>
+            </div>
+            <button class="ghost-btn" id="extLogoutBtn" type="button">Выйти</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="apiKeyInput">OpenRouter API Key (необязательно)</label>
+          <div class="input-with-action">
+            <input
+              type="password"
+              id="apiKeyInput"
+              placeholder="sk-or-v1-..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="ghost-btn" id="toggleKeyVisBtn" type="button">Показать</button>
+          </div>
+          <span class="field-hint">Хранится локально в браузере</span>
+        </div>
+
+        <div class="form-group">
+          <label for="proxyUrlInput">Proxy URL (опционально, вместо ключа)</label>
+          <input type="text" id="proxyUrlInput" placeholder="https://stella-proxy.yourname.workers.dev" autocomplete="off" />
+        </div>
+
+        <div class="form-group">
+          <label for="modelSelect">Основная модель OpenRouter</label>
+          <select id="modelSelect">
+            <option value="deepseek/deepseek-chat">DeepSeek V3 (Самая дешёвая и быстрая)</option>
+            <option value="google/gemini-2.5-flash">Google Gemini 2.5 Flash (Быстрая + Vision)</option>
+            <option value="google/gemini-2.5-pro">Google Gemini 2.5 Pro (Умная + Vision)</option>
+            <option value="anthropic/claude-sonnet-4">Anthropic Claude Sonnet 4 (Топ + Vision)</option>
+            <option value="openai/gpt-4o-mini">OpenAI GPT-4o Mini (Бюджетная + Vision)</option>
+            <option value="openai/gpt-4o">OpenAI GPT-4o (Vision)</option>
+            <option value="custom">Своя модель (ввести ID вручную)...</option>
+          </select>
+        </div>
+
+        <div class="form-group hidden" id="customModelGroup">
+          <label for="customModelInput">ID модели OpenRouter</label>
+          <input type="text" id="customModelInput" placeholder="например: deepseek/deepseek-chat" />
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Авто-запуск нескольких агентов</div>
+            <div class="row-sub">Стелла сама решает, когда разбить задачу на агентов</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="autoMultiToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Прозрачный ответ при наведении</div>
+            <div class="row-sub">Мгновенно через дешёвый DeepSeek даже без панели</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="hoverAnswerToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Отладчик страниц (CDP)</div>
+            <div class="row-sub">Скриншоты фоновых вкладок и точные клики</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="debuggerToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Подсветка Apple Intelligence</div>
+            <div class="row-sub">Сияющая рамка по краям браузера</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="edgeGlowToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Анимированная мышка и Dynamic Island</div>
+            <div class="row-sub">Именные курсоры, шлейф и круги клика</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="cursorToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <div class="form-row-text">
+            <div class="row-title">Защита опасных действий</div>
+            <div class="row-sub">Спрашивать перед оплатой и удалением</div>
+          </div>
+          <label class="apple-switch">
+            <input type="checkbox" id="safetyGateToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <div class="label-split">
+            <label for="maxStepsRange">Максимум шагов на задачу</label>
+            <span class="range-val" id="maxStepsVal">20</span>
+          </div>
+          <input type="range" id="maxStepsRange" min="5" max="40" step="1" value="20" class="apple-range" />
+        </div>
+
+        <div class="form-group">
+          <label>Записанные сценарии (0 кредитов)</label>
+          <div id="macrosList" class="field-hint">Нажмите ● в шапке, чтобы записать сценарий.</div>
+        </div>
+
+        <div class="form-group">
+          <label>Задачи по расписанию</label>
+          <div class="input-with-action">
+            <input type="text" id="schedPromptInput" placeholder="Задача (напр. проверь почту)" />
+            <input type="text" id="schedMinInput" value="60" style="width:58px;text-align:center;" title="Интервал в минутах" />
+            <button class="ghost-btn" id="addSchedBtn" type="button">+</button>
+          </div>
+          <div id="schedulesList" class="field-hint">Нет активных расписаний</div>
+        </div>
+      </div>
+
+      <div class="sheet-footer">
+        <button class="primary-btn" id="saveSettingsBtn">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mandatory First-Launch Full-Screen Registration / Login Gate -->
+  <div class="auth-gate hidden" id="authGateOverlay" role="dialog" aria-modal="true">
+    <div class="auth-gate-card">
+      <div class="gate-orb">
+        <div class="hero-orb-mesh"></div>
+        <div class="hero-orb-specular"></div>
+      </div>
+
+      <h2 class="gate-title" id="gateTitle">Пройдите регистрацию для начала</h2>
+      <p class="gate-sub" id="gateSub">Создайте профиль или войдите, чтобы использовать агента Стеллу.</p>
+
+      <!-- Step 0: Choice View (Войти / Зарегистрироваться) -->
+      <div id="gateChoiceView" class="gate-stack">
+        <button class="primary-btn" id="gateChooseRegBtn">Зарегистрироваться</button>
+        <button class="gate-secondary-btn" id="gateChooseLoginBtn">Войти в аккаунт</button>
+        <button class="gate-ghost-link" id="gateQuickBtn">⚡ Быстрый вход в 1 клик</button>
+      </div>
+
+      <!-- Step 1: Login Form -->
+      <div id="gateLoginView" class="gate-stack hidden">
+        <input type="email" id="gateLoginEmail" class="gate-input" placeholder="Email" autocomplete="email" />
+        <input type="password" id="gateLoginPass" class="gate-input" placeholder="Пароль" autocomplete="current-password" />
+        <button class="primary-btn" id="gateLoginSubmitBtn">Войти</button>
+        <button class="gate-secondary-btn" id="gateGoogleBtn">G Войти через Google (на сайте)</button>
+        <button class="gate-ghost-link" data-gate-back>← Назад</button>
+      </div>
+
+      <!-- Step 2: Register Form -->
+      <div id="gateRegView" class="gate-stack hidden">
+        <input type="text" id="gateRegName" class="gate-input" placeholder="Ваше имя" />
+        <input type="email" id="gateRegEmail" class="gate-input" placeholder="Email" autocomplete="email" />
+        <input type="password" id="gateRegPass" class="gate-input" placeholder="Пароль (от 4 символов)" autocomplete="new-password" />
+        <select id="gateRegCountry" class="gate-input">
+          <option value="KZ">🇰🇿 Казахстан (Kundelik, BilimLand, eGov)</option>
+          <option value="RU" selected>🇷🇺 Россия (Дневник.ру, МЭШ, Госуслуги)</option>
+          <option value="OTHER">🌍 Другая страна (Global)</option>
+        </select>
+        <label class="gate-consent">
+          <input type="checkbox" id="gateRegConsent" checked />
+          <span>Даю согласие на запуск агентов и подключение официальных MCP</span>
+        </label>
+        <button class="primary-btn" id="gateRegSubmitBtn">Создать профиль</button>
+        <button class="gate-ghost-link" data-gate-back>← Назад</button>
+      </div>
+
+      <div id="gateStatusMsg" class="gate-status"></div>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

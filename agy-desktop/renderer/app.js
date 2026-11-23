@@ -695,6 +695,31 @@ $('#cloud-logout').onclick = async () => {
 };
 api.onCloudSignedOut(() => { $('#cloud-modal').hidden = true; showAccount('Сессия закончилась или аккаунт заблокирован — войдите снова'); });
 
+/* ---------- get to know the user ---------- */
+const OB = ['name', 'address', 'role', 'city', 'language', 'style', 'tasks', 'about'];
+let obNext = 'login';
+async function openOnboard(next) {
+  obNext = next || ($('#app').classList.contains('active') ? 'app' : 'login');
+  const p = await api.cloudProfileGet() || {};
+  for (const k of OB) $('#ob-' + k).value = p[k] || '';
+  $('#cloud-modal').hidden = true;
+  show('onboard'); $('#ob-name').focus();
+}
+$('#ob-save').onclick = async () => {
+  const p = {}; for (const k of OB) p[k] = $('#ob-' + k).value.trim();
+  if (!p.name) { $('#ob-name').focus(); return; }
+  await api.cloudProfileSet(p);
+  show(obNext);
+};
+$('#ob-skip').onclick = () => show(obNext);
+$('#cloud-about').onclick = () => openOnboard();
+$('#ext-install').onclick = async () => {
+  if (!state.settings.browserControl) { alert('Сначала включите «Браузер для агента» — расширение ставится в его Chrome.'); return; }
+  const r = await api.extensionInstall();
+  if (!r.ok) return alert('Не получилось: ' + r.error);
+  alert('Расширение загружается в браузер агента автоматически.\n\nЕсли Chrome его не показал (новые версии Chrome так делают): на открывшейся странице chrome://extensions включите «Режим разработчика» → «Загрузить распакованное» → выберите открытую папку:\n' + r.dir);
+};
+
 /* ---------- Stella account screen (required) ---------- */
 let accMode = 'login', accFixed = false;
 async function showAccount(err) {
@@ -725,6 +750,8 @@ $('#acc-go').onclick = async () => {
   if (!r.ok) { $('#acc-err').textContent = r.error; return; }
   $('#acc-pass').value = ''; $('#acc-totp').value = ''; $('#acc-totp').hidden = true;
   cloudState = r; renderCloud();
+  // get to know the user right after registration / first sign-in
+  setTimeout(async () => { const p = await api.cloudProfileGet(); if (!p || !p.name) openOnboard('login'); else show('login'); }, 1200);
   show('login');
 };
 ['#acc-user', '#acc-pass', '#acc-invite', '#acc-server', '#acc-totp'].forEach(sel => $(sel).addEventListener('keydown', e => { if (e.key === 'Enter') $('#acc-go').click(); }));

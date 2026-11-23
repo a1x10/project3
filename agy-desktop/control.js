@@ -42,8 +42,8 @@ function init(hooks) {
     try { fs.watch(queueDir(), () => setTimeout(scan, 100)); } catch {}
     setInterval(scan, 700);
     startFastBridge();
-    const st = H.getSettings();
-    if (st.browserControl || st.screenControl) { try { setBrowserMcp(); } catch (e) { H.log('mcp refresh', e.message); } }
+    // register the tools every start (paths change between versions; office tools are always on)
+    try { setBrowserMcp(); } catch (e) { H.log('mcp refresh', e.message); }
     H.log('control bridge ready', helper());
   } catch (e) { H.log('control init failed', e.message); }
 }
@@ -144,6 +144,17 @@ async function call(tool, a) {
   };
   const xy = () => [String(a.x), String(a.y)];
   switch (tool) {
+    case 'create_presentation':
+    case 'create_document': {
+      const office = require('./office');
+      const dir = path.join(os.homedir(), 'Documents', 'Stella');
+      const t0 = Date.now();
+      const r = tool === 'create_presentation' ? await office.createPresentation(a, dir) : await office.createDocument(a, dir);
+      action((tool === 'create_presentation' ? 'Презентация готова: ' : 'Документ готов: ') + path.basename(r.file));
+      if (a.open !== false && (isWin || FAKE)) { try { openOnDesktop(r.file); } catch (e) { H.log('open doc', e.message); } }
+      return `Created in ${Date.now() - t0} ms and opened on the user's screen: ${r.file}`;
+    }
+    case 'service_login': return serviceLogin(String(a.service || ''), a.url);
     case 'open': return handle('open', [String(a.target || '')]);
     case 'browser': return handle('browser', [String(a.url || '')]);
     case 'screenshot': guard(); return shoot();
@@ -185,6 +196,55 @@ async function call(tool, a) {
   }
   throw new Error('unknown tool ' + tool);
 }
+/* ---------- log into a site in the agent browser WITHOUT showing the password to the model ---------- */
+function cdpJson(p) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: BROWSER_PORT, path: p, timeout: 4000 }, res => { let b = ''; res.on('data', d => b += d); res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } }); }).on('error', reject);
+  });
+}
+function cdp(wsUrl) {
+  const WebSocket = require('ws');
+  const ws = new WebSocket(wsUrl, { perMessageDeflate: false });
+  let id = 0; const wait = new Map();
+  ws.on('message', d => { const m = JSON.parse(d); if (m.id && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
+  const ready = new Promise((r, j) => { ws.on('open', r); ws.on('error', j); });
+  return { ready, close: () => ws.close(), send: (method, params = {}) => new Promise(r => { const k = ++id; wait.set(k, r); ws.send(JSON.stringify({ id: k, method, params })); }) };
+}
+async function serviceLogin(service, url) {
+  if (!H.getSettings().browserControl) throw new Error('Turn on "Браузер для агента" in Stella first.');
+  if (!H.serviceSecret) throw new Error('Stella Cloud is not connected');
+  const cred = await H.serviceSecret(service);                     // stays inside Stella
+  await ensureBrowser('');
+  const target = url || cred.url;
+  let pages = (await cdpJson('/json/list')).filter(p => p.type === 'page');
+  let host = ''; try { host = new URL(target).host.replace(/^www\./, ''); } catch {}
+  let page = pages.find(p => host && p.url.includes(host)) || pages[0];
+  const c = cdp(page.webSocketDebuggerUrl); await c.ready;
+  try {
+    if (!host || !page.url.includes(host)) { await c.send('Page.navigate', { url: target }); await sleep(3500); }
+    const fill = `(async (L, P) => {
+      const vis = e => e && e.offsetParent !== null && !e.disabled;
+      const setv = (el, v) => { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value'); d.set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+      for (let i = 0; i < 20; i++) { if ([...document.querySelectorAll('input[type=password]')].some(vis)) break; await new Promise(r => setTimeout(r, 300)); }
+      const pw = [...document.querySelectorAll('input[type=password]')].find(vis);
+      if (!pw) return { ok: false, why: 'no password field on this page (maybe already logged in): ' + location.href };
+      const inputs = [...(pw.form || document).querySelectorAll('input')].filter(vis);
+      const user = inputs.slice(0, inputs.indexOf(pw)).reverse().find(e => /^(text|email|tel|number|)$/.test(e.type));
+      if (user) setv(user, L);
+      setv(pw, P);
+      const btn = (pw.form || document).querySelector('button[type=submit], input[type=submit]') || [...(pw.form || document).querySelectorAll('button')].find(vis);
+      if (btn) btn.click(); else if (pw.form) pw.form.requestSubmit ? pw.form.requestSubmit() : pw.form.submit();
+      return { ok: true };
+    })(${JSON.stringify(cred.login)}, ${JSON.stringify(cred.password)})`;
+    const r = await c.send('Runtime.evaluate', { expression: fill, awaitPromise: true, returnByValue: true });
+    const v = r.result && r.result.result && r.result.result.value || {};
+    await sleep(2500);
+    const loc = await c.send('Runtime.evaluate', { expression: 'location.href + " | " + document.title', returnByValue: true });
+    action(v.ok ? 'Вошёл в ' + service : 'Вход в ' + service + ': ' + (v.why || 'не удалось'), !!v.ok);
+    return v.ok ? `Logged in to ${service} (credentials typed by Stella, not shown to you). Page now: ${loc.result.result.value}` : `Could not log in: ${v.why || 'unknown'}`;
+  } finally { c.close(); }
+}
+
 function guard() {
   const s = H.getSettings();
   if (!s.screenControl) throw new Error('Screen control is turned off in Stella. Ask the user to enable "Управление экраном".');
@@ -360,6 +420,8 @@ async function ensureBrowser(url) {
   const profile = path.join(base(), 'browser-profile');
   fs.mkdirSync(profile, { recursive: true });
   const args = [`--remote-debugging-port=${BROWSER_PORT}`, '--remote-debugging-address=127.0.0.1', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check'];
+  const ext = extensionDir();
+  if (ext) args.push(`--load-extension=${ext}`);
   if (url) args.push(url);
   // start it through a shortcut + explorer.exe so the browser runs as the normal user (not admin)
   const lnk = path.join(binDir(), 'Stella Browser.lnk');
@@ -374,6 +436,24 @@ async function ensureBrowser(url) {
   if (!(await browserAlive())) throw new Error('Browser did not start with remote debugging.');
   if (url) openInBrowser(url);
   return true;
+}
+
+// the bundled "Стелла — AI Browser Agent" extension, copied to a stable folder Chrome can read
+function extensionDir() {
+  try {
+    const src = path.join(__dirname, 'extension').replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+    if (!fs.existsSync(path.join(src, 'manifest.json'))) return null;
+    const dst = path.join(base(), 'extension');
+    fs.cpSync(src, dst, { recursive: true, force: true });
+    return dst;
+  } catch (e) { H.log('extension copy', e.message); return null; }
+}
+async function installExtension() {
+  const dir = extensionDir();
+  if (!dir) throw new Error('extension not bundled');
+  try { await ensureBrowser('chrome://extensions'); } catch {}
+  if (isWin) spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
+  return dir;
 }
 
 function openInBrowser(url) {
@@ -453,7 +533,7 @@ function setBrowserMcp(enabled) {
     allow.add(`mcp(${MCP_NAME}/*)`);
   } else { delete mcp.mcpServers[MCP_NAME]; allow.delete(`mcp(${MCP_NAME}/*)`); }
   // desktop: fast screen/mouse/keyboard tools (resident MCP process -> Stella's local bridge)
-  const desktopOn = !!s.screenControl || browserOn;
+  const desktopOn = true;                              // office tools are always available
   if (desktopOn) {
     mcp.mcpServers['stella-desktop'] = { command: process.execPath, args: [unpacked(path.join(__dirname, 'mcp-desktop.js'))], env: { ELECTRON_RUN_AS_NODE: '1', STELLA_BRIDGE: path.join(base(), 'bridge.json') } };
     allow.add('mcp(stella-desktop/*)');
@@ -712,6 +792,7 @@ function agentNote() {
       'do NOT take screenshots unless you really need to see the visual. Use fill_form for several fields at once. ' +
       'If the tools cannot connect, call stella-desktop "browser" with the URL first.\n';
   }
+  t += '- Presentations and documents (project work, essays, reports): ALWAYS use stella-desktop create_presentation / create_document — write the complete content yourself and generate the finished file in one call (under a second); it opens on the user\'s screen automatically. Never build them by clicking in PowerPoint/WPS/Word.\n';
   if (s.screenControl) {
     t += '- Screen control (FAST): use the "stella-desktop" MCP tools, not shell commands.\n' +
       '  1) list_elements → buttons/fields of the active window by name; click_element {name} clicks without any screenshot (fastest).\n' +
@@ -723,4 +804,4 @@ function agentNote() {
   return t;
 }
 
-module.exports = { readJsonLoose, init, agentNote, setBrowserMcp, ensureBrowser, newPrompt, promptFinished, stopControl, findBrowser, BROWSER_PORT };
+module.exports = { installExtension, readJsonLoose, init, agentNote, setBrowserMcp, ensureBrowser, newPrompt, promptFinished, stopControl, findBrowser, BROWSER_PORT };

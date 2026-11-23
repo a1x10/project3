@@ -14,9 +14,14 @@
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "docx": "^9.16.0",
     "https-proxy-agent": "^7.0.6",
+    "imapflow": "^2.12.2",
+    "mailparser": "^3.15.0",
     "node-pty": "^1.1.0",
+    "nodemailer": "^10.6.1",
     "pino": "^10.4.0",
+    "pptxgenjs": "^4.0.1",
     "qrcode": "^1.5.4",
     "ws": "^8.23.0"
   }

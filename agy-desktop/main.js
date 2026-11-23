@@ -260,6 +260,7 @@ function createWindow() {
 
 app.whenReady().then(() => { log('ready'); disableAgySandbox();
   control.init({
+    serviceSecret: (n) => cloud.serviceSecret(n),
     log, send, getSettings,
     isBusy: () => running.size > 0,
     onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
@@ -443,7 +444,7 @@ function disableAgySandbox() {
 }
 
 function agentNotes() {
-  const base = control.agentNote();
+  const base = cloud.profileText() + control.agentNote();
   const extra = cloud.agentNote();
   return base + (extra ? '[Stella note — more tools]\n' + extra + '\n' : '');
 }
@@ -793,6 +794,8 @@ ipcMain.on('cloud:ev', (_e, ev) => {
   if (ev.type === 'start') cloud.taskStarted(ev.chatId, getSettings().workspace);
   if (ev.type === 'done') cloud.taskDone(ev.chatId);
 });
+ipcMain.handle('cloud:profile-get', () => cloud.getProfile());
+ipcMain.handle('cloud:profile-set', (_e, p) => cloud.setProfile(p));
 ipcMain.handle('cloud:take-failover', () => cloud.takeFailover());
 ipcMain.handle('cloud:pull', async (_e, folder) => {
   try { const dest = await cloud.pullFolder(folder, getSettings().workspace); shell.openPath(dest); return { ok: true, dest }; }
@@ -815,6 +818,7 @@ ipcMain.handle('control:screen', (_e, on) => {
   return { ok: true };
 });
 ipcMain.on('control:stop', () => control.stopControl('button'));
+ipcMain.handle('control:extension', async () => { try { return { ok: true, dir: await control.installExtension() }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('settings:set', (_e, patch) => {
   const s = getSettings();
   const restart = ('workspace' in patch && patch.workspace !== s.workspace) || ('model' in patch && patch.model !== s.model) || ('mode' in patch && patch.mode !== s.mode);

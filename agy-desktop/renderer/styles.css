@@ -60,7 +60,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .icon-btn.active { color: var(--accent); }
 
 /* ---------- boot ---------- */
-#boot, #login { align-items: center; justify-content: center; }
+#boot, #login, #account, #onboard { align-items: center; justify-content: center; }
 .boot-card, .login-card { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 32px; box-shadow: var(--shadow); }
 .steps { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 12px; }
 .steps li { display: flex; align-items: center; gap: 12px; color: var(--muted); }
@@ -259,6 +259,10 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .pair-box { text-align: center; margin: 10px 0; }
 .pair-box img { width: 220px; height: 220px; border-radius: 12px; background: #fff; padding: 6px; }
 .pair-box code { display: block; font-size: 11px; word-break: break-all; }
+
+.acc-form textarea { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; outline: none; resize: vertical; }
+.ob-card { max-height: calc(100vh - 40px); overflow-y: auto; }
+.ob-wa { padding: 10px 12px; border-radius: 12px; background: rgba(37,211,102,.1); border: 1px solid rgba(37,211,102,.35); font-size: 13px; }
 
 /* cloud modal */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 60; }

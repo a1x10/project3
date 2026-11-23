@@ -10,7 +10,7 @@ const S = {
   agy: true, settings: { mode: 'yolo' }
 };
 
-function show(id) { document.querySelectorAll('.screen').forEach(x => x.classList.toggle('active', x.id === id)); }
+function show(id) { document.querySelectorAll('.screen').forEach(x => x.classList.toggle('active', x.id === id)); if (id === 'auth' && typeof renderCaptcha === 'function') setTimeout(() => renderCaptcha(), 0); }
 function toast(t, ms = 3500) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, ms); }
 const initial = t => { const m = String(t || '').match(/\p{L}|\p{N}/u); return m ? m[0].toUpperCase() : '•'; };
 const plainText = t => String(t || '').replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim();
@@ -65,6 +65,9 @@ function onMsg(m) {
       $('#acc-name').textContent = 'Аккаунт: ' + m.user.name + (m.user.admin ? ' (администратор)' : '');
       $('#admin-card').hidden = !m.user.admin;
       send({ t: 'security.get' });
+      S.profile = m.profile || {}; S.services = m.services || {};
+      renderAbout(); renderServices();
+      if (!S.profile.name && !localStorage.getItem('stella.onboard.skip')) openOnboarding();
       if (m.user.admin) send({ t: 'admin.list' });
       $('#shared-key-note').hidden = !m.sharedKey; $('#google-note').hidden = !!m.sharedKey;
       $('#mode-select').value = S.settings.mode || 'yolo';
@@ -79,7 +82,7 @@ function onMsg(m) {
     }
     case 'chat.deleted': S.lists[m.where] = S.lists[m.where].filter(c => c.id !== m.chatId); renderList(m.where); break;
     case 'ev': onEv(m); break;
-    case 'pc.online': S.pcOnline = m.online; renderPcState(); if (m.online) toast('Компьютер в сети'); break;
+    case 'pc.online': S.pcOnline = m.online; renderPcState(); renderServices(); if (m.online) toast('Компьютер в сети'); break;
     case 'settings': S.settings = m.settings; break;
     case 'notify': notify(m.title, m.body); break;
     case 'term.data': if (xterm) xterm.write(m.data); break;
@@ -92,6 +95,8 @@ function onMsg(m) {
     case 'wa.sent': if (!m.auto) toast(`Отправлено ${m.name}: ${m.text.slice(0, 60)}`); break;
     case 'admin.state': renderAdmin(m); break;
     case 'security': renderSecurity(m); break;
+    case 'profile': S.profile = m.profile || {}; renderAbout(); break;
+    case 'services': S.services = m.list || {}; renderServices(); break;
     case 'security.2fa.qr': $('#sec-2fa-setup').hidden = false; $('#sec-qr').src = m.qr; $('#sec-secret').textContent = m.secret; $('#sec-code').focus(); break;
     case 'error': toast(m.text, 5000); if (S.open) { S.open.pendingNew = false; } break;
   }
@@ -414,6 +419,51 @@ $('#sec-enable').onclick = () => send({ t: 'security.2fa.enable', code: $('#sec-
 $('#sec-revoke-all').onclick = () => { if (confirm('Выйти из аккаунта на всех других устройствах?')) send({ t: 'security.revokeOthers' }); };
 $('#pw-change').onclick = () => { send({ t: 'security.password', old: $('#pw-old').value, new: $('#pw-new').value }); $('#pw-old').value = ''; $('#pw-new').value = ''; };
 
+/* ================================================================== */
+/* onboarding / "about me"                                             */
+/* ================================================================== */
+const OB = ['name', 'address', 'role', 'city', 'language', 'style', 'tasks', 'about'];
+function openOnboarding() {
+  for (const k of OB) $('#ob-' + k).value = (S.profile || {})[k] || '';
+  $('#ob-wa').hidden = S.wa && S.wa.status === 'connected';
+  $('#onboard').hidden = false;
+  $('#onboard').scrollTop = 0;
+}
+$('#ob-save').onclick = () => {
+  const p = {}; for (const k of OB) p[k] = $('#ob-' + k).value.trim();
+  if (!p.name) { toast('Напишите, как вас зовут'); return; }
+  send({ t: 'profile.set', profile: p });
+  $('#onboard').hidden = true; toast('Агент запомнил. Спасибо, ' + p.name + '!');
+};
+$('#ob-skip').onclick = () => { localStorage.setItem('stella.onboard.skip', '1'); $('#onboard').hidden = true; };
+$('#ob-wa-go').onclick = () => { $('#ob-save').click(); if ($('#onboard').hidden) { setTab('wa'); send({ t: 'wa.connect' }); } };
+$('#about-open').onclick = openOnboarding;
+function renderAbout() {
+  const p = S.profile || {};
+  $('#about-summary').textContent = p.name ? `${p.name}${p.role ? ' · ' + p.role : ''}${p.city ? ' · ' + p.city : ''}` : 'Агент ещё не знает вас.';
+  $('#about-open').textContent = p.name ? 'Изменить' : 'Рассказать о себе агенту';
+}
+
+/* ================================================================== */
+/* services                                                            */
+/* ================================================================== */
+function renderServices() {
+  const sv = S.services || {};
+  $('#svc-bc-state').textContent = sv.bilimclass ? 'подключён · ' + sv.bilimclass.login : 'не подключён';
+  $('#svc-bc-state').className = 'small ' + (sv.bilimclass ? 'ok-text' : 'muted');
+  $('#bc-del').hidden = !sv.bilimclass; if (sv.bilimclass) $('#bc-login').value = sv.bilimclass.login;
+  $('#svc-mail-state').textContent = sv.email ? 'подключена · ' + sv.email.address : 'не подключена';
+  $('#svc-mail-state').className = 'small ' + (sv.email ? 'ok-text' : 'muted');
+  $('#mail-del').hidden = !sv.email; if (sv.email) $('#mail-addr').value = sv.email.address;
+  $('#svc-wa-state').textContent = S.wa && S.wa.status === 'connected' ? 'подключён' : 'не подключён';
+  $('#svc-pc-state').textContent = S.pcOnline ? 'в сети' : 'не в сети';
+}
+$('#bc-save').onclick = () => { send({ t: 'services.set', name: 'bilimclass', data: { login: $('#bc-login').value, password: $('#bc-pass').value } }); $('#bc-pass').value = ''; toast('BilimClass сохранён'); };
+$('#bc-del').onclick = () => { if (confirm('Отключить BilimClass и удалить сохранённый пароль?')) send({ t: 'services.remove', name: 'bilimclass' }); };
+$('#mail-save').onclick = () => { send({ t: 'services.set', name: 'email', data: { address: $('#mail-addr').value, password: $('#mail-pass').value, imap: $('#mail-imap').value, smtp: $('#mail-smtp').value } }); $('#mail-pass').value = ''; toast('Проверяю почту…'); };
+$('#mail-del').onclick = () => { if (confirm('Отключить почту и удалить сохранённый пароль?')) send({ t: 'services.remove', name: 'email' }); };
+$('#svc-wa-go').onclick = () => setTab('wa');
+
 function start() { setTab('server'); connect(); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 /* ---------- Cloudflare Turnstile ---------- */
@@ -425,9 +475,15 @@ function loadCaptcha(sitekey) {
   sc.async = true; sc.onload = () => renderCaptcha(sitekey);
   document.head.appendChild(sc);
 }
+let tsKey = null;
 function renderCaptcha(sitekey) {
-  if (!window.turnstile || tsWidget !== null) return;
-  tsWidget = turnstile.render('#captcha-box', { sitekey, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light', language: 'ru' });
+  tsKey = sitekey || tsKey;
+  if (!window.turnstile || tsWidget !== null || !tsKey) return;
+  if (!$('#auth').classList.contains('active')) return;          // render only on the visible login screen
+  tsWidget = turnstile.render('#captcha-box', { sitekey: tsKey, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light', language: 'ru',
+    'error-callback': () => { $('#auth-err').textContent = 'Проверка Cloudflare не загрузилась. Обновите страницу или отключите блокировщик рекламы / VPN.'; } });
+  // Turnstile renders inside a closed shadow root: just check that it put something into the box
+  setTimeout(() => { if (!$('#captcha-box').firstElementChild) $('#auth-err').textContent = 'Проверка Cloudflare не загрузилась. Обновите страницу или отключите блокировщик рекламы / VPN.'; }, 8000);
 }
 function captchaToken() { try { return tsWidget !== null ? turnstile.getResponse(tsWidget) : ''; } catch { return ''; } }
 function resetCaptcha() { try { if (tsWidget !== null) turnstile.reset(tsWidget); } catch {} }

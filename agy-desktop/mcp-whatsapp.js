@@ -33,6 +33,18 @@ const TOOLS = [
   }
 ];
 
+const OFFICE = {
+  create_presentation: { description: 'FAST: generate a finished PowerPoint (.pptx) on the server from a full plan in 1–2 s (6–12 slides, 3–6 bullets each, notes). Never build slides step by step.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, subtitle: { type: 'string' }, author: { type: 'string' }, theme: { type: 'string', enum: ['stella', 'dark', 'blue', 'green'] }, slides: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, bullets: { type: 'array', items: { type: 'string' } }, highlight: { type: 'string' }, notes: { type: 'string' } } } }, closing: { type: 'string' } }, required: ['title', 'slides'] } },
+  create_document: { description: 'FAST: generate a finished Word document (.docx): project work / essay / report with title page, contents, sections, references. Write the full text yourself.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, kind: { type: 'string' }, author: { type: 'string' }, supervisor: { type: 'string' }, organization: { type: 'string' }, city: { type: 'string' }, year: { type: 'string' }, sections: { type: 'array', items: { type: 'object', properties: { heading: { type: 'string' }, level: { type: 'number' }, paragraphs: { type: 'array', items: { type: 'string' } }, bullets: { type: 'array', items: { type: 'string' } } } } }, references: { type: 'array', items: { type: 'string' } } }, required: ['title', 'sections'] } }
+};
+TOOLS.push(
+  { name: 'notify_user', description: "Send a push notification to the user's phone and PC (e.g. when a long task is done or you need their decision).", inputSchema: { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string' } }, required: ['text'] } },
+  { name: 'email_list', description: "List the user's e-mails (newest first). unread:true for unread only; search filters by subject/sender/body.", inputSchema: { type: 'object', properties: { unread: { type: 'boolean' }, search: { type: 'string' }, limit: { type: 'number' }, folder: { type: 'string' } } } },
+  { name: 'email_read', description: 'Read one e-mail by id (from email_list).', inputSchema: { type: 'object', properties: { id: { type: 'number' }, folder: { type: 'string' } }, required: ['id'] } },
+  { name: 'email_send', description: "Send an e-mail from the user's mailbox. ONLY when the user explicitly asked to send it.", inputSchema: { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' }, text: { type: 'string' }, cc: { type: 'string' } }, required: ['to', 'text'] } }
+);
+if (process.env.STELLA_PLACE === 'server') for (const [name, def] of Object.entries(OFFICE)) TOOLS.push(Object.assign({ name }, def));
+
 async function call(name, args) {
   const r = await fetch(URL_BASE + '/api/mcp/' + name, {
     method: 'POST',

@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Стелла — AI Browser Agent",
+  "version": "4.0.0",
+  "description": "Стелла — мульти-агентный AI-помощник с Apple-дизайном, именными курсорами, записью сценариев, расписанием, Set-of-Mark, CDP и OpenRouter.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "webNavigation",
+    "debugger",
+    "notifications",
+    "downloads",
+    "offscreen",
+    "nativeMessaging",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Открыть Стелла AI",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

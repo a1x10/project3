@@ -117,9 +117,9 @@ function wrap(u, bin, args, { env = {}, cwd, runId, tty = false } = {}) {
 function mcpServer(u, port) {
   if (mode() === 'docker') {
     const url = process.env.STELLA_PUBLIC_URL || `http://host.docker.internal:${port}`;
-    return { command: 'node', args: ['/opt/stella/mcp-whatsapp.js'], env: { STELLA_URL: url, STELLA_TOKEN: u.mcpToken } };
+    return { command: 'node', args: ['/opt/stella/mcp-whatsapp.js'], env: { STELLA_URL: url, STELLA_TOKEN: u.mcpToken, STELLA_PLACE: 'server' } };
   }
-  return { command: process.execPath, args: [path.join(APP, 'mcp-whatsapp.js')], env: { STELLA_URL: `http://127.0.0.1:${port}`, STELLA_TOKEN: u.mcpToken } };
+  return { command: process.execPath, args: [path.join(APP, 'mcp-whatsapp.js')], env: { STELLA_URL: `http://127.0.0.1:${port}`, STELLA_TOKEN: u.mcpToken, STELLA_PLACE: 'server' } };
 }
 
 module.exports = { mode, wrap, ensureContainer, removeContainer, mcpServer, IMAGE, HOME_IN, toIn };

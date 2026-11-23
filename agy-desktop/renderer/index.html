@@ -48,6 +48,29 @@
   </div>
 </section>
 
+<!-- ============ GET TO KNOW YOU ============ -->
+<section id="onboard" class="screen">
+  <div class="login-card ob-card">
+    <div class="logo big"><span class="logo-mark">✳</span></div>
+    <h1>Давайте познакомимся</h1>
+    <p class="muted">Расскажите о себе — агент будет обращаться к вам правильно и помогать так, как вам удобно. Это общее для телефона, компьютера и сервера.</p>
+    <div class="acc-form">
+      <input id="ob-name" placeholder="Как вас зовут?">
+      <input id="ob-address" placeholder="Как к вам обращаться? (на «ты» / на «вы», имя)">
+      <input id="ob-role" placeholder="Чем вы занимаетесь? (учитель, студент, бизнес…)">
+      <input id="ob-city" placeholder="Город / страна">
+      <input id="ob-language" placeholder="Язык ответов">
+      <input id="ob-style" placeholder="Как общаться: коротко / подробно">
+      <input id="ob-tasks" placeholder="С чем чаще будете просить помощь?">
+      <textarea id="ob-about" rows="3" placeholder="Расскажите о себе своими словами"></textarea>
+      <button class="btn primary wide" id="ob-save">Сохранить и продолжить</button>
+      <div class="ob-wa"><b>Хотите, чтобы агент писал за вас в WhatsApp вашим стилем?</b>
+        <p class="small muted">Откройте Stella на телефоне → вкладка WhatsApp → «Подключить по QR-коду». Агент изучит, как вы пишете, а ответы будут приходить сюда и на телефон.</p></div>
+      <button class="btn wide" id="ob-skip">Позже</button>
+    </div>
+  </div>
+</section>
+
 <!-- ============ LOGIN ============ -->
 <section id="login" class="screen">
   <div class="login-card">
@@ -94,6 +117,7 @@
         <svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 1.5L10 19z"/></svg>
         <span>Управление экраном</span><input type="checkbox" id="tg-screen"><i></i>
       </label>
+      <button class="side-link" id="ext-install" title="Встроенное расширение «Стелла — AI Browser Agent» для браузера агента">🧩 Расширение Stella</button>
       <button class="side-link" id="cloud-open"><span class="dot" id="cloud-dot"></span><span id="cloud-label">Облако</span></button>
       <button class="side-link" id="toggle-term">
         <svg viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></svg> Терминал
@@ -188,6 +212,7 @@
           <p class="small muted">Наведите камеру телефона на QR-код — откроется Stella, уже с вашим аккаунтом. Затем «Добавить на главный экран». Код действует 10 минут.</p>
           <code id="cloud-link"></code>
         </div>
+        <button class="btn wide" id="cloud-about">👤 Обо мне (что знает агент)</button>
         <button class="btn wide" id="cloud-web">Открыть Stella в браузере</button>
         <button class="btn wide" id="cloud-logout">Выйти из аккаунта</button>
       </div>

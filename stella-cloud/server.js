@@ -11,6 +11,9 @@ const users = require('./lib/users');
 const agent = require('./lib/agent');
 const wa = require('./lib/whatsapp');
 const failover = require('./lib/failover');
+const services = require('./lib/services');
+const office = require('./lib/office');
+const sandbox = require('./lib/sandbox');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';          // behind Caddy (HTTPS) by default
@@ -122,6 +125,17 @@ async function api(req, res, url) {
     try { const r = await failover.saveSnapshot(u, url.searchParams.get('chat'), url.searchParams.get('folder'), req); return json(res, 200, r); }
     catch (e) { return json(res, 413, { error: e.message }); }
   }
+  // Stella on the PC fetches a site login to type it into the browser itself (the model never sees it)
+  if (req.method === 'GET' && p === '/api/services/secret') {
+    const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
+    if (limited(req, 'secret', 30, 600e3)) return json(res, 429, { error: 'too many requests' });
+    const name = String(url.searchParams.get('name') || '');
+    if (name === 'email') return json(res, 403, { error: 'not allowed' });
+    const s = services.secret(u, name);
+    if (!s) return json(res, 404, { error: 'Сервис не подключён' });
+    users.audit('secret_used:' + name, u.name, meta(req));
+    return json(res, 200, { login: s.login, password: s.password, url: s.url });
+  }
   // PC downloads results that the server produced
   if (req.method === 'GET' && p === '/api/server/folder') {
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
@@ -141,6 +155,20 @@ async function api(req, res, url) {
         case 'read_chat': result = wa.readChat(u, a.contact, a.limit || 40); break;
         case 'writing_style': result = { examples: wa.styleSamples(u, a.contact, 60), hint: "Imitate these exactly: same language, length, punctuation, emoji and casing. Don't sound like an assistant." }; break;
         case 'send_message': result = await wa.sendText(u, a.contact, a.text, { expectReply: a.expect_reply !== false, origin: users.byMcpToken(tok) ? null : agentOriginFromPc(u) }); break;
+        case 'notify_user': emit(u.name, { t: 'notify', title: String(a.title || 'Stella').slice(0, 120), body: String(a.text || '').slice(0, 500) }); result = 'notified'; break;
+        case 'email_list': result = await services.emailList(u, { folder: a.folder, limit: a.limit || 15, unread: !!a.unread, search: a.search || '' }); break;
+        case 'email_read': result = await services.emailRead(u, { id: a.id, folder: a.folder }); break;
+        case 'email_send': result = await services.emailSend(u, { to: a.to, subject: a.subject, text: a.text, cc: a.cc }); emit(u.name, { t: 'notify', title: '✉️ Письмо отправлено', body: `${a.to}: ${String(a.subject || '').slice(0, 80)}` }); break;
+        case 'create_presentation':
+        case 'create_document': {
+          const dir = require('path').join(u.home, 'workspace', 'Документы');
+          const r = m[1] === 'create_presentation' ? await office.createPresentation(a, dir) : await office.createDocument(a, dir);
+          if (u.uid != null) { try { require('child_process').execFileSync('chown', ['-R', `${u.uid}:${u.gid}`, dir]); } catch {} }
+          const shown = sandbox.mode() === 'docker' ? sandbox.toIn(u, r.file) : r.file;
+          emit(u.name, { t: 'notify', title: m[1] === 'create_presentation' ? '📊 Презентация готова' : '📄 Документ готов', body: require('path').basename(r.file) });
+          result = `Created ${shown}. The user can download it from the server; if they want it on the PC, use transfer or tell them.`;
+          break;
+        }
         case 'wait_for_reply': result = (await wa.waitForReply(u, a.contact, a.timeout_seconds || 300)) || 'No reply yet (timeout). Stella will forward the reply to the user when it arrives.'; break;
         default: return json(res, 404, { error: 'unknown tool' });
       }
@@ -208,6 +236,7 @@ wss.on('connection', (ws) => {
         serverChats: agent.chats(me).map(agent.summary),
         pcChats: [...pc(me.name).chats.values()].map(c => agent.summary(c)),
         wa: wa.overview(me), sharedKey: !!process.env.STELLA_GEMINI_API_KEY,
+        profile: services.getProfile(me), services: services.list(me),
         settings: me.settings || { mode: 'yolo' }
       });
       return;
@@ -243,6 +272,13 @@ async function onMsg(u, conn, m) {
     case 'server.chat.delete': agent.deleteChat(u, m.chatId); emit(u.name, { t: 'chat.deleted', where: 'server', chatId: m.chatId }); break;
     case 'server.send': agent.send(u, m.chatId, String(m.text || '').slice(0, 20000)); break;
     case 'server.stop': agent.stop(u, m.chatId); break;
+    /* ---- profile ("about me") + services ---- */
+    case 'profile.get': sendTo(conn, { t: 'profile', profile: services.getProfile(u) }); break;
+    case 'profile.set': { const pr = services.setProfile(u, m.profile || {}); emit(u.name, { t: 'profile', profile: pr }); break; }
+    case 'services.get': sendTo(conn, { t: 'services', list: services.list(u) }); break;
+    case 'services.set': { const l = services.setService(u, String(m.name || ''), m.data || {}); emit(u.name, { t: 'services', list: l }); if (m.name === 'email') { try { await services.emailTest(u); sendTo(conn, { t: 'notify', title: '✅ Почта подключена' }); } catch (e) { sendTo(conn, { t: 'error', text: 'Не удалось войти в почту: ' + (e.authenticationFailed ? 'неверный адрес или пароль' : (e.responseText || e.code || e.message || 'ошибка соединения')) + '. Для Gmail/Яндекс/Mail.ru нужен «пароль приложения».' }); } } break; }
+    case 'services.remove': emit(u.name, { t: 'services', list: services.removeService(u, String(m.name || '')) }); break;
+
     /* ---- account security ---- */
     case 'security.get': sendTo(conn, { t: 'security', twofa: !!u.totp, sessions: users.sessions(u, conn.ws.token) }); break;
     case 'security.2fa.setup': { const r = users.totpSetup(u); const qr = await require('qrcode').toDataURL(r.uri, { margin: 1, width: 240 }); sendTo(conn, { t: 'security.2fa.qr', secret: r.secret, qr }); break; }
