@@ -58,4 +58,11 @@ jobs:
           git config user.email "stella-build@users.noreply.github.com"
           git add agy-desktop/release/StellaConference.exe agy-desktop/release/conference.json
           git commit -m "Stella Conference $VER (Windows build)" || exit 0
-          for i in 1 2 3 4; do git pull --rebase origin claude/happy-ritchie-vx32ws && git push origin HEAD:claude/happy-ritchie-vx32ws && break; sleep $((i*5)); done
+          # the build touches lock/schema files: drop those, keep only the published exe commit
+          git reset --hard HEAD
+          git clean -fdq -e stella-conference/node_modules -e stella-conference/src-tauri/target
+          for i in 1 2 3 4 5; do
+            if git pull --rebase origin claude/happy-ritchie-vx32ws && git push origin HEAD:claude/happy-ritchie-vx32ws; then echo "published"; exit 0; fi
+            sleep $((i*5))
+          done
+          echo "::error::could not publish the exe"; exit 1
