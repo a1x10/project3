@@ -272,6 +272,10 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .team-row .wh { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--hover); color: var(--muted); }
 .team-row .tm { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
+#update-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 70; display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-radius: 14px; background: var(--black); color: var(--bg); box-shadow: 0 10px 30px rgba(0,0,0,.25); font-size: 13.5px; min-width: 420px; }
+#update-bar .btn { background: var(--accent); color: #fff; border: 0; }
+#update-bar .icon-btn { color: var(--bg); width: 28px; height: 28px; }
+
 /* cloud modal */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 60; }
 .modal { width: min(440px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 18px 20px; box-shadow: var(--shadow); }

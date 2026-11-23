@@ -766,6 +766,11 @@ $('#to-server').onclick = async () => {
   renderMessages(); saveChats();
 };
 
+// auto-update
+api.onUpdateReady(({ version }) => { $('#update-ver').textContent = version; $('#update-bar').hidden = false; });
+$('#update-go').onclick = async () => { if (state.busy && !confirm('Агент ещё работает. Перезапустить сейчас?')) return; await api.updateApply(); };
+$('#update-later').onclick = () => { $('#update-bar').hidden = true; };
+
 // tasks from the phone / the agent team: run one after another
 const pcQueue = [];
 function runRemote(m) {

@@ -1,7 +1,7 @@
 {
   "name": "agy-desktop",
   "productName": "Agy Desktop",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Desktop chat interface for Antigravity CLI (agy) with voice mode",
   "main": "main.js",
   "private": true,
@@ -36,6 +36,7 @@
       "main.js",
       "preload.js",
       "control.js",
+      "updater.js",
       "extension/**",
       "office.js",
       "mcp-desktop.js",

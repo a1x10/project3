@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('agy', {
   onCloudFailover: on('cloud:failover'),
   onCloudProfile: on('cloud:profile'),
   onCloudTeam: on('cloud:team'),
+  onUpdateReady: on('update:ready'),
+  updateApply: () => ipcRenderer.invoke('update:apply'),
   onCloudServerChat: on('cloud:server-chat'),
   cloudTeam: (text) => ipcRenderer.invoke('cloud:team', text),
   cloudProfileGet: () => ipcRenderer.invoke('cloud:profile-get'),

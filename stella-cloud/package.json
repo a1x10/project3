@@ -15,6 +15,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "docx": "^9.16.0",
+    "exceljs": "^4.4.0",
     "https-proxy-agent": "^7.0.6",
     "imapflow": "^2.12.2",
     "mailparser": "^3.15.0",

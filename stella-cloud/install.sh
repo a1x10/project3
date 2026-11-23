@@ -4,6 +4,7 @@
 # Optional:  DOMAIN=stella.example.com  (otherwise <your-ip>.sslip.io is used, HTTPS via Let's Encrypt)
 #            DUCKDNS=myname   (free name myname.duckdns.org; the token is asked for, hidden)
 #            TURNSTILE=1      (Cloudflare captcha; site key + secret are asked for, hidden)
+#            AUTOUPDATE=1     (update Stella Cloud automatically every night; AUTOUPDATE=0 turns it off)
 #            TUNNEL=stella.example.com  (Cloudflare Tunnel: hides the server IP, no open ports for Stella; tunnel token asked for)
 set -euo pipefail
 
@@ -286,6 +287,52 @@ fi
 if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 80/tcp; ufw allow 443/tcp; fi
 
 sleep 2
+# ---------- optional nightly self-update ----------
+if [ "${AUTOUPDATE:-}" = 1 ]; then
+  cat > /usr/local/sbin/stella-update <<UPD
+#!/usr/bin/env bash
+# Stella Cloud nightly update: newest code from $BRANCH, dependencies, agent image, restart
+set -e
+TMP=\$(mktemp -d)
+git clone -q --depth 1 --branch "$BRANCH" --filter=blob:none --sparse "$REPO" "\$TMP/src"
+git -C "\$TMP/src" sparse-checkout set stella-cloud
+NEW=\$(git -C "\$TMP/src" rev-parse HEAD)
+OLD=\$(cat $APP/.version 2>/dev/null || true)
+if [ "\$NEW" = "\$OLD" ]; then rm -rf "\$TMP"; exit 0; fi
+cp -a "\$TMP/src/stella-cloud/." "$APP/"
+echo "\$NEW" > $APP/.version
+rm -rf "\$TMP"
+cd "$APP" && (npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1 || npm install --omit=dev --no-audit --no-fund >/dev/null)
+docker info >/dev/null 2>&1 && docker build -q -t stella-agent:latest "$APP/docker" >/dev/null || true
+install -m 755 "$APP/scripts/stella-firewall.sh" /usr/local/sbin/stella-firewall && systemctl restart stella-firewall || true
+systemctl restart stella-cloud
+logger -t stella-update "updated to \$NEW"
+UPD
+  chmod 755 /usr/local/sbin/stella-update
+  cat > /etc/systemd/system/stella-update.service <<'UNIT'
+[Unit]
+Description=Stella Cloud nightly update
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/stella-update
+UNIT
+  cat > /etc/systemd/system/stella-update.timer <<'UNIT'
+[Unit]
+Description=Stella Cloud nightly update
+[Timer]
+OnCalendar=*-*-* 04:20:00
+RandomizedDelaySec=30m
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now stella-update.timer >/dev/null && echo "Автообновление сервера включено (каждую ночь ~04:20)"
+elif [ "${AUTOUPDATE:-}" = 0 ]; then
+  systemctl disable --now stella-update.timer >/dev/null 2>&1 || true; echo "Автообновление сервера выключено"
+fi
+git ls-remote "$REPO" "refs/heads/$BRANCH" 2>/dev/null | cut -f1 > "$APP/.version" || true
+
 say "Done!"
 echo "  Открой на телефоне:   https://$DOMAIN"
 echo "  Код приглашения:      $INVITE   (зарегистрируйтесь ПЕРВЫМ — первый аккаунт = администратор)"

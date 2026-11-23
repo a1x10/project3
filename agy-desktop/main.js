@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const control = require('./control');
 const cloud = require('./cloud');
+const updater = require('./updater');
 
 // show "Stella" in dialogs / taskbar, but keep the old data folder (chats, settings)
 try {
@@ -265,6 +266,7 @@ app.whenReady().then(() => { log('ready'); disableAgySandbox();
     isBusy: () => running.size > 0,
     onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
   });
+  updater.init({ log, send, version: app.getVersion() });
   cloud.init({
     log, send, getSettings,
     saveSettings: (patch) => { Object.assign(getSettings(), patch); writeJson(settingsFile(), getSettings()); },
@@ -797,6 +799,8 @@ ipcMain.on('cloud:ev', (_e, ev) => {
 ipcMain.handle('cloud:profile-get', () => cloud.getProfile());
 ipcMain.handle('cloud:team', (_e, text) => cloud.push({ t: 'team.start', text: String(text || '') }));
 ipcMain.handle('cloud:profile-set', (_e, p) => cloud.setProfile(p));
+ipcMain.handle('update:apply', () => { if (updater.apply()) { setTimeout(() => app.exit(0), 300); return true; } return false; });
+ipcMain.handle('update:check', () => updater.check());
 ipcMain.handle('cloud:take-failover', () => cloud.takeFailover());
 ipcMain.handle('cloud:pull', async (_e, folder) => {
   try { const dest = await cloud.pullFolder(folder, getSettings().workspace); shell.openPath(dest); return { ok: true, dest }; }

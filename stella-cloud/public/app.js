@@ -95,7 +95,15 @@ function onMsg(m) {
     case 'wa.sent': if (!m.auto) toast(`Отправлено ${m.name}: ${m.text.slice(0, 60)}`); break;
     case 'admin.state': renderAdmin(m); break;
     case 'security': renderSecurity(m); break;
-    case 'profile': S.profile = m.profile || {}; renderAbout(); break;
+    case 'grading.list': G.list = m.list || []; if (!$('#grading').hidden && !G.cur) renderGradingList(); break;
+    case 'grading': {
+      const i = G.list.findIndex(x => x.id === m.batch.id); const sum = Object.assign({}, m.batch); delete sum.works;
+      if (i >= 0) G.list[i] = sum; else G.list.unshift(sum);
+      if (!$('#grading').hidden && (!G.cur || G.cur.id === m.batch.id) && !document.getElementById('gw-save')) renderBatch(m.batch);
+      else if (!$('#grading').hidden && !G.cur) renderGradingList();
+      break;
+    }
+    case 'profile': S.profile = m.profile || {}; renderAbout(); renderHome(); break;
     case 'team': {
       if (S.open && S.open.where === 'server' && S.open.chat.id === m.chatId) {
         const msg = S.open.chat.messages.find(x => x.id === m.msgId);
@@ -143,7 +151,7 @@ function onEv(m) {
 /* lists                                                               */
 /* ================================================================== */
 function renderAll() {
-  show('app'); renderList('server'); renderList('pc'); renderPcState(); renderWa();
+  show('app'); renderList('server'); renderList('pc'); renderPcState(); renderWa(); renderHome();
   $('#agy-missing').hidden = S.agy;
 }
 function renderList(where) {
@@ -154,7 +162,7 @@ function renderList(where) {
     li.onclick = () => openChat(where, c.id);
     ul.appendChild(li);
   }
-  if (where === 'server') $('#server-empty').hidden = S.lists.server.length > 0;
+  if (where === 'server') { $('#server-empty').hidden = S.lists.server.length > 0; renderHome(); }
   const busy = S.lists.server.filter(c => c.busy).length;
   $('#b-server').textContent = busy ? busy : '';
 }
@@ -515,7 +523,173 @@ $('#mail-save').onclick = () => { send({ t: 'services.set', name: 'email', data:
 $('#mail-del').onclick = () => { if (confirm('Отключить почту и удалить сохранённый пароль?')) send({ t: 'services.remove', name: 'email' }); };
 $('#svc-wa-go').onclick = () => setTab('wa');
 
-function start() { setTab('server'); connect(); }
+/* ================================================================== */
+/* HOME                                                                */
+/* ================================================================== */
+let homeTeam = true;
+function hello() { const h = new Date().getHours(); return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'; }
+function renderHome() {
+  const n = (S.profile && S.profile.name) || (S.user && S.user.name) || '';
+  $('#home-hello').textContent = `${hello()}${n ? ', ' + n : ''} 👋`;
+  const chips = [[S.pcOnline, S.pcOnline ? 'ПК в сети' : 'ПК не в сети'], [S.wa && S.wa.status === 'connected', 'WhatsApp'], [!!(S.services && S.services.bilimclass), 'BilimClass'], [!!(S.services && S.services.email), 'Почта']];
+  $('#home-chips').innerHTML = chips.map(([on, t]) => `<span class="${on ? 'on' : ''}">${on ? '● ' : '○ '}${esc(t)}</span>`).join('');
+  const ul = $('#home-recent'); ul.innerHTML = '';
+  for (const c of S.lists.server.slice(0, 4)) {
+    const li = document.createElement('li');
+    li.innerHTML = `<div class="ico ${c.busy ? 'busy' : ''}">${c.busy ? '' : esc(initial(c.title))}</div><div class="txt"><div class="t1">${esc(c.title)}</div><div class="t2">${c.busy ? 'Агент работает…' : esc(plainText(c.last))}</div></div><div class="when">${ago(c.updated)}</div>`;
+    li.onclick = () => openChat('server', c.id); ul.appendChild(li);
+  }
+  if (!ul.children.length) ul.innerHTML = '<li class="muted small" style="padding:8px 16px">Здесь появятся ваши задачи</li>';
+}
+$('#home-team').onclick = () => { homeTeam = !homeTeam; $('#home-team').classList.toggle('on', homeTeam); };
+function homeSend(text) {
+  text = (text ?? $('#home-input').value).trim(); if (!text) { $('#home-input').focus(); return; }
+  $('#home-input').value = '';
+  S.open = { where: 'server', chat: { id: null, title: homeTeam ? '👥 ' + text.slice(0, 40) : 'Новая задача', messages: [] }, pendingNew: true };
+  $('#chat').hidden = false; renderChat();
+  if (homeTeam) send({ t: 'team.start', text }); else send({ t: 'server.send', chatId: null, text });
+}
+$('#home-go').onclick = () => homeSend();
+$('#home-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer:fine)').matches) { e.preventDefault(); homeSend(); } });
+$('#home-mic').onclick = () => {
+  if (!SR) return toast('Голосовой ввод не поддерживается этим браузером');
+  if (rec) { rec.stop(); return; }
+  rec = new SR(); rec.lang = LANGS[langIdx][1]; rec.interimResults = true;
+  const inp = $('#home-input'); const base = inp.value ? inp.value.trimEnd() + ' ' : '';
+  rec.onresult = e => { let t = ''; for (const r of e.results) t += r[0].transcript; inp.value = base + t; };
+  rec.onend = () => { rec = null; $('#home-mic').classList.remove('rec'); if (inp.value.trim()) homeSend(); };
+  rec.onerror = e => { if (e.error === 'not-allowed') toast('Разрешите доступ к микрофону'); };
+  $('#home-mic').classList.add('rec'); try { rec.start(); } catch { rec = null; $('#home-mic').classList.remove('rec'); }
+};
+const QA = {
+  team: () => { $('#home-input').focus(); homeTeam = true; $('#home-team').classList.add('on'); toast('Опишите сразу несколько задач — агенты сделают их параллельно'); },
+  pptx: () => { $('#home-input').value = 'Сделай презентацию на тему «', homeTeam = false; $('#home-team').classList.remove('on'); $('#home-input').focus(); },
+  docx: () => { $('#home-input').value = 'Напиши проектную работу на тему «», 9 класс, с введением, 2 главами, заключением и литературой'; homeTeam = false; $('#home-team').classList.remove('on'); $('#home-input').focus(); },
+  wa: () => { if (S.wa && S.wa.status === 'connected') { $('#home-input').value = 'Напиши в WhatsApp '; homeTeam = false; $('#home-team').classList.remove('on'); $('#home-input').focus(); } else setTab('wa'); },
+  mail: () => homeSend('Разбери мою почту за сегодня: что важно, на что нужно ответить, и предложи ответы'),
+  grading: () => openGrading()
+};
+document.querySelectorAll('[data-qa]').forEach(b => b.onclick = () => QA[b.dataset.qa]());
+
+/* ================================================================== */
+/* GRADING: photos of student work -> grades                           */
+/* ================================================================== */
+const G = { list: [], cur: null, uploading: 0, uploadTotal: 0 };
+function openGrading(id) { $('#grading').hidden = false; if (id) send({ t: 'grading.get', id }); else { G.cur = null; renderGradingList(); } send({ t: 'grading.list' }); }
+$('#gr-back').onclick = () => { if (G.cur) { G.cur = null; renderGradingList(); } else $('#grading').hidden = true; };
+function renderGradingList() {
+  $('#gr-title').textContent = 'Проверка работ'; $('#gr-sub').textContent = 'СОР, СОЧ, контрольные — по фото';
+  const items = G.list.map(b => `<div class="gr-item" data-open="${esc(b.id)}"><div class="gr-grade">📝</div><div class="tt"><b>${esc(b.title)}</b><span>${esc([b.subject, b.klass].filter(Boolean).join(' · '))} · ${b.counts.done}/${b.counts.total || b.counts.uploaded} · ${{ uploading: 'загрузка фото', checking: 'проверяется…', done: 'готово', paused: 'пауза' }[b.status] || b.status}</span></div>${b.counts.review ? `<span class="gr-flag">⚠ ${b.counts.review}</span>` : ''}</div>`).join('');
+  $('#gr-body').innerHTML = `
+    <div class="gr-card"><h3>Новая проверка</h3>
+      <label>Название<input id="gn-title" placeholder="СОЧ за 2 четверть"></label>
+      <label>Предмет<input id="gn-subject" placeholder="Математика"></label>
+      <label>Класс<input id="gn-klass" placeholder="9А"></label>
+      <label>Ключ ответов / критерии (можно коротко: «1) 12  2) x=3  3) …», баллы за задания)<textarea id="gn-key" rows="4"></textarea></label>
+      <label>Максимальный балл<input id="gn-max" inputmode="numeric" placeholder="20"></label>
+      <label>Шкала оценок<textarea id="gn-scale" rows="2">85–100% → 5, 65–84% → 4, 40–64% → 3, 0–39% → 2</textarea></label>
+      <label>Страниц в одной работе<select id="gn-pages"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <label>Список класса (необязательно — помогает узнать фамилии)<textarea id="gn-roster" rows="2" placeholder="Абаев Тимур, Ахметова Алина, …"></textarea></label>
+      <button class="btn primary wide" id="gn-create" style="margin-top:10px">Создать и загрузить фото</button>
+    </div>
+    ${items ? '<h3 class="sub">Мои проверки</h3><div class="gr-list">' + items + '</div>' : ''}`;
+  $('#gn-create').onclick = () => send({ t: 'grading.create', spec: { title: $('#gn-title').value || 'Проверка', subject: $('#gn-subject').value, klass: $('#gn-klass').value, key: $('#gn-key').value, maxScore: $('#gn-max').value, scale: $('#gn-scale').value, pagesPerWork: $('#gn-pages').value, roster: $('#gn-roster').value } });
+  $('#gr-body').querySelectorAll('[data-open]').forEach(el => el.onclick = () => send({ t: 'grading.get', id: el.dataset.open }));
+}
+const gradeClass = g => { const n = parseInt(g, 10); return n >= 2 && n <= 5 ? 'g' + n : ''; };
+function finalOf(w) { const r = w.result || {}, e = w.edited || {}; return { student: e.student || r.student || 'Без имени', total: e.total ?? r.total, max: r.max_total, grade: e.grade || r.grade || '—', review: !w.edited && r.needs_review, r }; }
+function renderBatch(b) {
+  G.cur = b;
+  $('#gr-title').textContent = b.title; $('#gr-sub').textContent = [b.subject, b.klass].filter(Boolean).join(' · ') || 'Проверка работ';
+  const c = b.counts, pct = c.total ? Math.round(c.done / c.total * 100) : 0;
+  const rows = b.works.map(w => {
+    const f = finalOf(w);
+    const sub = w.status === 'done' ? `${f.total ?? '?'}/${f.max ?? '?'} баллов · ${{ clear: 'разборчиво', hard: 'трудный почерк', unreadable: 'неразборчиво' }[f.r.legibility] || ''}${w.edited ? ' · ✍ исправлено учителем' : ''}` : w.status === 'failed' ? 'ошибка: ' + esc(w.error || '') : w.status === 'checking' ? 'проверяется…' : 'в очереди';
+    return `<div class="gr-item" data-work="${esc(w.id)}"><div class="gr-grade ${gradeClass(f.grade)}">${w.status === 'done' ? esc(String(f.grade)) : w.status === 'checking' ? '…' : w.status === 'failed' ? '!' : '·'}</div><div class="tt"><b>${esc(w.status === 'done' ? f.student : 'Работа ' + w.files.join(', '))}</b><span>${sub}</span></div>${f.review && w.status === 'done' ? '<span class="gr-flag">⚠ проверить</span>' : ''}</div>`;
+  }).join('');
+  $('#gr-body').innerHTML = `
+    <div class="gr-card">
+      <div class="gr-stats"><span>📷 фото: ${c.uploaded}</span><span>📝 работ: ${c.total || Math.ceil(c.uploaded / (b.pagesPerWork || 1))}</span><span>✅ ${c.done}</span>${c.review ? `<span>⚠ проверить: ${c.review}</span>` : ''}${c.failed ? `<span>❗ ошибки: ${c.failed}</span>` : ''}</div>
+      ${b.status === 'checking' || c.done ? `<div class="gr-progress"><i style="width:${pct}%"></i></div>` : ''}
+      <div id="gr-up-status" class="small muted"></div>
+      <div class="gr-actions">
+        <label class="btn">📷 Добавить фото<input type="file" id="gr-files" accept="image/*" multiple hidden></label>
+        <label class="btn">🔑 Фото ключа<input type="file" id="gr-keyfile" accept="image/*" hidden></label>
+        ${b.status === 'checking' ? '<button class="btn" id="gr-pause">⏸ Пауза</button>' : `<button class="btn primary" id="gr-start">▶ ${c.done ? 'Продолжить' : 'Начать проверку'}</button>`}
+        ${c.done ? '<button class="btn" id="gr-xlsx">⬇ Excel</button><button class="btn" id="gr-bc">🎓 Выставить в BilimClass</button>' : ''}
+        <button class="btn danger-outline" id="gr-del">Удалить</button>
+      </div>
+      <p class="small muted">Сложные и неразборчивые работы агент не угадывает — помечает «⚠ проверить». Перед выставлением в журнал посмотрите их.</p>
+    </div>
+    <div class="gr-list">${rows || '<p class="muted small">Загрузите фото работ — по одному листу или камерой подряд.</p>'}</div>`;
+  const up = (input, kind) => input.onchange = () => uploadPhotos(b.id, [...input.files], kind);
+  up($('#gr-files'), 'work'); up($('#gr-keyfile'), 'key');
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  on('gr-start', () => send({ t: 'grading.start', id: b.id }));
+  on('gr-pause', () => send({ t: 'grading.stop', id: b.id }));
+  on('gr-xlsx', () => downloadXlsx(b));
+  on('gr-bc', () => { if (b.counts.review && !confirm(`${b.counts.review} работ помечены «проверить». Выставить остальные?`)) return; if (confirm('Агент на компьютере откроет BilimClass и выставит оценки по таблице. Продолжить?')) send({ t: 'grading.toBilimclass', id: b.id }); });
+  on('gr-del', () => { if (confirm('Удалить проверку вместе с фото?')) { send({ t: 'grading.delete', id: b.id }); G.cur = null; renderGradingList(); } });
+  $('#gr-body').querySelectorAll('[data-work]').forEach(el => el.onclick = () => openWork(b, b.works.find(w => w.id === el.dataset.work)));
+}
+async function compress(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+  } catch { return file; }
+}
+async function uploadPhotos(id, files, kind) {
+  G.uploadTotal += files.length;
+  const status = () => { const el = $('#gr-up-status'); if (el) el.textContent = G.uploading ? `Загружаю фото: ${G.uploadTotal - G.uploading}/${G.uploadTotal}…` : ''; };
+  G.uploading += files.length; status();
+  let i = 0;
+  const worker = async () => { while (i < files.length) { const f = files[i++]; try { const blob = await compress(f); await fetch(`/api/grading/${id}/upload?kind=${kind}&name=${encodeURIComponent((f.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg')}`, { method: 'POST', headers: { authorization: 'Bearer ' + S.token, 'content-type': 'image/jpeg' }, body: blob }); } catch (e) { toast('Фото не загрузилось: ' + e.message); } G.uploading--; status(); } };
+  await Promise.all([worker(), worker(), worker()]);
+  G.uploadTotal = 0; status();
+  send({ t: 'grading.get', id });
+  toast(kind === 'key' ? 'Фото ключа загружено' : `Загружено фото: ${files.length}`);
+}
+async function downloadXlsx(b) {
+  const r = await fetch(`/api/grading/${b.id}/export`, { headers: { authorization: 'Bearer ' + S.token } });
+  if (!r.ok) return toast('Не удалось выгрузить');
+  const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a'); a.href = url; a.download = (b.title || 'Оценки') + '.xlsx'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function openWork(b, w) {
+  const f = finalOf(w), r = f.r;
+  const ans = (r.answers || []).map(a => `<div class="gr-ans ${a.uncertain ? 'unc' : ''}"><b>${esc(a.task || '')}</b> ${a.correct ? '✅' : '❌'} ${a.points ?? ''}/${a.max ?? ''} — «${esc(a.read_as || '')}» ${a.uncertain ? '⚠ не уверен' : ''}${a.comment ? '<br><span class="muted">' + esc(a.comment) + '</span>' : ''}</div>`).join('');
+  $('#gr-body').innerHTML = `
+    <div class="gr-card"><h3>${esc(f.student)}</h3>
+      <div class="gr-stats"><span>Оценка: <b>${esc(String(f.grade))}</b></span><span>${f.total ?? '?'}/${f.max ?? '?'} баллов</span><span>уверенность ${r.confidence != null ? Math.round(r.confidence * 100) + '%' : '—'}</span></div>
+      ${f.review ? `<p class="warn-text small">⚠ ${esc(r.review_reason || 'Нужно проверить')}</p>` : ''}
+      <div id="gr-photos"></div>
+      ${ans}
+      ${r.feedback ? `<p class="small"><b>Комментарий ученику:</b> ${esc(r.feedback)}</p>` : ''}
+      <label>Имя ученика<input id="gw-name" value="${esc(f.student)}"></label>
+      <label>Баллы<input id="gw-total" inputmode="decimal" value="${esc(String(f.total ?? ''))}"></label>
+      <label>Оценка<input id="gw-grade" value="${esc(String(f.grade))}"></label>
+      <div class="gr-actions"><button class="btn primary" id="gw-save">Сохранить</button><button class="btn" id="gw-recheck">↻ Перепроверить</button><button class="btn" id="gw-back">← К списку</button></div>
+    </div>`;
+  for (const name of w.files) {
+    const res = await fetch(`/api/grading/${b.id}/photo?name=${encodeURIComponent(name)}`, { headers: { authorization: 'Bearer ' + S.token } });
+    if (res.ok) { const img = document.createElement('img'); img.className = 'gr-photo'; img.src = URL.createObjectURL(await res.blob()); const box = $('#gr-photos'); if (box) box.appendChild(img); }
+  }
+  $('#gw-save').onclick = () => { send({ t: 'grading.edit', id: b.id, workId: w.id, patch: { student: $('#gw-name').value.trim(), total: $('#gw-total').value === '' ? undefined : Number($('#gw-total').value), grade: $('#gw-grade').value.trim() } }); toast('Сохранено'); };
+  $('#gw-recheck').onclick = () => { send({ t: 'grading.recheck', id: b.id, workId: w.id }); toast('Отправлено на повторную проверку'); };
+  $('#gw-back').onclick = () => renderBatch(G.cur);
+}
+
+/* ---------- app updates (new service worker -> reload) ---------- */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (window.__stellaLoaded) $('#update-bar').hidden = false; });
+  setTimeout(() => { window.__stellaLoaded = true; }, 3000);
+  setInterval(() => navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {}), 30 * 60 * 1000);
+}
+$('#update-go').onclick = () => location.reload();
+
+function start() { setTab('home'); connect(); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 /* ---------- Cloudflare Turnstile ---------- */
 let tsWidget = null;

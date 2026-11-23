@@ -1230,3 +1230,11 @@ body[data-state="done"] .badge-pill {
   color: #0066d6;
   min-height: 16px;
 }
+
+/* Stella voice input */
+.mic-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(120,120,128,.14); color: inherit; display: grid; place-items: center; cursor: pointer; margin-right: 6px; flex: none; }
+.mic-btn svg { width: 17px; height: 17px; }
+.mic-btn.rec { background: #ff3b30; color: #fff; animation: stellaPulse 1s ease-in-out infinite; }
+.voice-lang { margin-right: 6px; font-size: 11px !important; min-width: 34px; justify-content: center; }
+.dock-toolbar { align-items: center; }
+@keyframes stellaPulse { 50% { box-shadow: 0 0 0 6px rgba(255,59,48,.18); } }
