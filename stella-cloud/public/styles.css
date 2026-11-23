@@ -231,3 +231,21 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .gr-photo { width: 100%; border-radius: 12px; margin: 6px 0; background: var(--hover); }
 .gr-ans { font-size: 13px; border-top: 1px solid var(--line); padding: 6px 0; }
 .gr-ans .unc { color: #b7791f; }
+/* anonymous grading: name area picker + local names */
+.gr-modal { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.55); display: grid; place-items: center; padding: 12px; }
+.gr-modal-box { background: var(--panel); border-radius: 18px; padding: 14px; width: min(560px, 100%); max-height: 100%; overflow-y: auto; }
+.gr-modal-box h3 { margin: 0 0 6px; }
+.gr-region { position: relative; touch-action: none; user-select: none; margin: 10px 0; border-radius: 10px; overflow: hidden; }
+.gr-region img { display: block; width: 100%; pointer-events: none; }
+.gr-region i { position: absolute; background: rgba(0,0,0,.78); outline: 2px solid var(--accent); }
+.gr-region i::after { content: '🔒 ФИО'; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: #fff; font: 600 13px sans-serif; font-style: normal; }
+.gr-card label.chk { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
+.gr-card label.chk input, .gr-modal-box .chk input { width: auto; margin-top: 3px; }
+.gr-modal-box .chk { display: flex; gap: 8px; font-size: 13px; }
+.gr-card label.anon { background: var(--hover); padding: 10px; border-radius: 12px; }
+.anon-note { color: var(--accent); }
+.gr-crop { display: block; max-width: 100%; max-height: 44px; width: 100%; object-fit: contain; object-position: left; margin: 3px 0; border-radius: 6px; background: #fff; }
+.gr-crop.big { flex: 0 0 100%; max-height: 90px; width: 100%; object-fit: contain; object-position: left; border: 1px solid var(--line); }
+.gn-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.gn-row .gn-no { font-weight: 700; min-width: 36px; }
+.gn-row input { flex: 1 1 160px; }

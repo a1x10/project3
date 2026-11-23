@@ -145,7 +145,7 @@ async function api(req, res, url) {
   if (g) {
     const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
     try {
-      if (g[2] === 'upload' && req.method === 'POST') return json(res, 200, await grading.upload(u, g[1], url.searchParams.get('name') || 'photo.jpg', url.searchParams.get('kind'), req));
+      if (g[2] === 'upload' && req.method === 'POST') return json(res, 200, await grading.upload(u, g[1], url.searchParams.get('name') || 'photo.jpg', url.searchParams.get('kind'), req, url.searchParams.has('seq') ? Number(url.searchParams.get('seq')) : null));
       if (g[2] === 'photo') { const f = grading.photo(u, g[1], url.searchParams.get('name')); if (!f) return json(res, 404, { error: 'not found' }); res.writeHead(200, { 'content-type': MIME[require('path').extname(f).toLowerCase()] || 'image/jpeg', 'cache-control': 'private, max-age=3600' }); return fs.createReadStream(f).pipe(res); }
       if (g[2] === 'export') { const buf = await grading.exportXlsx(u, g[1]); res.writeHead(200, { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': 'attachment; filename="grades.xlsx"' }); return res.end(Buffer.from(buf)); }
     } catch (e) { return json(res, 400, { error: e.message }); }
@@ -299,8 +299,13 @@ async function onMsg(u, conn, m) {
     case 'grading.delete': grading.remove(u, m.id); sendTo(conn, { t: 'grading.list', list: grading.list(u) }); break;
     case 'grading.toBilimclass': {
       if (!pc(u.name).online) throw new Error('Компьютер не в сети: включите Stella на ПК и «Браузер для агента»');
-      const b = grading.get(u, m.id); const rows = grading.rows(u, m.id).filter(r => !r.review);
-      if (!rows.length) throw new Error('Нет проверенных работ без пометки «проверить»');
+      const b = grading.get(u, m.id); let rows = grading.rows(u, m.id).filter(r => !r.review);
+      // anonymous check: names live only on the teacher's phone and are sent just for this one entry (not stored, never with photos)
+      if (b && b.anonymous) {
+        const names = m.names && typeof m.names === 'object' ? m.names : {};
+        rows = rows.map(r => ({ ...r, student: String(names[r.no] || '').replace(/[\r\n]/g, ' ').trim().slice(0, 100) })).filter(r => r.student);
+      }
+      if (!rows.length) throw new Error('Нет проверенных работ без пометки «проверить»' + (b && b.anonymous ? ' и с подписанным именем' : ''));
       const table = rows.map((r, i) => `${i + 1}. ${r.student} — ${r.grade} (${r.total}/${r.max})`).join('\n');
       toPc(u.name, { t: 'pc.run', chatId: 'grades-' + m.id, title: '📝 Оценки: ' + b.title,
         display: `📝 Выставить оценки в BilimClass: ${b.title} (${rows.length} учеников)`,
