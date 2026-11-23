@@ -176,8 +176,12 @@
       <button class="btn tiny" id="chat-transfer">→ Сервер</button>
     </header>
     <div id="messages"></div>
+    <div id="team-hint" hidden>👥 <b>Команда агентов:</b> Stella разобьёт задачу на части и запустит несколько агентов параллельно</div>
     <form id="composer">
-      <textarea id="input" rows="1" placeholder="Напишите задачу…"></textarea>
+      <button type="button" class="icon-btn" id="team-btn" title="Команда агентов">👥</button>
+      <button type="button" class="icon-btn" id="mic-btn" title="Сказать голосом"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button type="button" class="lang-btn" id="lang-btn" title="Язык голоса">RU</button>
+      <textarea id="input" rows="1" placeholder="Скажите или напишите задачу…"></textarea>
       <button id="send-btn" class="round-btn" aria-label="Отправить">
         <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
         <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>

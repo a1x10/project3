@@ -14,6 +14,7 @@ const failover = require('./lib/failover');
 const services = require('./lib/services');
 const office = require('./lib/office');
 const sandbox = require('./lib/sandbox');
+const team = require('./lib/team');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';          // behind Caddy (HTTPS) by default
@@ -35,6 +36,7 @@ const toPc = (name, msg) => { let n = 0; for (const c of devices(name)) if (c.de
 agent.setup({ emit, port: PORT });
 wa.setup({ emit, agent });
 failover.setup({ agent, emit, toPc, toPhones });
+team.setup({ agent, emit, toPc, pcOnline: name => pc(name).online });
 
 /* ================================================================== */
 /* HTTP                                                                */
@@ -169,6 +171,8 @@ async function api(req, res, url) {
           result = `Created ${shown}. The user can download it from the server; if they want it on the PC, use transfer or tell them.`;
           break;
         }
+        case 'create_group': result = await wa.createGroup(u, a.name, a.contacts || []); break;
+        case 'broadcast': result = await wa.broadcast(u, a.contacts || [], a.text); break;
         case 'wait_for_reply': result = (await wa.waitForReply(u, a.contact, a.timeout_seconds || 300)) || 'No reply yet (timeout). Stella will forward the reply to the user when it arrives.'; break;
         default: return json(res, 404, { error: 'unknown tool' });
       }
@@ -272,6 +276,10 @@ async function onMsg(u, conn, m) {
     case 'server.chat.delete': agent.deleteChat(u, m.chatId); emit(u.name, { t: 'chat.deleted', where: 'server', chatId: m.chatId }); break;
     case 'server.send': agent.send(u, m.chatId, String(m.text || '').slice(0, 20000)); break;
     case 'server.stop': agent.stop(u, m.chatId); break;
+    /* ---- team of agents ---- */
+    case 'team.start': team.start(u, String(m.text || '').slice(0, 20000)).catch(e => sendTo(conn, { t: 'error', text: 'Команда: ' + e.message })); break;
+    case 'team.stop': team.stop(u, String(m.teamId || '')); break;
+
     /* ---- profile ("about me") + services ---- */
     case 'profile.get': sendTo(conn, { t: 'profile', profile: services.getProfile(u) }); break;
     case 'profile.set': { const pr = services.setProfile(u, m.profile || {}); emit(u.name, { t: 'profile', profile: pr }); break; }
@@ -300,7 +308,7 @@ async function onMsg(u, conn, m) {
     /* ---- PC (Stella desktop) -> server ---- */
     case 'pc.chats': if (conn.device === 'pc') { const live = P.running || new Map(); const keep = [...live.keys()].map(id => P.chats.get(id)).filter(Boolean); P.chats = new Map((m.chats || []).slice(0, 100).map(c => [c.id, c])); keep.forEach(c => P.chats.set(c.id, c)); toPhones(u.name, { t: 'chats', where: 'pc', list: [...P.chats.values()].map(c => agent.summary(c)) }); } break;
     case 'pc.chat': if (conn.device === 'pc' && m.chat) { P.chats.set(m.chat.id, m.chat); toPhones(u.name, { t: 'chat', where: 'pc', chat: m.chat }); if (m.forTransfer) agent.importFromPc(u, m.chat, m.continueText); } break;
-    case 'pc.ev': if (conn.device === 'pc') { failover.applyPcEvent(P, m); if (m.started) agent.lastOrigin.set(u.name, { where: 'pc', chatId: m.chatId }); toPhones(u.name, Object.assign({}, m, { t: 'ev', where: 'pc' })); } break;
+    case 'pc.ev': if (conn.device === 'pc') { failover.applyPcEvent(P, m); if (m.type === 'done') team.pcDone(u.name, m.chatId, P.chats.get(m.chatId)); if (m.started) agent.lastOrigin.set(u.name, { where: 'pc', chatId: m.chatId }); toPhones(u.name, Object.assign({}, m, { t: 'ev', where: 'pc' })); } break;
     case 'pc.status': if (conn.device === 'pc') toPhones(u.name, { t: 'pc.status', status: m.status }); break;
 
     /* ---- phone -> PC ---- */

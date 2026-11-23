@@ -294,6 +294,7 @@ function fillAgent(el, m) {
     if (t.secs != null) d.querySelector('em').textContent = Math.max(1, Math.round(t.secs)) + 's';
     ex.appendChild(d);
   }
+  if (m.team) { const tc = document.createElement('div'); tc.innerHTML = teamCardHtml(m.team); ex.prepend(tc.firstChild); }
   const body = el.querySelector('.body');
   const typingNow = m._view != null;
   const visible = typingNow ? m.text.slice(0, m._view) : m.text;
@@ -765,13 +766,58 @@ $('#to-server').onclick = async () => {
   renderMessages(); saveChats();
 };
 
+// tasks from the phone / the agent team: run one after another
+const pcQueue = [];
+function runRemote(m) {
+  if (m.chatId && state.chats.some(c => c.id === m.chatId)) state.current = m.chatId;
+  else if (m.chatId) { state.chats.unshift({ id: m.chatId, title: m.title || 'Задача', convId: null, messages: [], created: Date.now() }); state.current = m.chatId; }
+  else newChat();
+  renderChatList(); renderMessages();
+  sendText(m.text, { display: m.display || ('📱 ' + m.text) });
+}
+setInterval(() => { if (!state.busy && pcQueue.length) runRemote(pcQueue.shift()); }, 800);
+
+/* ---------- agent team (runs on the server, live card here) ---------- */
+const teamChats = {};                                  // server team chat id -> local chat id
+function teamCardHtml(t) {
+  const icon = st => ({ waiting: '⏳', running: '🔄', done: '✅', failed: '⚠️', stopped: '⏹' }[st] || '•');
+  const head = { planning: 'Составляю план…', running: 'Агенты работают', summarizing: 'Собираю отчёт…', done: 'Готово', failed: 'Не получилось', stopped: 'Остановлено' }[t.status] || t.status;
+  const secs = a => a.started ? Math.round(((a.finished || Date.now()) - a.started) / 1000) + 's' : '';
+  return `<div class="team-card"><div class="team-head">👥 <b>${escapeHtml(t.title || 'Команда агентов')}</b><span class="spacer"></span><span class="muted small">${head}</span></div>` +
+    ((t.agents || []).map(a => `<div class="team-row"><span>${icon(a.status)}</span><span class="tt"><b>${escapeHtml(a.title)}</b><small>${escapeHtml(a.summary || (a.status === 'waiting' ? 'ждёт других агентов' : a.status === 'running' ? 'работает…' : ''))}</small></span><span class="wh">${a.where === 'pc' ? 'этот ПК' : 'сервер'}</span><span class="tm">${secs(a)}</span></div>`).join('') || '<div class="muted small">Планировщик раскладывает задачу на части…</div>') + '</div>';
+}
+api.onCloudTeam(({ team, chatId }) => {
+  let localId = teamChats[chatId];
+  if (!localId) {
+    const c = { id: 'team-view-' + chatId, title: '👥 ' + (team.request || 'Команда').split('\n')[0].slice(0, 44), convId: null, created: Date.now(), messages: [{ id: uid(), role: 'user', text: team.request || '' }, { id: 'tm-' + chatId, role: 'agent', text: '', tools: [], team }] };
+    state.chats.unshift(c); teamChats[chatId] = localId = c.id;
+    if (!state.busy) state.current = c.id;
+    renderChatList();
+  }
+  const c = state.chats.find(x => x.id === localId); if (!c) return;
+  const msg = c.messages.find(x => x.id === 'tm-' + chatId); msg.team = team;
+  if (c.id === state.current) renderMessages();
+});
+api.onCloudServerChat(({ chat }) => {
+  const localId = teamChats[chat.id]; if (!localId) return;
+  const c = state.chats.find(x => x.id === localId); if (!c) return;
+  const final = [...chat.messages].reverse().find(x => x.role === 'agent' && x.team);
+  if (final && final.text) { const msg = c.messages.find(x => x.id === 'tm-' + chat.id); msg.text = final.text; if (c.id === state.current) renderMessages(); saveChats(); }
+});
+$('#team-btn').onclick = async () => {
+  const text = $('#input').value.trim();
+  if (!text) { alert('Напишите задачу для команды агентов, затем нажмите 👥'); return; }
+  if (cloudState.status !== 'online') { alert('Команда агентов работает через сервер Stella — подключитесь («Облако»).'); return; }
+  await api.cloudTeam(text);
+  $('#input').value = ''; autoGrow(); updateSendBtn();
+  setStatus('busy', 'команда агентов запущена');
+};
+
 // commands from the phone
 api.onCloudCommand(async m => {
   if (m.t === 'pc.run') {
-    if (state.busy) return;
-    if (m.chatId && state.chats.some(c => c.id === m.chatId)) state.current = m.chatId; else newChat();
-    renderChatList(); renderMessages();
-    sendText(m.text, { display: '📱 ' + m.text });
+    if (state.busy) { pcQueue.push(m); setStatus('busy', 'в очереди: ' + pcQueue.length); return; }
+    runRemote(m);
   } else if (m.t === 'pc.stop') {
     if (state.busy && (!m.chatId || state.busy.chatId === m.chatId)) api.stop(state.busy.reqId);
   } else if (m.t === 'pc.export') {

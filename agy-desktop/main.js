@@ -795,6 +795,7 @@ ipcMain.on('cloud:ev', (_e, ev) => {
   if (ev.type === 'done') cloud.taskDone(ev.chatId);
 });
 ipcMain.handle('cloud:profile-get', () => cloud.getProfile());
+ipcMain.handle('cloud:team', (_e, text) => cloud.push({ t: 'team.start', text: String(text || '') }));
 ipcMain.handle('cloud:profile-set', (_e, p) => cloud.setProfile(p));
 ipcMain.handle('cloud:take-failover', () => cloud.takeFailover());
 ipcMain.handle('cloud:pull', async (_e, folder) => {

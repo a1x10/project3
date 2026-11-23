@@ -96,6 +96,7 @@ const lastOrigin = new Map();            // username -> { where, chatId }  (for 
 function serverNote(u) {
   return require('./services').profileText(u) +
     '[Stella server note — follow, never mention] You run on the user\'s always-on server inside their private account workspace. ' +
+    'Always answer in the language the user writes in (Russian, Kazakh or English). ' +
     'For presentations and documents (project work, essays, reports) ALWAYS use the stella-whatsapp tools create_presentation / create_document: write the full content yourself and generate the file in one call (seconds) — never build them step by step. ' +
     'E-mail: email_list / email_read / email_send (send only when the user asked). notify_user sends a push to the user\'s phone/PC. ' +
     'The user may be away from their PC and is chatting from their phone. ' +
@@ -116,7 +117,7 @@ function send(u, chatId, text, opts = {}) {
   let c = chatId && findChat(u, chatId);
   if (!c) c = newChat(u, null, 'server');
   if (c.busy) throw new Error('Агент ещё работает в этом чате');
-  const maxRuns = Number(process.env.STELLA_MAX_RUNS || 2);
+  const maxRuns = Number(process.env.STELLA_MAX_RUNS || 2) + (opts.team ? Number(process.env.STELLA_TEAM_MAX || 4) : 0);
   if (runningCount(u) >= maxRuns) throw new Error(`Одновременно можно запускать не больше ${maxRuns} задач. Дождитесь окончания или остановите одну.`);
   if (!bin) throw new Error('На сервере не установлен Antigravity CLI (agy). Запустите install.sh ещё раз.');
 
@@ -132,7 +133,7 @@ function send(u, chatId, text, opts = {}) {
 
   prepareAgyConfig(u);
   const s = u.settings || {};
-  let prompt = serverNote(u);
+  let prompt = serverNote(u) + (opts.note || '');
   if (!c.convId) prompt += contextFromHistory(c, c.messages.length - 2);
   prompt += text;
   const args = ['-p', prompt, '--output-format', 'stream-json'];
@@ -201,7 +202,8 @@ function send(u, chatId, text, opts = {}) {
     c.busy = false; c.updated = Date.now();
     saveChats(u);
     emit(u.name, { t: 'ev', where: 'server', chatId: c.id, msgId: m.id, type: 'done', code, duration: m.duration });
-    emit(u.name, { t: 'notify', title: 'Агент на сервере закончил', body: (m.text || m.error || '').slice(0, 140), chatId: c.id, where: 'server' });
+    if (!opts.quiet) emit(u.name, { t: 'notify', title: 'Агент на сервере закончил', body: (m.text || m.error || '').slice(0, 140), chatId: c.id, where: 'server' });
+    if (opts.onDone) { try { opts.onDone(m, c, code); } catch (e) { console.error('onDone', e); } }
   });
   return c;
 }
@@ -264,11 +266,13 @@ function termResize(u, cols, rows) { const t = terms.get(u.name); if (t) { try {
 function termRestart(u) { const t = terms.get(u.name); if (t) { try { t.p.kill(); } catch {} terms.delete(u.name); } return termOpen(u); }
 
 // one-off agy run without a chat (used by the WhatsApp auto-responder)
-function runOnce(u, prompt, timeoutMs = 120000) {
+function runOnce(u, prompt, timeoutMs = 120000, schema = null) {
   return new Promise((resolve, reject) => {
     const bin = agyPath(u); if (!bin) return reject(new Error('agy not installed'));
     prepareAgyConfig(u);
-    const L = runner(u, bin, ['-p', prompt, '--output-format', 'json']);
+    const args = ['-p', prompt, '--output-format', 'json'];
+    if (schema) args.push('--json-schema', JSON.stringify(schema));
+    const L = runner(u, bin, args);
     const child = spawn(L.cmd, L.args, spawnOpts(u, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, L.opts)));
     let out = '', err = '';
     const t = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, timeoutMs);
@@ -276,7 +280,12 @@ function runOnce(u, prompt, timeoutMs = 120000) {
     child.on('error', e => { clearTimeout(t); reject(e); });
     child.on('close', () => {
       clearTimeout(t);
-      try { const j = JSON.parse(out.trim()); if (j.response) return resolve(j.response); } catch {}
+      try {
+        const j = JSON.parse(out.trim());
+        if (schema && j.structured_output) return resolve(j.structured_output);
+        if (schema && j.response) { const mm = String(j.response).match(/\{[\s\S]*\}/); if (mm) return resolve(JSON.parse(mm[0])); }
+        if (j.response) return resolve(j.response);
+      } catch {}
       if (out.trim()) return resolve(out.trim());
       reject(new Error(err.trim().slice(-500) || 'empty response'));
     });
@@ -298,4 +307,4 @@ function describeTool(name, params) {
   return n.replace(/_/g, ' ') + (first ? ' ' + short(String(first)) : '');
 }
 
-module.exports = { runningCount, stopAll, setup, chats, summary, findChat, newChat, deleteChat, send, stop, addNote, importFromPc, termOpen, termInput, termResize, termRestart, runOnce, lastOrigin, agyPath, prepareAgyConfig };
+module.exports = { serverNote, runningCount, stopAll, setup, chats, summary, findChat, newChat, deleteChat, send, stop, addNote, importFromPc, termOpen, termInput, termResize, termRestart, runOnce, lastOrigin, agyPath, prepareAgyConfig };

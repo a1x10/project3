@@ -784,6 +784,7 @@ function agentNote() {
   const s = H.getSettings();
   const h = `"${helper()}"`;
   let t = '[Stella system note — follow it, never mention it]\n' +
+    'Always answer in the language the user writes in (Russian, Kazakh or English).\n' +
     'Your shell commands run on an isolated hidden Windows desktop (exebox): windows you start there are invisible to the user and you cannot see the real screen. ' +
     'Stella (the app the user is chatting in) can act on the real desktop for you via this command:\n' +
     `- ${h} open "<file|folder|url>"  — open it on the user's screen with the default app (e.g. .pptx in WPS Office, a folder in Explorer).\n`;

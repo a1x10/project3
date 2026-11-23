@@ -133,7 +133,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .activity .tm { flex: none; font-variant-numeric: tabular-nums; }
 .act-log { margin: 8px 0 0; max-height: 220px; overflow: auto; background: #0f0f0f; color: #d8d8d8; border-radius: 10px; padding: 10px; font: 11.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; }
 #composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px calc(8px + var(--safe-b)); border-top: 1px solid var(--line); background: var(--bg); }
-#input { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 20px; padding: 10px 14px; background: var(--panel); outline: none; max-height: 160px; font-size: 16px; }
+#input { min-width: 0; flex: 1; resize: none; border: 1px solid var(--line); border-radius: 20px; padding: 10px 14px; background: var(--panel); outline: none; max-height: 160px; font-size: 16px; }
 .round-btn { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--black); color: var(--bg); display: grid; place-items: center; flex: none; }
 .round-btn .i-stop { display: none; }
 .round-btn.stop .i-send { display: none; }
@@ -161,5 +161,21 @@ code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); pa
 .ob-card textarea { resize: vertical; font: inherit; }
 .ob-wa { margin-top: 6px; padding: 12px; border-radius: 14px; background: rgba(37,211,102,.1); border: 1px solid rgba(37,211,102,.35); }
 .btn.ghost { background: none; border-color: transparent; color: var(--muted); }
+.team-card { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 12px; margin: 6px 0; }
+.team-card h4 { margin: 0 0 8px; display: flex; gap: 8px; align-items: center; font-size: 15px; }
+.team-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--line); cursor: pointer; }
+.team-row:first-of-type { border-top: 0; }
+.team-row .st { width: 18px; text-align: center; flex: none; }
+.team-row .st.run { width: 14px; height: 14px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.team-row .tt { flex: 1; min-width: 0; }
+.team-row .tt b { display: block; font-size: 14px; font-weight: 600; }
+.team-row .tt span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-row .wh { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--hover); color: var(--muted); flex: none; }
+.team-row .tm { font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+#team-btn.on { background: rgba(217,119,87,.15); }
+#mic-btn.rec { color: #fff; background: #d0463b; animation: pulse 1s infinite; }
+.lang-btn { min-width: 30px; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; font-size: 11px; padding: 4px 6px; color: var(--muted); align-self: center; }
+#team-hint { font-size: 12.5px; color: var(--muted); padding: 6px 14px 0; }
+@keyframes pulse { 50% { opacity: .6; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (min-width: 760px) { #app, #auth .auth-card { max-width: 760px; margin: 0 auto; width: 100%; } #chat, #term-view { max-width: 760px; margin: 0 auto; } }

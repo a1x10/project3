@@ -342,4 +342,32 @@ function overview(u) {
   return Object.assign(publicStatus(s), { chats: listChats(u, '', 60), autoLog: s.data.autoLog.slice(-40).reverse() });
 }
 
-module.exports = { _test: { session, storeMessage, onIncoming, autoReply }, setup, connect, logout, resumeAll, listChats, readChat, styleSamples, sendText, waitForReply, setAuto, overview, resolveChat };
+// create a WhatsApp group with the given contacts (only when the user asked)
+async function createGroup(u, name, contacts) {
+  const s = session(u);
+  if (!s.sock || s.status !== 'connected') throw new Error('WhatsApp не подключён');
+  name = String(name || '').trim().slice(0, 100);
+  if (!name) throw new Error('group name required');
+  const jids = [...new Set((contacts || []).slice(0, 100).map(c => resolveChat(u, c)).filter(j => !j.endsWith('@g.us')))];
+  if (!jids.length) throw new Error('Не найдено ни одного контакта');
+  const g = await s.sock.groupCreate(name, jids);
+  chatOf(s, g.id).name = name; s.save();
+  emit(u.name, { t: 'notify', title: '👥 Группа создана', body: `${name} · ${jids.length} участн.` });
+  return { group: name, jid: g.id, members: jids.length };
+}
+// the same message to several people, paced (2–5 s) to look human and avoid bans; max 30 per call
+async function broadcast(u, contacts, text) {
+  const s = session(u);
+  if (!s.sock || s.status !== 'connected') throw new Error('WhatsApp не подключён');
+  text = String(text || '').trim(); if (!text) throw new Error('text required');
+  const list = [...new Set((contacts || []).slice(0, 30))];
+  const out = [];
+  for (const c of list) {
+    try { const r = await sendText(u, c, text, { expectReply: true }); out.push({ to: r.name, sent: true }); }
+    catch (e) { out.push({ to: c, sent: false, error: e.message }); }
+    await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+  }
+  return { sent: out.filter(x => x.sent).length, total: list.length, details: out };
+}
+
+module.exports = { createGroup, broadcast, _test: { session, storeMessage, onIncoming, autoReply }, setup, connect, logout, resumeAll, listChats, readChat, styleSamples, sendText, waitForReply, setAuto, overview, resolveChat };

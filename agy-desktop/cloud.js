@@ -79,6 +79,8 @@ function connect() {
     // commands from the phone / server
     if (['pc.run', 'pc.stop', 'pc.export', 'pc.import'].includes(m.t)) H.send('cloud:command', m);
     if (m.t === 'profile') { profile = m.profile || {}; H.send('cloud:profile', profile); }
+    if (m.t === 'team') H.send('cloud:team', m);
+    if (m.t === 'chat' && m.where === 'server' && m.chat && m.chat.origin === 'team') H.send('cloud:server-chat', m);
     if (m.t === 'services') servicesList = m.list || {};
     if (m.t === 'pc.failover') { pendingFailover.push(...(m.moved || [])); H.send('cloud:failover', { moved: [] }); }
     if (m.t === 'wa.reply' && m.origin && m.origin.where === 'pc') H.send('cloud:wa-reply', m);

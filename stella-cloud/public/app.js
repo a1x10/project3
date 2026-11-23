@@ -96,6 +96,13 @@ function onMsg(m) {
     case 'admin.state': renderAdmin(m); break;
     case 'security': renderSecurity(m); break;
     case 'profile': S.profile = m.profile || {}; renderAbout(); break;
+    case 'team': {
+      if (S.open && S.open.where === 'server' && S.open.chat.id === m.chatId) {
+        const msg = S.open.chat.messages.find(x => x.id === m.msgId);
+        if (msg) { msg.team = m.team; msg.busy = !['done', 'failed', 'stopped'].includes(m.team.status); updateMsg(msg); updateComposer(); }
+      }
+      break;
+    }
     case 'services': S.services = m.list || {}; renderServices(); break;
     case 'security.2fa.qr': $('#sec-2fa-setup').hidden = false; $('#sec-qr').src = m.qr; $('#sec-secret').textContent = m.secret; $('#sec-code').focus(); break;
     case 'error': toast(m.text, 5000); if (S.open) { S.open.pendingNew = false; } break;
@@ -186,6 +193,7 @@ function renderChat() {
   $('#chat-where').textContent = where === 'server' ? 'На сервере' : (S.pcOnline ? 'На компьютере' : 'На компьютере · не в сети');
   $('#chat-transfer').textContent = where === 'server' ? '→ Компьютер' : '→ Сервер';
   $('#chat-transfer').hidden = !chat.id;
+  renderTeamBtn();
   const box = $('#messages'); box.innerHTML = '';
   for (const m of chat.messages) box.appendChild(msgEl(m));
   box.scrollTop = box.scrollHeight;
@@ -202,11 +210,23 @@ function fillMsg(el, m) {
   if (m.role === 'user') { el.innerHTML = '<div class="bubble"></div>'; el.firstChild.textContent = m.text; return; }
   const steps = (m.tools || []).slice(-6).map(t => `<div class="step ${t.error ? 'failed' : ''}"><i>${t.error ? '✗' : '✓'}</i><span>${esc(t.detail || t.name)}</span></div>`).join('');
   const secs = m.busy ? Math.floor((Date.now() - (m.started || Date.now())) / 1000) : (m.duration ?? null);
-  const act = (m.busy || m.duration != null) ? `<div class="activity" data-act>${m.busy ? '<span class="sp"></span>' : '<span class="done"></span>'}<span class="tx">${esc(m.busy ? (m.status || 'Думает…') : (m.error ? 'Ошибка' : 'Выполнено'))}</span><span class="tm">${secs != null ? secs + 's' : ''}</span><span>›</span></div>${m._open ? `<pre class="act-log">${esc((m.log || '').trim() || 'Пока пусто')}</pre>` : ''}` : '';
-  el.innerHTML = `<div class="who"><b>✳</b> Stella</div>${steps}<div class="body">${m.text ? renderMarkdown(m.text) : ''}${m.error ? `<div class="err">${esc(m.error)}</div>` : ''}</div>${act}`;
+  const act = !m.team && (m.busy || m.duration != null) ? `<div class="activity" data-act>${m.busy ? '<span class="sp"></span>' : '<span class="done"></span>'}<span class="tx">${esc(m.busy ? (m.status || 'Думает…') : (m.error ? 'Ошибка' : 'Выполнено'))}</span><span class="tm">${secs != null ? secs + 's' : ''}</span><span>›</span></div>${m._open ? `<pre class="act-log">${esc((m.log || '').trim() || 'Пока пусто')}</pre>` : ''}` : '';
+  const teamCard = m.team ? renderTeam(m.team) : '';
+  el.innerHTML = `<div class="who"><b>✳</b> Stella${m.team ? ' · команда' : ''}</div>${teamCard}${steps}<div class="body">${m.text ? renderMarkdown(m.text) : ''}${m.error ? `<div class="err">${esc(m.error)}</div>` : ''}</div>${act}`;
+  el.querySelectorAll('[data-open-chat]').forEach(r => r.onclick = () => { const [w, id] = r.dataset.openChat.split(':'); if (id) openChat(w, id); });
+  const stopT = el.querySelector('[data-team-stop]'); if (stopT) stopT.onclick = () => { if (confirm('Остановить всех агентов команды?')) send({ t: 'team.stop', teamId: stopT.dataset.teamStop }); };
   const a = el.querySelector('[data-act]');
   if (a) a.onclick = () => { m._open = !m._open; fillMsg(el, m); };
 }
+function renderTeam(t) {
+  const icon = st => st === 'running' ? '<span class="st run"></span>' : `<span class="st">${{ waiting: '⏳', done: '✅', failed: '⚠️', stopped: '⏹' }[st] || '•'}</span>`;
+  const secs = a => a.started ? Math.round(((a.finished || Date.now()) - a.started) / 1000) + 's' : '';
+  const head = { planning: 'Составляю план…', running: 'Агенты работают', summarizing: 'Собираю отчёт…', done: 'Готово', failed: 'Не получилось', stopped: 'Остановлено' }[t.status] || t.status;
+  const rows = (t.agents || []).map(a => `<div class="team-row" data-open-chat="${a.where === 'pc' ? 'pc' : 'server'}:${esc(a.chatId || '')}">${icon(a.status)}<div class="tt"><b>${esc(a.title)}</b><span>${esc(a.summary || (a.status === 'waiting' ? 'ждёт результатов других агентов' : a.status === 'running' ? 'работает…' : ''))}</span></div><span class="wh">${a.where === 'pc' ? 'ПК' : 'сервер'}</span><span class="tm">${secs(a)}</span></div>`).join('');
+  const running = ['planning', 'running', 'summarizing'].includes(t.status);
+  return `<div class="team-card"><h4>👥 ${esc(t.title || 'Команда агентов')}<span class="spacer"></span><span class="small muted">${head}</span></h4>${rows || '<div class="small muted">Планировщик раскладывает задачу на части…</div>'}${running && t.status !== 'planning' ? `<button class="btn tiny" data-team-stop="${esc(t.id)}">Остановить</button>` : ''}</div>`;
+}
+
 function updateMsg(m) {
   const el = document.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`);
   if (!el) return renderChat();
@@ -229,10 +249,40 @@ $('#composer').onsubmit = e => {
   const text = input.value.trim(); if (!text) return;
   input.value = ''; input.style.height = 'auto';
   if (!chat.id) S.open.pendingNew = true;
-  if (where === 'server') send({ t: 'server.send', chatId: chat.id, text });
+  if (where === 'server' && S.teamMode && !chat.id) { send({ t: 'team.start', text }); S.teamMode = false; renderTeamBtn(); }
+  else if (where === 'server') send({ t: 'server.send', chatId: chat.id, text });
   else { send({ t: 'pc.send', chatId: chat.id, text }); toast('Отправлено на компьютер'); }
 };
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer:fine)').matches) { e.preventDefault(); $('#composer').requestSubmit(); } });
+
+/* ---------- team mode ---------- */
+function renderTeamBtn() {
+  const can = S.open && S.open.where === 'server' && !S.open.chat.id;
+  $('#team-btn').hidden = !can;
+  $('#team-btn').classList.toggle('on', !!S.teamMode && can);
+  $('#team-hint').hidden = !(S.teamMode && can);
+}
+$('#team-btn').onclick = () => { S.teamMode = !S.teamMode; renderTeamBtn(); $('#input').focus(); };
+
+/* ---------- voice: «просто скажи» (ru / kk / en) ---------- */
+const LANGS = [['RU', 'ru-RU'], ['KZ', 'kk-KZ'], ['EN', 'en-US']];
+let langIdx = Math.max(0, LANGS.findIndex(l => l[0] === localStorage.getItem('stella.voiceLang')));
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+function renderLang() { $('#lang-btn').textContent = LANGS[langIdx][0]; }
+renderLang();
+$('#lang-btn').onclick = () => { langIdx = (langIdx + 1) % LANGS.length; localStorage.setItem('stella.voiceLang', LANGS[langIdx][0]); renderLang(); };
+if (!SR) { $('#mic-btn').hidden = true; $('#lang-btn').hidden = true; }
+$('#mic-btn').onclick = () => {
+  if (rec) { rec.stop(); return; }
+  rec = new SR(); rec.lang = LANGS[langIdx][1]; rec.interimResults = true; rec.continuous = false;
+  const base = input.value ? input.value.trimEnd() + ' ' : '';
+  rec.onresult = e => { let t = ''; for (const r of e.results) t += r[0].transcript; input.value = base + t; input.dispatchEvent(new Event('input')); };
+  rec.onend = () => { rec = null; $('#mic-btn').classList.remove('rec'); if (input.value.trim() && localStorage.getItem('stella.voiceAutoSend') !== '0') $('#composer').requestSubmit(); };
+  rec.onerror = e => { if (e.error === 'not-allowed') toast('Разрешите доступ к микрофону в настройках браузера'); else if (e.error !== 'no-speech' && e.error !== 'aborted') toast('Голос: ' + e.error); };
+  $('#mic-btn').classList.add('rec');
+  try { rec.start(); } catch { rec = null; $('#mic-btn').classList.remove('rec'); }
+};
 
 $('#chat-transfer').onclick = () => {
   const { where, chat } = S.open;
@@ -326,6 +376,7 @@ $('#mode-select').onchange = e => send({ t: 'settings.set', mode: e.target.value
 $('#logout').onclick = async () => { await fetch('/api/logout', { method: 'POST', headers: { authorization: 'Bearer ' + S.token } }).catch(() => {}); localStorage.removeItem('stella.token'); location.reload(); };
 $('#notif-btn').onclick = async () => { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Уведомления включены' : 'Уведомления не разрешены'); };
 async function notify(title, body) {
+  body = plainText(body);
   if (document.visibilityState === 'visible') { toast(title + (body ? ': ' + body : ''), 5000); return; }
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, { body, icon: '/icon.png', badge: '/icon.png' }); } catch { new Notification(title, { body }); }
