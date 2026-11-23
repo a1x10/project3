@@ -107,7 +107,7 @@ async function api(req, res, url) {
     if (limited(req, reg ? 'register' : 'login', reg ? 5 : 15, reg ? 3600e3 : 600e3)) return json(res, 429, { error: 'Слишком много попыток с вашего адреса. Подождите и попробуйте позже.' });
     try {
       const b = await body(req);
-      if (!(await captchaOk(req, b.captcha))) return json(res, 400, { error: 'Пройдите проверку «Я не робот»', captcha: true });
+      if (!(await captchaOk(req, b.captcha))) return json(res, 400, { error: 'Проверка «Я не робот» не завершилась. Подождите пару секунд и нажмите ещё раз (если окошка Cloudflare нет — обновите страницу).', captcha: true });
       const m = Object.assign(meta(req), { totp: b.totp, kind: b.device === 'pc' ? 'pc' : 'web' });
       const r = reg ? users.register(b.username, b.password, b.invite, m) : users.login(b.username, b.password, m);
       const u = users.get(r.user.name);

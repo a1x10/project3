@@ -34,7 +34,8 @@ $('#auth-form').onsubmit = async e => {
   $('#auth-err').textContent = '';
   $('#auth-btn').disabled = true;
   try {
-    const r = await fetch('/api/' + authMode, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: $('#auth-user').value, password: $('#auth-pass').value, invite: $('#auth-invite').value, totp: $('#auth-totp').value, captcha: captchaToken() }) });
+    const captcha = await waitCaptcha();
+    const r = await fetch('/api/' + authMode, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: $('#auth-user').value, password: $('#auth-pass').value, invite: $('#auth-invite').value, totp: $('#auth-totp').value, captcha }) });
     const j = await r.json();
     if (j.need2fa) { $('#auth-totp').hidden = false; $('#auth-totp').focus(); }
     if (!r.ok || j.error) { resetCaptcha(); throw new Error(j.error || 'Ошибка'); }
@@ -844,8 +845,11 @@ function start() { setTab('home'); connect(); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 /* ---------- Cloudflare Turnstile ---------- */
 let tsWidget = null;
+let tsLoading = false;
 function loadCaptcha(sitekey) {
+  tsKey = sitekey || tsKey;
   if (!sitekey || window.turnstile) return renderCaptcha(sitekey);
+  if (tsLoading) return; tsLoading = true;
   const sc = document.createElement('script');
   sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
   sc.async = true; sc.onload = () => renderCaptcha(sitekey);
@@ -860,6 +864,24 @@ function renderCaptcha(sitekey) {
     'error-callback': () => { $('#auth-err').textContent = 'Проверка Cloudflare не загрузилась. Обновите страницу или отключите блокировщик рекламы / VPN.'; } });
   // Turnstile renders inside a closed shadow root: just check that it put something into the box
   setTimeout(() => { if (!$('#captcha-box').firstElementChild) $('#auth-err').textContent = 'Проверка Cloudflare не загрузилась. Обновите страницу или отключите блокировщик рекламы / VPN.'; }, 8000);
+}
+// Cloudflare often passes without a click but needs 1–3 s: wait for the token instead of sending an empty one
+async function waitCaptcha() {
+  if (!tsKey) return '';                                     // captcha is off on this server
+  if (!window.turnstile) loadCaptcha(tsKey); else if (tsWidget === null) renderCaptcha(tsKey);
+  let t = captchaToken();
+  if (t) return t;
+  const btn = $('#auth-btn'), old = btn.textContent;
+  btn.textContent = 'Проверка «Я не робот»…';
+  for (let i = 0; i < 40 && !(t = captchaToken()); i++) {       // up to ~20 s
+    if (window.turnstile && tsWidget === null) renderCaptcha(tsKey);
+    await new Promise(r => setTimeout(r, 500));
+  }
+  btn.textContent = old;
+  if (!t) throw new Error($('#captcha-box').firstElementChild
+    ? 'Отметьте «Я не робот» в окошке Cloudflare выше и нажмите ещё раз.'
+    : 'Проверка Cloudflare не загрузилась. Обновите страницу, отключите блокировщик рекламы / VPN или откройте сайт в другом браузере.');
+  return t;
 }
 function captchaToken() { try { return tsWidget !== null ? turnstile.getResponse(tsWidget) : ''; } catch { return ''; } }
 function resetCaptcha() { try { if (tsWidget !== null) turnstile.reset(tsWidget); } catch {} }
