@@ -500,6 +500,16 @@ async function initControlToggles() {
     state.settings = await api.getSettings();
     setStatus('on', r.ok && on ? 'браузер для агента готов' : 'готов');
   };
+  const tc = $('#tg-conf');
+  tc.onchange = async () => {
+    if (tc.checked) {
+      if (!localStorage.getItem('confOk') && !confirm('«Конференция» будет слушать ваш микрофон и звук звонка, показывать текст разговора и подсказки.\n\nРечь распознаётся на вашем сервере Stella через модель Google Gemini. Предупредите участников, что разговор расшифровывается.\n\nВключить?')) { tc.checked = false; return; }
+      localStorage.setItem('confOk', '1');
+      await api.confOpen();
+    } else await api.confClose();
+  };
+  api.onConfClosed(() => { tc.checked = false; });
+  api.onConfSaved(({ file }) => setStatus('on', 'конференция сохранена: ' + file.split(/[\\/]/).slice(-2).join('/')));
   ts.onchange = async () => {
     if (ts.checked && !confirm('Разрешить агенту видеть экран и управлять мышью и клавиатурой?\n\nПока агент работает, сверху будет красная полоса. Нажмите Esc, чтобы остановить. Пароли агент не вводит.')) { ts.checked = false; return; }
     await api.controlScreen(ts.checked);

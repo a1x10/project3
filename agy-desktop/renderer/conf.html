@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:">
+<title>Stella — Конференция</title>
+<link rel="stylesheet" href="conf.css">
+</head>
+<body>
+  <header>
+    <span class="rec" id="rec"></span>
+    <b>Конференция</b>
+    <span class="timer" id="timer">00:00</span>
+    <span class="grow"></span>
+    <button class="hb" id="pause" title="Пауза / продолжить">⏸</button>
+    <button class="hb" id="pin" title="Поверх всех окон">📌</button>
+    <button class="hb" id="min" title="Свернуть">—</button>
+    <button class="hb" id="x" title="Закончить и сохранить">✕</button>
+  </header>
+
+  <div id="notice" hidden></div>
+
+  <section id="transcript"><p class="empty" id="empty">Слушаю… Говорите — здесь появится текст разговора.<br><small>«Я» — ваш микрофон, «Собеседник» — звук звонка (Zoom, Meet, Teams, Telegram…).</small></p></section>
+
+  <section id="answer" hidden>
+    <div class="ahead"><span id="atitle">💡 Подсказка</span><span class="grow"></span><button class="hb" id="acopy" title="Копировать">⧉</button><button class="hb" id="aclose" title="Скрыть">✕</button></div>
+    <div id="atext"></div>
+  </section>
+
+  <nav class="actions">
+    <button data-m="answer">💡 Что ответить</button>
+    <button data-m="followup">❓ Вопросы</button>
+    <button data-m="summary">📝 Итоги</button>
+    <button data-m="screen">📸 Экран</button>
+  </nav>
+  <form id="askf"><input id="ask" placeholder="Спросить Stella… (Enter)" autocomplete="off"><button>➤</button></form>
+
+  <footer>
+    <label title="Подсказка появляется сама, когда собеседник задаёт вопрос"><input type="checkbox" id="auto" checked> ⚡ Авто</label>
+    <label><input type="checkbox" id="mic" checked> 🎤 Я</label>
+    <label><input type="checkbox" id="sys" checked> 🔊 Собеседник</label>
+    <input type="range" id="op" min="40" max="100" value="100" title="Прозрачность окна">
+  </footer>
+<script src="markdown.js"></script>
+<script src="conf-app.js"></script>
+</body>
+</html>

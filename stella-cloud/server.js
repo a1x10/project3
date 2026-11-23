@@ -16,6 +16,7 @@ const office = require('./lib/office');
 const sandbox = require('./lib/sandbox');
 const team = require('./lib/team');
 const grading = require('./lib/grading');
+const conf = require('./lib/conf');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';          // behind Caddy (HTTPS) by default
@@ -51,6 +52,13 @@ const VENDOR = {
 };
 
 function json(res, code, obj) { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(obj)); }
+function bigBody(req, max) {
+  return new Promise((resolve, reject) => {
+    const parts = []; let n = 0;
+    req.on('data', d => { n += d.length; if (n > max) { reject(new Error('слишком большой запрос')); req.destroy(); } else parts.push(d); });
+    req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(parts).toString('utf8') || '{}')); } catch { reject(new Error('bad json')); } });
+  });
+}
 function body(req) {
   return new Promise((resolve, reject) => {
     let b = ''; req.on('data', d => { b += d; if (b.length > 2e6) { reject(new Error('too large')); req.destroy(); } });
@@ -139,6 +147,21 @@ async function api(req, res, url) {
     if (!s) return json(res, 404, { error: 'Сервис не подключён' });
     users.audit('secret_used:' + name, u.name, meta(req));
     return json(res, 200, { login: s.login, password: s.password, url: s.url });
+  }
+  // "Конференция": live meeting assistant for Stella.exe (speech segments -> text, streamed hints)
+  const cf = p.match(/^\/api\/conf\/(status|transcribe|assist)$/);
+  if (cf) {
+    const u = users.byToken(bearer(req)); if (!u) return json(res, 401, { error: 'unauthorized' });
+    if (cf[1] === 'status') return json(res, 200, conf.status());
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    const per = cf[1] === 'transcribe' ? 120 : 30;                     // per user per minute
+    if (limited({ headers: {}, socket: { remoteAddress: 'u:' + u.name } }, 'conf-' + cf[1], per, 60e3)) return json(res, 429, { error: 'Слишком часто, подождите немного' });
+    let m;
+    try { m = await bigBody(req, 12e6); } catch (e) { return json(res, 413, { error: e.message }); }
+    if (cf[1] === 'transcribe') { try { return json(res, 200, await conf.transcribe(u, m)); } catch (e) { return json(res, 502, { error: e.message }); } }
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+    try { await conf.assist(u, m, t => res.write(t)); } catch (e) { res.write('\n\n⚠ ' + e.message); }
+    return res.end();
   }
   // grading: photo upload (raw body), photo view, Excel export
   const g = p.match(/^\/api\/grading\/([\w-]+)\/(upload|photo|export)$/);

@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "url": "https://github.com/a1x10/project3/raw/claude/happy-ritchie-vx32ws/agy-desktop/release/Stella.exe",
-  "sha256": "1d343940c8782ebbbd23d7f5d3b0ce6aa24ded8d4eeb9e40bd0691a37a1a2069",
-  "notes": "Проверка работ по фото, команда агентов, голос, автообновление"
+  "sha256": "d09b1a7856edf88a7195ca18de6224fef5ebc9c291f98df4551f05d3ec6b2762",
+  "notes": "Конференция: живая расшифровка созвона и подсказки, что ответить"
 }

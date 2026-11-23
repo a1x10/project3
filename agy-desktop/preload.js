@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld('agy', {
   controlBrowser: (on) => ipcRenderer.invoke('control:browser', on),
   controlScreen: (on) => ipcRenderer.invoke('control:screen', on),
   controlStop: () => ipcRenderer.send('control:stop'),
+  confOpen: () => ipcRenderer.invoke('conf:open'),
+  confClose: () => ipcRenderer.invoke('conf:close'),
+  onConfClosed: on('conf:closed'),
+  onConfSaved: on('conf:saved'),
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (p) => ipcRenderer.invoke('settings:set', p),

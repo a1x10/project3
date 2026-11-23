@@ -4,6 +4,7 @@
 # Optional:  DOMAIN=stella.example.com  (otherwise <your-ip>.sslip.io is used, HTTPS via Let's Encrypt)
 #            DUCKDNS=myname   (free name myname.duckdns.org; the token is asked for, hidden)
 #            TURNSTILE=1      (Cloudflare captcha; site key + secret are asked for, hidden)
+#            GEMINI=1         (Gemini API key for «Конференция», asked for, hidden)
 #            AUTOUPDATE=1     (update Stella Cloud automatically every night; AUTOUPDATE=0 turns it off)
 #            TUNNEL=stella.example.com  (Cloudflare Tunnel: hides the server IP, no open ports for Stella; tunnel token asked for)
 set -euo pipefail
@@ -188,6 +189,14 @@ if [ "${TURNSTILE:-}" = 1 ]; then
   else
     echo "ВНИМАНИЕ: ключи Turnstile выглядят неправильно (должны начинаться с 0x…) — капча НЕ включена. Запустите ещё раз с TURNSTILE=1."
   fi
+fi
+# ---------- Gemini API key for «Конференция» (live meeting assistant) ----------
+if [ "${GEMINI:-}" = 1 ]; then
+  echo "Ключ Gemini API: https://aistudio.google.com/apikey  (нужен для «Конференции»: распознавание речи и подсказки)"
+  read -rsp "Gemini API key (ввод скрыт): " GM_KEY < /dev/tty; echo
+  GM_KEY=$(clean "$GM_KEY")
+  if [[ "$GM_KEY" =~ ^[A-Za-z0-9_-]{30,}$ ]]; then setenv STELLA_CONF_GEMINI_KEY "$GM_KEY"; echo "Конференция включена"
+  else echo "ВНИМАНИЕ: ключ выглядит неправильно — «Конференция» не включена. Запустите ещё раз с GEMINI=1."; fi
 fi
 # ---------- Cloudflare Tunnel (hide the server) ----------
 if [ -n "${TUNNEL:-}" ]; then

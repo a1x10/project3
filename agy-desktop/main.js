@@ -12,6 +12,7 @@ const os = require('os');
 const control = require('./control');
 const cloud = require('./cloud');
 const updater = require('./updater');
+const conf = require('./conf');
 
 // show "Stella" in dialogs / taskbar, but keep the old data folder (chats, settings)
 try {
@@ -267,6 +268,7 @@ app.whenReady().then(() => { log('ready'); disableAgySandbox();
     onStop: () => { for (const [id, c] of running) { treeKill(c.pid); } send('control:stopped'); }
   });
   updater.init({ log, send, version: app.getVersion() });
+  conf.init({ log, send, getSettings });
   cloud.init({
     log, send, getSettings,
     saveSettings: (patch) => { Object.assign(getSettings(), patch); writeJson(settingsFile(), getSettings()); },
