@@ -34,6 +34,10 @@ const AutoSpeechVADInternal = ({
     startOnLoad: true,
     additionalAudioConstraints: audioConstraints,
     onSpeechEnd: async (audio) => {
+      // Stella: the microphone takes ONE phrase per click and then stops,
+      // so reading the answer aloud is never sent as a new question
+      vad.pause();
+      setEnableVAD(false);
       try {
         // convert float32array to blob
         const audioBlob = floatArrayToWav(audio, 16000, "wav");

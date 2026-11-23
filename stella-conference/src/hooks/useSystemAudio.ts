@@ -276,6 +276,10 @@ export function useSystemAudio() {
                 setLastTranscription(transcription);
                 setError("");
 
+                // Stella: a short remark is not a question -> keep the current answer on screen
+                const words = transcription.trim().split(/\s+/).filter(Boolean).length;
+                if (words < 3 && !/[?？]\s*$/.test(transcription.trim())) return;
+
                 const effectiveSystemPrompt = useSystemPrompt
                   ? systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;

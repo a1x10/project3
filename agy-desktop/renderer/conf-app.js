@@ -72,8 +72,10 @@ async function startAudio() {
     else errs.push('звук звонка недоступен');
   } catch (e) { errs.push('звук звонка недоступен (' + e.message + ')'); }
   if (errs.length) notice('⚠ ' + errs.join('; ') + '.');
-  else notice('🎧 Лучше в наушниках: иначе микрофон услышит собеседника из колонок и его речь попадёт в «Я». Предупредите участников, что разговор расшифровывается.', 9000);
-  $('#mic').checked = !!st.chans.me; $('#sys').checked = !!st.chans.them;
+  else notice('Слушаю только собеседника (звук звонка). Ваш микрофон выключен — включите «🎤 Я», если нужно записывать и вашу речь. Предупредите участников, что разговор расшифровывается.', 9000);
+  // by default only the other side is heard: your own voice (e.g. reading the hint aloud) is not transcribed
+  if (st.chans.me) st.chans.me.enabled = false;
+  $('#mic').checked = false; $('#sys').checked = !!st.chans.them;
 }
 function stopAudio() {
   for (const ch of Object.values(st.chans)) { if (ch.speaking) flush(ch); ch.proc.disconnect(); ch.stream.getTracks().forEach(t => t.stop()); }
