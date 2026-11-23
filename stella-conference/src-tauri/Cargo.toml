@@ -1,6 +1,6 @@
 [package]
 name = "stella-conference"
-version = "1.0.0"
+version = "1.0.1"
 description = "Stella Conference - meeting assistant for Stella. Based on Pluely by Srikanth Nani (GPL-3.0)."
 authors = ["Srikanth Nani <mail@srikanthnani.com> (original Pluely)", "Stella"]
 license = "GPL-3.0"

@@ -22,6 +22,25 @@ function provider() {
   return 'gemini';
 }
 
+// answers are ALWAYS in this language (the transcript itself stays as spoken). STELLA_CONF_LANG to change.
+const LANG = () => process.env.STELLA_CONF_LANG || 'Russian';
+const LANG_RULE = () => `LANGUAGE RULE (highest priority): always write your answer in ${LANG()} only, ` +
+  `even if the conversation, the question, the screenshot or other instructions are in English, Kazakh or any other language ` +
+  `(translate quotes and suggested phrases into ${LANG()}; keep only code, names and technical terms as they are).`;
+// system rule first + a short reminder at the end of the last user message (models follow the end best)
+function forceLang(messages) {
+  const out = messages.map(m => ({ ...m }));
+  out.unshift({ role: 'system', content: LANG_RULE() });
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role !== 'user') continue;
+    const note = '\n\n' + (LANG() === 'Russian' ? '(Ответь только на русском языке.)' : `(Answer only in ${LANG()}.)`);
+    if (typeof out[i].content === 'string') out[i].content += note;
+    else if (Array.isArray(out[i].content)) out[i].content = [...out[i].content, { type: 'text', text: note.trim() }];
+    break;
+  }
+  return out;
+}
+
 function status() {
   if (provider() === 'openrouter') return { ready: true, provider: 'openrouter', stt: OR_STT_MODEL(), model: OR_MODEL() };
   return { ready: !!KEY(), provider: 'gemini', stt: STT_MODEL(), model: CHAT_MODEL() };
@@ -116,11 +135,11 @@ async function assist(u, { mode, transcript, question, image, title }, onDelta) 
   const parts = [];
   if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
   parts.push({ text:
-    'You are Stella, a real-time meeting assistant sitting next to the user during a call. Reply in the language of the conversation (default Russian). ' +
+    'You are Stella, a real-time meeting assistant sitting next to the user during a call. ' + LANG_RULE() + ' ' +
     'Be fast and short: the user reads your text while talking.\n' + (profile ? 'About the user:\n' + profile.slice(0, 2000) + '\n' : '') +
     (title ? 'Meeting: ' + String(title).slice(0, 200) + '\n' : '') +
     'TRANSCRIPT (Я = the user, Собеседник = other participants; recognition may have small errors):\n' + (String(transcript || '').slice(-14000) || '(пока пусто)') + '\n\n' +
-    'TASK: ' + instr + (question ? '\nUSER QUESTION: ' + String(question).slice(0, 2000) : '') });
+    'TASK: ' + instr + (question ? '\nUSER QUESTION: ' + String(question).slice(0, 2000) : '') + '\n\n' + LANG_RULE() });
   if (provider() === 'openrouter') {
     const content = parts.map(p => p.inline_data ? { type: 'image_url', image_url: { url: 'data:' + p.inline_data.mime_type + ';base64,' + p.inline_data.data } } : { type: 'text', text: p.text });
     const r = await openrouter({ model: OR_MODEL(), stream: true, temperature: 0.4, max_tokens: 1500, messages: [{ role: 'user', content }] });
@@ -148,8 +167,9 @@ async function chatCompletions(u, body, res) {
   if (!KEY()) throw new Error('На сервере не задан ключ для конференций. Запустите установщик с OPENROUTER=1 (DeepSeek) или GEMINI=1.');
   if (!body || !Array.isArray(body.messages) || !body.messages.length) throw new Error('нет сообщений');
   const profile = services.profileText(u) || '';
-  const messages = body.messages.slice(-60);
+  let messages = body.messages.slice(-60);
   if (profile) messages.unshift({ role: 'system', content: 'About the user (use when it helps):\n' + profile.slice(0, 2000) });
+  messages = forceLang(messages);
   const req = { model: okModel(body.model, CHAT_MODEL()), messages, stream: body.stream !== false, temperature: typeof body.temperature === 'number' ? body.temperature : 0.5, reasoning_effort: 'none' };
   if (body.max_tokens) req.max_tokens = Math.min(Number(body.max_tokens) || 2048, 8192);
   const call = () => fetch(BASE() + '/v1beta/openai/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + KEY() }, body: JSON.stringify(req), signal: AbortSignal.timeout(120000) });
@@ -168,8 +188,9 @@ async function chatCompletions(u, body, res) {
 async function chatOpenRouter(u, body, res) {
   if (!body || !Array.isArray(body.messages) || !body.messages.length) throw new Error('нет сообщений');
   const profile = services.profileText(u) || '';
-  const messages = body.messages.slice(-60);
+  let messages = body.messages.slice(-60);
   if (profile) messages.unshift({ role: 'system', content: 'About the user (use when it helps):\n' + profile.slice(0, 2000) });
+  messages = forceLang(messages);
   const req = { model: OR_MODEL(), messages, stream: body.stream !== false, temperature: typeof body.temperature === 'number' ? body.temperature : 0.5 };
   if (body.max_tokens) req.max_tokens = Math.min(Number(body.max_tokens) || 2048, 8192);
   const r = await openrouter(req);

@@ -1,7 +1,7 @@
 {
   "name": "stella-conference",
   "private": false,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Stella Conference — live meeting assistant for Stella. Based on Pluely by Srikanth Nani (GPL-3.0).",
   "author": {
     "name": "Stella; original Pluely by Srikanth Nani",

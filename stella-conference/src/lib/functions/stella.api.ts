@@ -48,5 +48,12 @@ export async function applyStellaConfig(): Promise<boolean> {
   safeLocalStorage.setItem(STORAGE_KEYS.SELECTED_AI_PROVIDER, JSON.stringify(keep(STORAGE_KEYS.SELECTED_AI_PROVIDER, ai)));
   safeLocalStorage.setItem(STORAGE_KEYS.SELECTED_STT_PROVIDER, JSON.stringify(keep(STORAGE_KEYS.SELECTED_STT_PROVIDER, stt)));
   safeLocalStorage.setItem(STORAGE_KEYS.STELLA_API_ENABLED, "false");
+  // answers always in Russian when started from Stella
+  try {
+    const rs = JSON.parse(safeLocalStorage.getItem(STORAGE_KEYS.RESPONSE_SETTINGS) || "{}");
+    safeLocalStorage.setItem(STORAGE_KEYS.RESPONSE_SETTINGS, JSON.stringify({ ...rs, language: "russian" }));
+  } catch {
+    safeLocalStorage.setItem(STORAGE_KEYS.RESPONSE_SETTINGS, JSON.stringify({ language: "russian" }));
+  }
   return true;
 }

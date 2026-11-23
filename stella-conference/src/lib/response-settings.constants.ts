@@ -85,7 +85,7 @@ export const LANGUAGES: LanguageOption[] = [
     id: "russian",
     name: "Russian",
     flag: "🇷🇺",
-    prompt: "Respond in Russian (Русский).",
+    prompt: "IMPORTANT: Always respond ONLY in Russian (Русский), even if the conversation, the question or the screenshot is in another language. Translate suggested phrases into Russian; keep only code and names as they are.",
   },
   {
     id: "chinese",
@@ -216,5 +216,5 @@ export const LANGUAGES: LanguageOption[] = [
 ];
 
 export const DEFAULT_RESPONSE_LENGTH = "auto";
-export const DEFAULT_LANGUAGE = "english";
+export const DEFAULT_LANGUAGE = "russian";   // Stella Conference: answers in Russian by default
 export const DEFAULT_AUTO_SCROLL = true;
