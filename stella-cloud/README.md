@@ -77,6 +77,7 @@ Stella.exe берёт обновления и «Конференцию» сна�
 
 Работает на самых быстрых моделях Gemini: распознавание — `gemini-flash-lite-latest`, подсказки — `gemini-flash-latest` с потоковым ответом (меняются через `STELLA_CONF_STT_MODEL` и `STELLA_CONF_MODEL`).
 Нужен ключ Gemini API на сервере (https://aistudio.google.com/apikey). Добавить его: запустите установщик с `GEMINI=1`, ввод скрыт.
+**Или DeepSeek через OpenRouter** (один ключ на всё, https://openrouter.ai/keys): установщик с `OPENROUTER=1`. Тогда ответы — `deepseek/deepseek-v4.1-flash` (понимает и скриншоты), распознавание речи — `google/gemini-3.1-flash-lite` через OpenRouter (DeepSeek звук не понимает). Модели меняются через `STELLA_CONF_OR_MODEL` / `STELLA_CONF_OR_STT_MODEL`; если заданы оба ключа, используется OpenRouter (`STELLA_CONF_PROVIDER=gemini` — вернуть Gemini).
 На сервере ничего не сохраняется. Звук и текст уходят в Google Gemini: на бесплатном ключе Google может использовать данные для улучшения моделей, на платном — нет.
 Окно видно при показе экрана, оно не прячется от участников. Предупреждайте собеседников, что разговор расшифровывается. Лучше в наушниках, иначе микрофон слышит собеседника из колонок.
 

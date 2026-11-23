@@ -5,6 +5,7 @@
 #            DUCKDNS=myname   (free name myname.duckdns.org; the token is asked for, hidden)
 #            TURNSTILE=1      (Cloudflare captcha; site key + secret are asked for, hidden)
 #            GEMINI=1         (Gemini API key for «Конференция», asked for, hidden)
+#            OPENROUTER=1     (OpenRouter key for «Конференция»: DeepSeek + speech, asked for, hidden)
 #            AUTOUPDATE=1     (update Stella Cloud automatically every night; AUTOUPDATE=0 turns it off)
 #            TUNNEL=stella.example.com  (Cloudflare Tunnel: hides the server IP, no open ports for Stella; tunnel token asked for)
 set -euo pipefail
@@ -198,6 +199,14 @@ if [ "${GEMINI:-}" = 1 ]; then
   GM_KEY=$(clean "$GM_KEY")
   if [[ "$GM_KEY" =~ ^[A-Za-z0-9_-]{30,}$ ]]; then setenv STELLA_CONF_GEMINI_KEY "$GM_KEY"; echo "Конференция включена"
   else echo "ВНИМАНИЕ: ключ выглядит неправильно — «Конференция» не включена. Запустите ещё раз с GEMINI=1."; fi
+fi
+# ---------- OpenRouter key for «Конференция»: DeepSeek answers + speech recognition, one key ----------
+if [ "${OPENROUTER:-}" = 1 ]; then
+  echo "Ключ OpenRouter: https://openrouter.ai/keys  (ответы — DeepSeek, распознавание речи — Gemini Flash Lite)"
+  read -rsp "OpenRouter API key (ввод скрыт): " OR_KEY < /dev/tty; echo
+  OR_KEY=$(clean "$OR_KEY")
+  if [[ "$OR_KEY" =~ ^sk-or-[A-Za-z0-9_-]{20,}$ ]]; then setenv STELLA_OPENROUTER_KEY "$OR_KEY"; echo "Конференция: OpenRouter / DeepSeek включён"
+  else echo "ВНИМАНИЕ: ключ OpenRouter выглядит неправильно (должен начинаться с sk-or-) — не сохранён. Запустите ещё раз с OPENROUTER=1."; fi
 fi
 # ---------- Cloudflare Tunnel (hide the server) ----------
 if [ -n "${TUNNEL:-}" ]; then
