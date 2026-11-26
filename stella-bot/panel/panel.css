@@ -840,3 +840,6 @@ label .opt { color: var(--muted); font-weight: 400; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+.ms-qr { display: block; width: min(280px, 80vw); height: auto; margin: 12px auto; background: #fff; padding: 10px; border-radius: 14px; image-rendering: pixelated; }
+.ms-profile { white-space: pre-wrap; }
+.bad-text { color: var(--bad, #ff4d4f); }

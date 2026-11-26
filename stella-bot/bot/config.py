@@ -111,6 +111,8 @@ class Settings:
     # видео по ссылке: скинули TikTok/YouTube — скачивает (yt-dlp) и присылает ответом на это сообщение
     video_dl_enabled: bool = field(default_factory=lambda: _bool("VIDEO_DL_ENABLED", True))
     # картинки нейросетью через OpenRouter (тот же ключ): Recraft V4.1 Flash V2 — около $0.007 за картинку
+    # «Мой стиль»: Стелла пишет в манере владельца (портрет — из его сообщений, QR в панели)
+    my_style_enabled: bool = field(default_factory=lambda: _bool("MY_STYLE_ENABLED", True))
     image_gen_enabled: bool = field(default_factory=lambda: _bool("IMAGE_GEN_ENABLED", True))
     image_gen_model: str = field(default_factory=lambda: _str("IMAGE_GEN_MODEL", "recraft/recraft-v4.1-flash-v2"))
     # видео нейросетью через OpenRouter: HeyGen Video, цена за секунду (480p ≈ $0.02/с → 5 с ≈ $0.10)

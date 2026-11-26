@@ -254,6 +254,7 @@ EDITABLE: list[dict[str, Any]] = [
     {"key": "media_enabled", "label": "Стикеры, картинки, документы, презентации, видео", "type": "bool"},
     {"key": "media_per_day", "label": "Файлов в один чат за день", "type": "number", "min": 0, "max": 500},
     {"key": "vision_enabled", "label": "Видит фото и стикеры", "type": "bool"},
+    {"key": "my_style_enabled", "label": "Пишет в моём стиле («Мой стиль» ниже)", "type": "bool"},
     {"key": "image_gen_enabled", "label": "Рисует картинки нейросетью (OpenRouter, ~$0.007 за картинку)",
      "type": "bool"},
     {"key": "image_gen_model", "label": "Модель для картинок (OpenRouter)", "type": "text", "max_len": 120,
@@ -797,6 +798,33 @@ def build_router(get_brain: Callable[[Request], "Brain"]) -> APIRouter:
 
         if not await STYLE.remove(item_id):
             raise HTTPException(404, detail="нет такого примера")
+        return {"ok": True}
+
+    # ---------- «Мой стиль»: QR → его сообщения → портрет манеры ----------
+    @router.get("/mystyle")
+    async def mystyle_get(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
+        brain = get_brain(request)
+        data = await brain.my_style.load()
+        return {**brain.my_style.status(), "enabled": brain.s.my_style_enabled,
+                "profile": (data or {}).get("profile"), "count": (data or {}).get("count", 0),
+                "updated_at": (data or {}).get("updated_at")}
+
+    @router.post("/mystyle/connect")
+    async def mystyle_connect(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
+        brain = get_brain(request)
+        try:
+            out = await brain.my_style.start()
+        except RuntimeError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, detail=f"WhatsApp-шлюз не дал QR: {str(exc)[:200]}") from exc
+        log.warning("панель: «мой стиль» — выдан QR для подключения WhatsApp")
+        return out
+
+    @router.delete("/mystyle")
+    async def mystyle_delete(request: Request, _: str = Depends(require_session)) -> dict[str, Any]:
+        await get_brain(request).my_style.forget()
+        log.warning("панель: «мой стиль» удалён")
         return {"ok": True}
 
     @router.get("/settings")

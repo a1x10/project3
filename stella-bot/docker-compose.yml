@@ -62,7 +62,7 @@ services:
       DATABASE_SAVE_DATA_CONTACTS: "true"
       DATABASE_SAVE_DATA_CHATS: "true"
       DATABASE_SAVE_DATA_LABELS: "false"
-      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "true"  # «Мой стиль» берёт историю владельца (временный инстанс удаляется)
       CACHE_REDIS_ENABLED: "true"
       CACHE_REDIS_URI: redis://redis:6379/6
       CACHE_REDIS_PREFIX_KEY: evolution

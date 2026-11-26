@@ -502,7 +502,7 @@
     else if (name === "chats") { if (S.chat) loadMessages(); else loadChats(); }
     else if (name === "people") loadPeopleTab();
     else if (name === "keys") loadKeys(false);
-    else if (name === "settings") { if (!S.settingsDirty) loadSettings(); loadStyle(); }
+    else if (name === "settings") { if (!S.settingsDirty) loadSettings(); loadStyle(); loadMyStyle(); }
     else if (name === "log") loadLog(false);
   }
   function onTabKey(e) {
@@ -1297,6 +1297,56 @@
   function setDirty(v) {
     S.settingsDirty = v;
     $("settings-dirty").hidden = !v;
+  }
+  // ---------- «Мой стиль»: QR своим WhatsApp → Стелла пишет в твоей манере ----------
+  const MS_BUSY = new Set(["waiting_scan", "importing", "building"]);
+  async function loadMyStyle(qr) {
+    const box = $("mystyle-body");
+    let r;
+    try {
+      r = await api("GET", "/mystyle");
+    } catch (e) {
+      if (e.handled) return;
+      if (e.status === 404) setKids(box, h("h3", { class: "card-title", text: "Мой стиль" }),
+        h("p", { class: "muted small", text: "Обнови бота на сервере — этот раздел появится." }));
+      else showError(e);
+      return;
+    }
+    const state = String(r.state || "idle");
+    const kids = [h("h3", { class: "card-title", text: "Мой стиль" }),
+      h("p", { class: "muted small", text: "Отсканируй QR-код своим WhatsApp (Настройки → Связанные устройства → Привязать). Стелла возьмёт из истории только ТВОИ сообщения, сразу отключится от твоего WhatsApp и удалит историю, а потом будет писать в твоей манере. Чужие сообщения не сохраняются." })];
+    if (qr && state === "waiting_scan") kids.push(h("img", { src: qr, alt: "QR-код для WhatsApp", class: "ms-qr" }));
+    if (r.detail) kids.push(h("p", { class: state === "error" ? "small bad-text" : "small", text: valueText(r.detail) }));
+    if (r.profile) {
+      kids.push(h("h4", { class: "sub-title", text: `Портрет стиля (${Number(r.count) || 0} сообщений)` }));
+      kids.push(h("p", { class: "small ms-profile", text: valueText(r.profile) }));
+      kids.push(h("p", { class: "muted small", text: r.enabled ? "Стелла сейчас пишет в твоём стиле. Выключить — в настройках выше («Пишет в моём стиле»)." : "Сейчас выключено — включи «Пишет в моём стиле» в настройках выше." }));
+    }
+    const go = h("button", { type: "button", class: "btn primary", text: r.profile ? "Обновить по QR" : "Подключить WhatsApp (QR)", disabled: MS_BUSY.has(state) && state !== "waiting_scan" });
+    go.addEventListener("click", () => busy(go, async () => {
+      const res = await api("POST", "/mystyle/connect");
+      await loadMyStyle(typeof res.qr === "string" && res.qr.startsWith("data:image/") ? res.qr : null);
+    }));
+    const row = [go];
+    if (r.profile) {
+      const del = h("button", { type: "button", class: "btn danger", text: "Удалить мой стиль" });
+      del.addEventListener("click", () => {
+        if (!confirm("Удалить портрет стиля и твои сообщения из памяти Стеллы?")) return;
+        busy(del, async () => { await api("DELETE", "/mystyle"); toast("Удалено"); await loadMyStyle(); });
+      });
+      row.push(del);
+    }
+    kids.push(h("div", { class: "btn-row" }, row));
+    setKids(box, ...kids);
+    clearTimeout(S.msTimer);
+    if (state === "waiting_scan" && S.tab === "settings") { // QR в WhatsApp живёт ~20 с — обновляем
+      S.msTimer = setTimeout(async () => {
+        try {
+          const res = await api("POST", "/mystyle/connect");
+          await loadMyStyle(typeof res.qr === "string" && res.qr.startsWith("data:image/") ? res.qr : null);
+        } catch (e) { if (!e.handled) await loadMyStyle(); }
+      }, 15000);
+    } else if (MS_BUSY.has(state) && S.tab === "settings") S.msTimer = setTimeout(() => loadMyStyle(), 4000);
   }
   // ---------- как общаются ребята: примеры переписок, словечек и мемов ----------
   async function loadStyle() {

@@ -234,7 +234,10 @@ class Brain:
         self.outbox = Outbox(evo, db, self.stickers, settings, rng=self.rng, sleep=sleep)
         from .giveaway import Giveaway
 
-        self.giveaway = Giveaway(settings, self)  # розыгрыш: страница /giveaway/ и рассылка в Telegram
+        self.giveaway = Giveaway(settings, self)
+        from .my_style import MyStyle
+
+        self.my_style = MyStyle(self)  # «Мой стиль»: манера владельца по его сообщениям (QR в панели)  # розыгрыш: страница /giveaway/ и рассылка в Telegram
         self.commands = Commands(db, self.casino, self.stickers, evo, settings, group_admin=self.is_group_admin,
                                  panel_unlock=self.unlock_panel, giveaway_links=self.giveaway_links)
         self.system = system_prompt(settings)
@@ -1089,6 +1092,9 @@ class Brain:
         style = STYLE.hint(self.rng)
         if style:  # живые примеры переписок, словечек и мемов — для тона
             extra_hint = (extra_hint + "\n\n" + style).strip()
+        mine = await self.my_style.hint(self.rng)
+        if mine:  # «Мой стиль»: пишет в манере владельца
+            extra_hint = (extra_hint + "\n\n" + mine).strip()
         if limit:  # спросит про лимит или подписку — знает, что ответить
             extra_hint = (extra_hint + " " + limit_hint(self.s, limit, used)).strip()
         prompt, people = await self._build_prompt(chat, batch, starred, mode, grudges=grudges, extra_hint=extra_hint)
