@@ -167,7 +167,9 @@ class OpenAICompatLLM:
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": content}]
         text = ""
         for _ in range(max(1, max_turns)):
-            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS if small else 4096}
+            # ответ в чат — коротко (длинное — файлом через инструменты); штрафы за повторы, чтобы не заедала
+            body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": 1200,
+                                    "frequency_penalty": 0.5, "presence_penalty": 0.4}
             if tool_defs:
                 body["tools"] = tool_defs
             if "gpt-oss" in model:  # обдумывание тоже съедает лимит токенов в минуту — коротко

@@ -85,6 +85,40 @@ def _split_long(line: str, limit: int = 260) -> list[str]:
     return parts
 
 
+def norm_line(text: str) -> str:
+    """Для сравнения повторов: без регистра, знаков, смайликов и лишних пробелов."""
+    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
+def similar(a: str, b: str) -> bool:
+    """Одно и то же сказано ещё раз (дословно или почти дословно)."""
+    a, b = norm_line(a), norm_line(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if min(len(a), len(b)) < 12:
+        return False
+    from difflib import SequenceMatcher
+
+    return SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+def drop_repeats(segments: list[Segment], said_before: list[str]) -> list[Segment]:
+    """Убрать строки, которые повторяют друг друга или то, что она уже писала в этом чате недавно."""
+    out: list[Segment] = []
+    kept: list[str] = []
+    for s in segments:
+        if s.kind == "text":
+            # «ок», «ага», «да» — можно сколько угодно; повтором считаются фразы подлиннее
+            again = len(norm_line(s.value)) >= 12 and any(similar(s.value, x) for x in said_before)
+            if again or any(similar(s.value, x) for x in kept):
+                continue
+            kept.append(s.value)
+        out.append(s)
+    return out
+
+
 def parse_reply(text: str, max_bubbles: int = 6) -> list[Segment]:
     """Строки -> отдельные сообщения; [стикер: x] и [реакция: 😂] -> действия."""
     if is_silence(text):
@@ -108,6 +142,7 @@ def parse_reply(text: str, max_bubbles: int = 6) -> list[Segment]:
             line = _drop_filler(_clean_line(piece))
             if line:
                 segments.extend(Segment("text", p) for p in _split_long(line))
+    segments = drop_repeats(segments, [])  # одна и та же строка дважды в одном ответе
     # Не больше max_bubbles текстовых пузырей (хвост склеиваем) и не больше одного стикера
     result: list[Segment] = []
     tail: Segment | None = None

@@ -243,9 +243,9 @@ class Settings:
     typing_chars_per_sec: float = field(default_factory=lambda: _float("TYPING_CHARS_PER_SEC", 9))
     typo_rate: float = field(default_factory=lambda: _float("TYPO_RATE", 0.0))  # 0 — пишет без опечаток
     typo_fix_rate: float = field(default_factory=lambda: _float("TYPO_FIX_RATE", 0.4))
-    max_bubbles: int = field(default_factory=lambda: _int("MAX_BUBBLES", 6))
+    max_bubbles: int = field(default_factory=lambda: _int("MAX_BUBBLES", 3))
     rate_limit_per_min: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_MIN", 20))
-    chime_default: str = field(default_factory=lambda: _str("CHIME_IN", "normal"))
+    chime_default: str = field(default_factory=lambda: _str("CHIME_IN", "rare"))
     continue_window: float = field(default_factory=lambda: _float("CONTINUE_WINDOW", 120))
     history_window: int = field(default_factory=lambda: _int("HISTORY_WINDOW", 40))
     owner_takeover_minutes: int = field(default_factory=lambda: _int("OWNER_TAKEOVER_MINUTES", 30))
@@ -255,7 +255,7 @@ class Settings:
     reply_each_max: int = field(default_factory=lambda: _int("REPLY_EACH_MAX", 5))
 
     # --- сама пишет в группы ---
-    initiative_per_week: float = field(default_factory=lambda: _float("INITIATIVE_PER_WEEK", 2))
+    initiative_per_week: float = field(default_factory=lambda: _float("INITIATIVE_PER_WEEK", 1))
     initiative_hours: str = field(default_factory=lambda: _str("INITIATIVE_HOURS", "10-22"))
     initiative_min_gap_hours: float = field(default_factory=lambda: _float("INITIATIVE_MIN_GAP_HOURS", 36))
     initiative_quiet_minutes: float = field(default_factory=lambda: _float("INITIATIVE_QUIET_MINUTES", 60))

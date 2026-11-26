@@ -900,6 +900,20 @@ class Brain:
         await self.outbox.send_result(chat, CasinoResult([limit_text(self.s, limit)]), reply_to=target,
                                       quote=several or chat["is_group"])
 
+    async def _without_repeats(self, chat_id: int, segments: list[Segment]) -> list[Segment]:
+        """Не повторять то, что она уже писала в этом чате за последние сообщения (модели любят заедать)."""
+        from .humanize import drop_repeats
+
+        if not any(s.kind == "text" for s in segments):
+            return segments
+        said = [r["text"] for r in await self.db.recent_messages(chat_id, 30)
+                if r.get("role") == "assistant" and r.get("text")]
+        lines = [line for t in said[-12:] for line in str(t).split("\n") if line.strip()]
+        kept = drop_repeats(segments, lines)
+        if len(kept) < len(segments):
+            log.info("убрала повтор: %d строк(и)", len(segments) - len(kept))
+        return kept
+
     async def is_group_admin(self, chat: dict[str, Any], person: Person, max_age: float | None = None) -> bool:
         """Админ группы в WhatsApp (может, например, поставить Стеллу на паузу).
 
@@ -1171,6 +1185,7 @@ class Brain:
             await self.outbox.send_result(chat, res, reply_to=target)
         # отвечая нескольким по очереди, каждому — покороче, чтобы не упереться в лимит сообщений
         segments = parse_reply(reply.text, min(self.s.max_bubbles, 3) if several else self.s.max_bubbles)
+        segments = await self._without_repeats(chat["id"], segments)
         if want_video and not getattr(tool_ctx, "made_ai_video", False):  # модель не вызвала — ставим видео сами
             try:
                 await video_tool.handler({"prompt": asked_text[:1000], "shape": "tall"})

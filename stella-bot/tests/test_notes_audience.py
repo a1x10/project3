@@ -52,7 +52,7 @@ def test_minimal_prompt_is_short_and_functional(settings):
     assert "как живой человек в мессенджере, а не как ассистент" in sp and "Отличный вопрос" in sp  # пример «плохо»
     assert "make_sticker" in sp and "make_presentation" in sp and "make_video" in sp
     assert "подростки" not in sp and "без мата" not in sp and "Характер:" not in sp
-    assert len(sp) < 6500  # живой характер и границы — ещё ~1.7 тыс. символов
+    assert len(sp) < 6700  # живой характер, границы и «коротко, без повторов»
 
 
 async def test_prompt_lists_everyone_and_mentions_work(brain):

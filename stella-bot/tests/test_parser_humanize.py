@@ -80,3 +80,13 @@ def test_typing_ms_bounds():
 def test_mask_phone():
     assert mask_phone("77771234512@s.whatsapp.net") == "+7 777 *** ** 12"
     assert mask_phone(GROUP).startswith("group…")
+
+
+def test_repeats_are_dropped():
+    from bot.humanize import drop_repeats, parse_reply
+
+    segs = parse_reply("привет!\nПривет\nкак дела у тебя сегодня?\nкак дела у тебя сегодня ?)")
+    assert [s.value for s in segs] == ["привет!", "как дела у тебя сегодня?"]
+    left = drop_repeats(parse_reply("ну я же говорила, перезагрузи телефон\nа ещё глянь настройки"),
+                        ["ну я же говорила — перезагрузи телефон"])
+    assert [s.value for s in left] == ["а ещё глянь настройки"]
