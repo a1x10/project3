@@ -5,13 +5,22 @@ import { renderSettingsPage, block, sw, range, bindKeys } from './page.js';
 
 export const ANTIGRAVITY_URL = 'https://antigravity.google/';
 
+const AR_HOWTO = `<ol style="margin:0;padding-left:20px;line-height:1.8">
+  <li>Телефон и компьютер — в <b>одной Wi-Fi сети</b>.</li>
+  <li>Отсканируй QR-код камерой телефона.</li>
+  <li>Браузер предупредит о сертификате (он самодельный, создан этим компьютером) — нажми <b>«Дополнительно» → «Перейти на сайт»</b>.</li>
+  <li><b>Android + Chrome</b>: «Начать AR» → наведи камеру на пол или стол → нажми — персонаж встанет туда. Нажимай в другие места — он будет подходить.</li>
+  <li><b>iPhone</b> (Safari без WebXR): «Через камеру» — персонаж поверх изображения камеры.</li>
+</ol>`;
+
 export class WorkshopPage {
   constructor(ctx) {
     this.ctx = ctx;
     this.root = $('#page-workshop');
-    this.tab = 'games';
+    this.tab = 'reality';
     this.state = { follow: false, agent: false };
     this.log = [];
+    window.stella.on('ar:clients', ({ count }) => { const el = $('#ar-clients', this.root); if (el) el.textContent = `Подключено телефонов: ${count}`; this.ctx.onArClients?.(count); });
     window.stella.on('game:state', (st) => { this.state = st; if (this.ctx.activeTab === 'workshop') this.render(); });
     window.stella.on('game:log', (e) => {
       const line = e.step ? `— шаг ${e.step}` : e.done ? `✓ Готово: ${e.text || ''}` : `${e.ok ? '✓' : '✗'} ${e.label}: ${JSON.stringify(e.args || {})}`;
@@ -22,10 +31,54 @@ export class WorkshopPage {
     });
   }
 
+  async renderReality() {
+    const p = this.ctx.persona();
+    let st = { running: false, url: '', clients: 0 };
+    try { st = await window.stella.invoke('ar:status'); } catch { /* */ }
+    renderSettingsPage(this.root, {
+      title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['games', 'Игры'], ['agents', 'Агенты']], active: 'reality', onTab: (t) => { this.tab = t; this.render(); },
+      sections: [
+        { id: 'phone', icon: 'monitor', label: 'В комнате (телефон, AR)', desc: `${escapeHtml(p.name)} выходит из компьютера: стоит на твоём полу или столе через камеру телефона, ходит, танцует и говорит — всё синхронно с компьютером.`, html: `
+          <div class="set"><div class="qr-box">
+            <div class="qr" id="ar-qr">${st.running ? '' : '<div style="height:100%;display:grid;place-items:center;color:#999;text-align:center">QR появится<br>после запуска</div>'}</div>
+            <div style="flex:1;min-width:240px">
+              <div class="row" style="margin-bottom:12px"><button class="btn primary" id="ar-toggle">${st.running ? 'Остановить' : `${icon('play', 14)} Выпустить в реальный мир`}</button></div>
+              <div class="hint" id="ar-clients">${st.running ? `Подключено телефонов: ${st.clients}` : 'Сервер для телефона выключен'}</div>
+              <div class="ar-url" id="ar-url" style="margin-top:10px;${st.running ? '' : 'display:none'}">${escapeHtml(st.url)}</div>
+            </div>
+          </div></div>
+          ${sw(this.ctx.settings, 'arVoiceOnPhone', 'Голос из телефона', 'Озвучка звучит из телефона, а компьютер молчит — как будто персонаж правда рядом.')}
+          ${block('Как подключить', '', AR_HOWTO)}
+          <div class="set"><p class="hint" style="margin:0">Ссылка содержит секретный ключ: открыть страницу может только тот, у кого есть QR-код. Сообщения с телефона попадают в чат и выполняются так же, как с компьютера (с теми же подтверждениями).</p></div>` },
+        { id: 'webcam', icon: 'camera', label: 'Через веб-камеру', desc: 'Персонаж появляется поверх изображения с камеры компьютера — как будто стоит у тебя в комнате.', html: `
+          ${block('Окно в реальность', 'Включи камеру — интерфейс спрячется, останется персонаж поверх видео и поле для сообщений.', `<button class="btn primary" id="cam-start">${icon('camera', 16)} Включить камеру</button>`)}` },
+      ],
+    });
+    bindKeys(this.root, this.ctx);
+    const r = this.root;
+    const showQr = async (res) => {
+      $('#ar-qr', r).innerHTML = res.qr;
+      $('#ar-url', r).textContent = res.url;
+      $('#ar-url', r).style.display = '';
+      $('#ar-clients', r).textContent = `Подключено телефонов: ${res.clients}`;
+    };
+    if (st.running) window.stella.invoke('ar:start').then(showQr).catch(() => {});
+    $('#ar-toggle', r).onclick = async (e) => {
+      const b = e.currentTarget; b.disabled = true;
+      try {
+        if (st.running) { await window.stella.invoke('ar:stop'); toast('Сервер для телефона остановлен', 'info'); }
+        else { b.textContent = 'Запускаю…'; const res = await window.stella.invoke('ar:start'); toast('Отсканируй QR-код телефоном', 'success'); this.ctx.say(`Сканируй код — и я выйду к тебе в комнату!`, { emotion: 'happy', action: 'point' }); st = { running: true }; await this.renderReality(); return showQr(res); }
+      } catch (err) { toast(err.message, 'error', 8000); }
+      this.renderReality();
+    };
+    $('#cam-start', r).onclick = () => this.ctx.enterReality();
+  }
+
   async render() {
     try { this.state = await window.stella.invoke('game:state'); } catch { /* */ }
     const s = this.ctx.settings;
     const p = this.ctx.persona();
+    if (this.tab === 'reality') return this.renderReality();
     const sections = this.tab === 'games' ? [
       { id: 'follow', icon: 'sparkle', label: 'Компаньон в игре', desc: `${escapeHtml(p.name)} появляется поверх любой игры внизу экрана, бегает за курсором и комментирует происходящее.`, html: `
         ${block(this.state.follow ? '🟢 Компаньон в игре' : 'Позвать в игру', 'Окно не мешает кликам — все нажатия проходят в игру. Остановить: кнопкой ниже или Ctrl+Shift+F10.', `<div class="row"><button class="btn primary" id="g-follow">${this.state.follow ? 'Остановить' : `${icon('play', 14)} Запустить`}</button></div>`)}
@@ -48,7 +101,7 @@ export class WorkshopPage {
         ${sw(s, 'agentsEnabled', 'Разрешить передавать задачи агентам', 'Ассистент сможет вызывать Antigravity сам, когда задача большая.')}` },
       { id: 'how', icon: 'info', label: 'Как это работает', html: block('Порядок подключения', '', `<ol style="margin:0;padding-left:20px;line-height:1.9"><li>Нажми «Скачать и войти» — откроется сайт Antigravity.</li><li>Установи программу и войди своим аккаунтом Google.</li><li>Нажми «Проверить установку» — ассистент запустит Antigravity.</li><li>Дальше просто проси в чате: «передай Antigravity задачу …».</li></ol>`) },
     ];
-    renderSettingsPage(this.root, { title: 'Мастерская', tabs: [['games', 'Игры'], ['agents', 'Агенты']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
+    renderSettingsPage(this.root, { title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['games', 'Игры'], ['agents', 'Агенты']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
     bindKeys(this.root, this.ctx);
     const r = this.root;
     if (this.tab === 'games') {

@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   agentsPromptShown: false,
   agentsEnabled: true,
   gameComments: true,
+  arVoiceOnPhone: false,
   gameCommentSec: 60,
   // Голос
   ttsEnabled: true,

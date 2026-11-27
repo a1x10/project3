@@ -15,10 +15,12 @@ const THEMES = {
 };
 
 export class Avatar {
-  constructor(canvas, { transparent = false, compact = false } = {}) {
+  constructor(canvas, { transparent = false, compact = false, xr = false } = {}) {
     this.canvas = canvas;
     this.compact = compact;
+    this.xr = xr;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+    if (xr) this.renderer.xr.enabled = true;
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setClearColor(0x000000, 0);
@@ -27,7 +29,9 @@ export class Avatar {
     this.camera.position.set(0, 1.3, 3.2);
     this.controls = new OrbitControls(this.camera, canvas);
     Object.assign(this.controls, { enableDamping: true, dampingFactor: 0.08, enablePan: false, minDistance: 0.6, maxDistance: 6, minPolarAngle: 0.35, maxPolarAngle: 1.75, rotateSpeed: 0.6 });
-    this.controls.enabled = !compact;
+    this.controls.enabled = !compact && !xr;
+    /** Группа, в которой стоит персонаж: её двигают, чтобы поставить его в комнате (AR). */
+    this.root = new THREE.Group();
 
     this.clock = new THREE.Clock();
     this.time = 0;
@@ -75,6 +79,7 @@ export class Avatar {
 
     this.envGroup = new THREE.Group();
     s.add(this.envGroup);
+    s.add(this.root);
     if (transparent) return;
     // звёзды
     const N = 1800, pos = new Float32Array(N * 3), sizes = new Float32Array(N);
@@ -123,6 +128,7 @@ export class Avatar {
   }
 
   _resize() {
+    if (this.renderer.xr.isPresenting) return;
     const el = this.canvas.parentElement || this.canvas;
     const w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
     this.renderer.setSize(w, h, false);
@@ -176,9 +182,9 @@ export class Avatar {
     this.isVrm0 = vrm.meta?.metaVersion === '0';
     if (this.isVrm0) VRMUtils.rotateVRM0(vrm);
     vrm.scene.traverse((o) => { o.frustumCulled = false; });
-    if (this.vrm) { this.scene.remove(this.vrm.scene); VRMUtils.deepDispose(this.vrm.scene); }
+    if (this.vrm) { this.root.remove(this.vrm.scene); VRMUtils.deepDispose(this.vrm.scene); }
     this.vrm = vrm;
-    this.scene.add(vrm.scene);
+    this.root.add(vrm.scene);
     const hips = vrm.humanoid.getNormalizedBoneNode('hips');
     this.hipsBase = hips.position.clone();
     this.exprNames = new Set(Object.keys(vrm.expressionManager?.expressionMap || {}));
@@ -229,6 +235,9 @@ export class Avatar {
     this.facingTarget = kind ? (dir > 0 ? Math.PI / 2 : dir < 0 ? -Math.PI / 2 : 0) : 0;
   }
 
+  /** Повернуть корпус на угол (рад, 0 — лицом к камере/зрителю по +Z). */
+  faceYaw(angle) { this.facingTarget = angle; }
+
   /** Экранная точка кости в пикселях относительно canvas. */
   screenPointOf(bone = 'hips') {
     const p = this._bonePos(bone);
@@ -241,6 +250,7 @@ export class Avatar {
 
   setEmotion(name, hold = 7) {
     const ok = this.mixer.set(name, this.time, hold);
+    if (ok) this._emit('emotion', name);
     if (ok && !this.clip && EMOTION_GESTURE[name] && Math.random() < 0.5) this.play(EMOTION_GESTURE[name]);
     return ok;
   }
@@ -287,14 +297,17 @@ export class Avatar {
       this.camera.position.lerpVectors(a.from, a.to, k); this.controls.target.lerpVectors(a.tFrom, a.tTo, k);
       if (a.t >= 1) this._camAnim = null;
     }
-    this.controls.update();
+    if (!this.xr) this.controls.update();
+    this.onFrame?.(dt);
     if (this.vrm) {
       // поза
       let base = mergePoses(restPose(), this.idleEnabled ? idleLayer(t, this.intensity) : {});
       if (this.posture === 'sit') base = mergePoses(base, sitPose(t));
       else if (this.locomotion) base = mergePoses(base, clipPose(this.locomotion, t));
       // разворот корпуса по направлению движения
-      this.facing += (this.facingTarget - this.facing) * (1 - Math.exp(-dt * 8));
+      let df = this.facingTarget - this.facing;
+      df = Math.atan2(Math.sin(df), Math.cos(df));
+      this.facing += df * (1 - Math.exp(-dt * 8));
       this.vrm.scene.rotation.y = (this.isVrm0 ? Math.PI : 0) + this.facing;
       let pose = base;
       if (this.clip) {

@@ -34,6 +34,9 @@ const ctx = {
     else await this.updateSettings({ persona: p });
   },
   switchTab(t) { switchTab(t); },
+  arClients: 0,
+  onArClients(n) { this.arClients = n; this.speaker.muted = n > 0 && !!this.settings.arVoiceOnPhone; },
+  enterReality() { enterReality(); },
   refreshChrome() { refreshChrome(); },
 };
 window.__stella = ctx;
@@ -228,6 +231,7 @@ function bindGlobalEvents() {
     applySettings();
     loadedPersona = null;
     await loadPersonaModel(p).catch(() => {});
+    arSend({ type: 'model' });
   });
   window.stella.on('avatar:command', ({ animation, emotion }) => { if (emotion) ctx.avatar.setEmotion(emotion); if (animation) ctx.avatar.play(animation); });
   window.stella.on('assistant:timer', ({ message }) => { ctx.say(`⏰ ${message}`, { emotion: 'surprised', action: 'wave' }); toast('⏰ ' + message, 'info', 10000); });
@@ -242,6 +246,51 @@ function showSubtitle(text) {
   clearTimeout(subTimer);
   if (text) { el.textContent = text; el.classList.add('show'); }
   else subTimer = setTimeout(() => el.classList.remove('show'), 1200);
+}
+
+// ---------- мост на телефон (AR) ----------
+function arSend(ev) { if (ctx.arClients > 0) window.stella.invoke('ar:broadcast', ev).catch(() => {}); }
+function bindArBridge() {
+  ctx.avatar.on('action', (name) => { if (name !== 'greet') arSend({ type: 'action', name }); });
+  ctx.avatar.on('emotion', (name) => arSend({ type: 'emotion', name }));
+  ctx.speaker.onPlay = (text, audio) => arSend({ type: 'say', text, audio: ctx.settings.arVoiceOnPhone ? audio : null });
+  window.stella.on('ar:message', ({ text }) => { switchTab('home'); ctx.chat.send(text, { voice: true }); });
+  window.stella.on('ar:clients', ({ count }) => ctx.onArClients(count));
+}
+
+// ---------- окно в реальность: веб-камера за аватаром ----------
+let realityStream = null;
+async function enterReality() {
+  try {
+    realityStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (e) { toast('Нет доступа к веб-камере: ' + e.message, 'error', 6000); return; }
+  const v = $('#reality-video');
+  v.srcObject = realityStream;
+  v.classList.add('flip');
+  await v.play();
+  ctx.perch?.dock();
+  document.body.classList.add('reality');
+  setTimeout(() => ctx.avatar.frame('full', true), 50);
+  ctx.say(ctx.persona().id === 'mark' ? 'О, так вот где ты живёшь! Привет!' : 'Ура, я в реальном мире! Привет!', { emotion: 'happy', action: 'wave' });
+  $('#reality-input').focus();
+}
+function exitReality() {
+  realityStream?.getTracks().forEach((t) => t.stop());
+  realityStream = null;
+  $('#reality-video').srcObject = null;
+  document.body.classList.remove('reality');
+  setTimeout(() => ctx.avatar.frame('full', true), 50);
+}
+function bindReality() {
+  $('#reality-exit').onclick = exitReality;
+  $('#reality-flip').onclick = () => $('#reality-video').classList.toggle('flip');
+  $('#reality-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const t = e.target.value.trim(); if (!t) return;
+    e.target.value = '';
+    ctx.chat.send(t);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('reality')) exitReality(); });
 }
 
 // ---------- первый запуск: предложение подключить агентов ----------
@@ -343,6 +392,7 @@ async function main() {
 
   bindChrome(); bindMenu(); bindMic(); bindConfirm(); bindGlobalEvents();
   ctx.perch = new Perch(ctx);
+  bindArBridge(); bindReality();
   ctx.presence.start();
 
   if (!ctx.account) {

@@ -309,18 +309,7 @@ function registerIpc() {
     modelsDir: path.join(ROOT, 'assets', 'models'), userData: app.getPath('userData'),
     personas: Object.fromEntries(Object.entries(PERSONAS).map(([k, p]) => [k, { id: p.id, name: p.name, color: p.color, tagline: p.tagline, greeting: p.greeting, wakeWords: p.wakeWords, gender: p.gender }])),
   }));
-  handle('model:path', (_e, persona) => {
-    const s = store.getSettings();
-    const custom = persona === 'mark' ? s.customModelMark : s.customModelStella;
-    if (custom && fs.existsSync(custom)) return pathToFileUrl(custom);
-    const dir = path.join(ROOT, 'assets', 'models');
-    const has = (f) => fs.existsSync(path.join(dir, f));
-    // модели с ограниченной лицензией могут отсутствовать (не входят в публичный репозиторий) — берём доступную
-    const order = persona === 'mark'
-      ? (s.markModel === 'classic' ? ['mark.vrm', 'nick.vrm'] : ['nick.vrm', 'mark.vrm'])
-      : ['stella.vrm', 'mark.vrm'];
-    return pathToFileUrl(path.join(dir, order.find(has) || 'mark.vrm'));
-  });
+  handle('model:path', (_e, persona) => pathToFileUrl(modelFile(persona)));
   handle('model:pick', async (_e, persona) => {
     const r = await dialog.showOpenDialog(mainWin, { title: 'Выберите VRM-модель', filters: [{ name: 'VRM', extensions: ['vrm', 'glb'] }], properties: ['openFile'] });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -335,7 +324,7 @@ function registerIpc() {
     const s = store.updateSettings(patch);
     if ('launchAtStartup' in patch) { try { app.setLoginItemSettings({ openAtLogin: !!patch.launchAtStartup }); } catch { /* */ } }
     if ('companionMode' in patch) { if (patch.companionMode) createCompanionWindow(); else companionWin?.close(); }
-    if (before.persona !== s.persona || 'customModelStella' in patch || 'customModelMark' in patch || 'markModel' in patch) send('persona:changed', s.persona);
+    if (before.persona !== s.persona || 'customModelStella' in patch || 'customModelMark' in patch || 'markModel' in patch) { send('persona:changed', s.persona); arServer?.broadcast({ type: 'model', ...arServer && { persona: s.persona } }); }
     send('settings:changed', s);
     return s;
   });
@@ -500,6 +489,15 @@ function registerIpc() {
   });
   handle('system:notify', (_e, { title, body }) => { new Notification({ title, body }).show(); return true; });
   handle('companion:toggle', (_e, on) => { if (on) createCompanionWindow(); else companionWin?.close(); store.updateSettings({ companionMode: !!on }); return !!on; });
+  handle('ar:start', async () => {
+    const srv = getArServer();
+    const r = await srv.start(Number(process.env.STELLA_AR_PORT) || 8790);
+    const qr = await require('qrcode').toString(r.url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+    return { url: r.url, ips: r.ips, qr, clients: srv.clients };
+  });
+  handle('ar:stop', async () => { await arServer?.stop(); return true; });
+  handle('ar:status', () => ({ running: !!arServer?.url, url: arServer?.url || '', clients: arServer?.clients || 0 }));
+  handle('ar:broadcast', (_e, ev) => arServer?.broadcast(ev) || 0);
   handle('companion:sitAt', (_e, { y }) => {
     if (!companionWin) return false;
     const b = companionWin.getBounds();
@@ -521,6 +519,38 @@ function registerIpc() {
   });
 }
 
+/** Файл VRM-модели персонажа (своя модель → встроенная → запасная). */
+function modelFile(persona) {
+  const s = store.getSettings();
+  const custom = persona === 'mark' ? s.customModelMark : s.customModelStella;
+  if (custom && fs.existsSync(custom)) return custom;
+  const dir = path.join(ROOT, 'assets', 'models');
+  const has = (f) => fs.existsSync(path.join(dir, f));
+  // модели с ограниченной лицензией могут отсутствовать (не входят в публичный репозиторий) — берём доступную
+  const order = persona === 'mark'
+    ? (s.markModel === 'classic' ? ['mark.vrm', 'nick.vrm'] : ['nick.vrm', 'mark.vrm'])
+    : ['stella.vrm', 'mark.vrm'];
+  return path.join(dir, order.find(has) || 'mark.vrm');
+}
+
+// ---------- AR на телефоне ----------
+let arServer = null;
+function getArServer() {
+  if (arServer) return arServer;
+  const { createArServer } = require('./ar-server');
+  arServer = createArServer({
+    rendererDir: path.join(ROOT, 'src', 'renderer'),
+    nodeModules: path.join(ROOT, 'node_modules'),
+    certDir: app.getPath('userData'),
+    insecure: process.env.STELLA_AR_INSECURE === '1',
+    getModelFile: () => modelFile(store.getSettings().persona),
+    getInfo: () => { const s = store.getSettings(); const p = PERSONAS[s.persona] || PERSONAS.stella; return { persona: p.id, name: p.name, color: p.color, model: '/model?v=' + encodeURIComponent(modelFile(s.persona) + (fs.existsSync(modelFile(s.persona)) ? fs.statSync(modelFile(s.persona)).mtimeMs : '')) }; },
+    onMessage: (text) => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ar:message', { text }); },
+    onClients: (n) => send('ar:clients', { count: n }),
+  });
+  return arServer;
+}
+
 function pathToFileUrl(p) { return require('url').pathToFileURL(p).href; }
 
 app.whenReady().then(() => {
@@ -533,5 +563,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
 });
 
-app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } });
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } arServer?.stop(); });
 app.on('window-all-closed', () => { executor?.cancelTimers(); if (process.platform !== 'darwin') app.quit(); });

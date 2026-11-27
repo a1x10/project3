@@ -428,3 +428,18 @@ body.avatar-right .toasts { right: auto; left: 20px; align-items: flex-start; }
 .cloud-plan { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 18px; border: 1px solid var(--border); background: var(--inset); }
 .cloud-plan .tag { padding: 4px 12px; border-radius: 999px; color: #fff; font-weight: 800; }
 .usage-row { display: grid; grid-template-columns: 200px 1fr 140px; gap: 12px; align-items: center; margin-top: 10px; font-size: 13px; }
+
+/* ---------- Реальность: веб-камера за аватаром ---------- */
+.reality-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; display: none; background: #000; }
+.reality-video.flip { transform: scaleX(-1); }
+.reality-bar { display: none; position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 8; gap: 8px; width: min(720px, 92vw); padding: 8px; border-radius: 20px; background: var(--glass); border: 1px solid var(--border); box-shadow: 0 16px 40px var(--shadow); }
+body.reality .reality-video { display: block; }
+body.reality .bg, body.reality .dock { display: none; }
+body.reality .pages { visibility: hidden; pointer-events: none; }
+body.reality .reality-bar { display: flex; }
+body.reality .reality-bar .input { flex: 1; }
+body.reality .avatar-layer { left: 50% !important; right: auto !important; transform: translateX(-50%); width: min(560px, 60vw); top: 70px; bottom: 40px; }
+.qr-box { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.qr-box .qr { width: 210px; height: 210px; padding: 10px; border-radius: 18px; background: #fff; border: 1px solid var(--border); flex-shrink: 0; }
+.qr-box .qr svg { width: 100%; height: 100%; display: block; }
+.ar-url { font: 500 12px var(--mono); word-break: break-all; padding: 8px 10px; border-radius: 10px; background: var(--inset); user-select: all; }

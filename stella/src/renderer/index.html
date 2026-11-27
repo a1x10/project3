@@ -18,6 +18,7 @@
 </head>
 <body>
   <div id="bg" class="bg"></div>
+  <video id="reality-video" class="reality-video" playsinline muted></video>
 
   <!-- Заставка -->
   <section id="splash" class="splash">
@@ -115,6 +116,12 @@
       <section class="page" data-page="workshop" id="page-workshop"></section>
       <section class="page" data-page="settings" id="page-settings"></section>
     </main>
+
+    <div class="reality-bar" id="reality-bar">
+      <input class="input" id="reality-input" placeholder="Скажи что-нибудь…">
+      <button class="btn" id="reality-flip" title="Отразить камеру">⇋</button>
+      <button class="btn primary" id="reality-exit">Выйти из реальности</button>
+    </div>
 
     <footer class="statusbar">
       <button class="sb-user" id="sb-user" title="Профиль"></button>

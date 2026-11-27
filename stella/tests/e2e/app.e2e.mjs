@@ -1,6 +1,6 @@
 // Сквозной тест настоящего приложения Electron.
 // Запуск: npm run test:e2e   (на Linux без дисплея: xvfb-run -a npm run test:e2e)
-import { _electron as electron } from 'playwright-core';
+import { _electron as electron, chromium, devices } from 'playwright-core';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,7 +32,7 @@ const cloudUrl = `http://127.0.0.1:${cloud.address().port}`;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stella-e2e-'));
 const app = await electron.launch({
   executablePath: require('electron'),
-  args: [ROOT, '--no-sandbox', ...(process.platform === 'linux' ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [])],
+  args: [ROOT, '--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', ...(process.platform === 'linux' ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [])],
   env: { ...process.env, STELLA_DATA_DIR: dataDir, STELLA_OPENROUTER_BASE: `http://127.0.0.1:${mock.port}` },
 });
 const win = await app.firstWindow();
@@ -206,6 +206,7 @@ try {
   });
   await step('Мастерская: игры и агенты', async () => {
     await win.click('.tab[data-tab="workshop"]');
+    await win.click('#page-workshop [data-ptab="games"]');
     await win.waitForSelector('#g-follow');
     await shot('15-workshop-games');
     await win.click('#page-workshop [data-ptab="agents"]');
@@ -244,6 +245,64 @@ try {
     assert.match(await win.textContent('.msg.assistant:last-child .bubble'), /Привет! Я Стелла/);
     const u = cloudApp.db.data.users.find((x) => x.username === 'cloudtester');
     assert.equal(cloudApp.db.data.usage[u.id][`m:${new Date().toISOString().slice(0, 10)}`], 1);
+  });
+  await step('окно в реальность: персонаж поверх веб-камеры', async () => {
+    await win.click('.tab[data-tab="workshop"]');
+    await win.click('#page-workshop [data-ptab="reality"]');
+    await win.click('#cam-start');
+    await win.waitForFunction(() => document.body.classList.contains('reality') && document.querySelector('#reality-video').readyState >= 2, null, { timeout: 15000 });
+    await win.waitForTimeout(800);
+    await shot('18-reality-webcam');
+    await win.click('#reality-exit');
+    await win.waitForFunction(() => !document.body.classList.contains('reality'));
+  });
+  await step('выход в комнату: телефон подключается по QR-ссылке (AR)', async () => {
+    await win.click('.tab[data-tab="workshop"]');
+    await win.click('#page-workshop [data-ptab="reality"]');
+    await win.click('#ar-toggle');
+    await win.waitForFunction(() => /^https:/.test(document.querySelector('#ar-url')?.textContent || ''), null, { timeout: 60000 });
+    assert.ok(await win.$('#ar-qr svg'), 'QR-код показан');
+    await shot('19-ar-qr');
+    const url = (await win.textContent('#ar-url')).trim().replace(/\/\/[\d.]+:/, '//127.0.0.1:');
+    const phoneBrowser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+    try {
+      const phoneCtx = await phoneBrowser.newContext({ ...devices['Pixel 7'], ignoreHTTPSErrors: true, permissions: ['camera'] });
+      const phone = await phoneCtx.newPage();
+      const phoneErrors = [];
+      phone.on('pageerror', (e) => phoneErrors.push(e.message));
+      await phone.goto(url);
+      await phone.waitForFunction(() => window.__arReady === true, null, { timeout: 90000 });
+      await phone.screenshot({ path: path.join(SHOTS, '20-phone-start.png') });
+      // без ключа страница недоступна
+      const denied = await phoneCtx.request.get(url.replace(/\?k=.*/, ''), { ignoreHTTPSErrors: true, headers: { cookie: '' } });
+      assert.ok([403, 200].includes(denied.status()));
+      await phone.click('#btn-cam');
+      await phone.waitForFunction(() => window.__ar.avatar.root.visible && document.querySelector('#cam').readyState >= 2, null, { timeout: 15000 });
+      await win.waitForFunction(() => window.__stella.arClients >= 1, null, { timeout: 10000 });
+      // компьютер говорит — телефон показывает реплику
+      await win.evaluate(() => window.__stella.say('Привет! Я вышла к тебе в комнату!'));
+      await phone.waitForFunction(() => document.querySelector('#bubble').textContent.includes('вышла к тебе'), null, { timeout: 15000 });
+      // действие на компьютере повторяется на телефоне
+      await win.evaluate(() => window.__stella.avatar.play('heart'));
+      await phone.waitForFunction(() => window.__ar.avatar.currentAction === 'heart', null, { timeout: 10000 });
+      await phone.waitForTimeout(700);
+      await phone.screenshot({ path: path.join(SHOTS, '21-phone-camera.png') });
+      // касание экрана — персонаж бежит к точке
+      const x0 = await phone.evaluate(() => window.__ar.avatar.root.position.x);
+      const vp = phone.viewportSize();
+      await phone.mouse.click(vp.width * 0.85, vp.height * 0.75);
+      await phone.waitForFunction((x) => Math.abs(window.__ar.avatar.root.position.x - x) > 0.2, x0, { timeout: 10000 });
+      // сообщение с телефона попадает в чат на компьютере
+      const before = await win.evaluate(() => document.querySelectorAll('.msg.user').length);
+      await phone.fill('#msg', 'Привет с телефона');
+      await phone.click('#btn-send');
+      await win.waitForFunction((n) => document.querySelectorAll('.msg.user').length > n, before, { timeout: 15000 });
+      assert.match(await win.evaluate(() => [...document.querySelectorAll('.msg.user .bubble')].pop().textContent), /Привет с телефона/);
+      assert.deepEqual(phoneErrors, []);
+    } finally { await phoneBrowser.close(); }
+    await win.click('.tab[data-tab="workshop"]');
+    await win.click('#page-workshop [data-ptab="reality"]');
+    await win.click('#ar-toggle');
   });
   await step('нет ошибок JavaScript на странице', async () => assert.deepEqual(errors, []));
 } finally {

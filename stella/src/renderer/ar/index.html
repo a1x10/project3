@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#fbfbfa">
+  <title>Stella AR</title>
+  <script type="importmap">
+  { "imports": { "three": "/lib/three.module.js", "three/addons/": "/lib/addons/", "@pixiv/three-vrm": "/lib/three-vrm.module.js" } }
+  </script>
+  <style>
+    :root { --t: #1c1c1e; --m: #6b6b70; --a: #8b5cf6; font: 600 15px/1.4 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #fbfbfa; color: var(--t); }
+    #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; background: #000; }
+    #c { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+    #overlay > * { pointer-events: auto; }
+    .top { display: flex; align-items: center; gap: 8px; }
+    .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; background: rgba(255,255,255,.9); box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; }
+    .dot.off { background: #dc2626; }
+    .bubble { align-self: center; max-width: 88%; margin-top: 10px; padding: 10px 14px; border-radius: 16px; background: rgba(255,255,255,.95); box-shadow: 0 8px 24px rgba(0,0,0,.15); text-align: center; opacity: 0; transition: .3s; }
+    .bubble.show { opacity: 1; }
+    .hint { align-self: center; padding: 8px 14px; border-radius: 12px; background: rgba(0,0,0,.55); color: #fff; font-size: 13px; text-align: center; max-width: 92%; }
+    .bottom { display: flex; flex-direction: column; gap: 10px; }
+    .acts { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    .acts button, .send, .start { border: 0; border-radius: 14px; background: rgba(255,255,255,.92); box-shadow: 0 6px 18px rgba(0,0,0,.12); font: inherit; padding: 10px 12px; }
+    .acts button { font-size: 20px; min-width: 46px; }
+    .row { display: flex; gap: 8px; }
+    .row input { flex: 1; min-width: 0; border: 0; border-radius: 14px; padding: 12px 14px; font: inherit; background: rgba(255,255,255,.95); box-shadow: 0 6px 18px rgba(0,0,0,.12); outline: none; }
+    .send { background: #1c1c1e; color: #fff; padding: 0 18px; }
+    #start-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; background: #fbfbfa; z-index: 5; }
+    #start-screen h1 { margin: 0; font-size: 40px; font-weight: 900; }
+    #start-screen p { margin: 0; color: var(--m); max-width: 360px; }
+    .start { width: 100%; max-width: 340px; padding: 16px; font-size: 17px; font-weight: 800; }
+    .start.primary { background: #1c1c1e; color: #fff; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <video id="cam" playsinline muted></video>
+  <canvas id="c"></canvas>
+  <div id="start-screen">
+    <h1><span id="s-pre">твоя</span> <span id="s-name">Стелла</span> ✦</h1>
+    <p id="s-text">Сейчас я выйду из компьютера к тебе в комнату. Наведи камеру на пол или стол и нажми на экран — я встану туда.</p>
+    <button class="start primary hidden" id="btn-ar">Начать AR</button>
+    <button class="start" id="btn-cam">Через камеру</button>
+    <button class="start" id="btn-3d">Просто на экране</button>
+    <p id="s-status">Загружаю модель…</p>
+  </div>
+  <div id="overlay" class="hidden">
+    <div>
+      <div class="top"><span class="chip"><span class="dot" id="dot"></span><span id="name">Стелла</span></span><span style="flex:1"></span><button class="chip" id="btn-size" style="border:0;font:inherit">Мини</button><button class="chip" id="btn-exit" style="border:0;font:inherit">✕</button></div>
+      <div class="bubble" id="bubble"></div>
+    </div>
+    <div class="bottom">
+      <div class="hint" id="hint">Наведи камеру на пол и нажми — я встану туда</div>
+      <div class="acts">
+        <button data-a="wave">👋</button><button data-a="dance">💃</button><button data-a="heart">💖</button><button data-a="jump">🦘</button><button data-a="come">🫵</button><button data-a="sit">🪑</button>
+      </div>
+      <div class="row"><input id="msg" placeholder="Напиши мне…" enterkeyhint="send"><button class="send" id="btn-send">➤</button></div>
+    </div>
+  </div>
+  <script type="module" src="/ar/ar.js"></script>
+</body>
+</html>

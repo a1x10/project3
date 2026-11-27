@@ -11,6 +11,8 @@ export class Speaker {
     this.gen = 0;
     this.current = null;
     this.elevenFailed = false;
+    this._b64 = new Map();
+    this.muted = false;
   }
 
   _ctx() {
@@ -43,6 +45,7 @@ export class Speaker {
     try {
       const b64 = await window.stella.invoke('tts:speak', text);
       if (!b64) return null;
+      this._b64.set(text, b64);
       const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       return await this._ctx().decodeAudioData(bin.buffer);
     } catch (e) {
@@ -63,6 +66,8 @@ export class Speaker {
     const s = this.getSettings();
     const buffer = item.audio ? await item.audio : null;
     if (gen !== this.gen) return;
+    this.onPlay?.(item.text, this._b64.get(item.text) || null);
+    this._b64.delete(item.text);
     if (buffer) await this._playBuffer(buffer, s.volume, gen);
     else if (s.ttsEnabled && s.systemVoiceFallback) await this._speakSystem(item.text, s, gen);
     else await this._fakeTalk(item.text, gen);
@@ -73,7 +78,7 @@ export class Speaker {
   _playBuffer(buffer, volume, gen) {
     return new Promise((resolve) => {
       const ctx = this._ctx();
-      this.gain.gain.value = volume ?? 0.9;
+      this.gain.gain.value = this.muted ? 0 : (volume ?? 0.9);
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(this.analyser);
@@ -96,7 +101,7 @@ export class Speaker {
       if (!('speechSynthesis' in window)) { this._fakeTalk(text, gen).then(resolve); return; }
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ru-RU';
-      u.volume = s.volume ?? 0.9;
+      u.volume = this.muted ? 0 : (s.volume ?? 0.9);
       u.rate = s.voiceSpeed || 1;
       const voices = speechSynthesis.getVoices().filter((v) => v.lang?.startsWith('ru'));
       const female = /irina|svetlana|milena|алёна|female|ekaterina|elena|dariya/i;
