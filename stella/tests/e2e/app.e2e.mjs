@@ -304,6 +304,40 @@ try {
     await win.click('#page-workshop [data-ptab="reality"]');
     await win.click('#ar-toggle');
   });
+  await step('персонаж съедает файл и может его выплюнуть', async () => {
+    await win.click('.tab[data-tab="home"]');
+    await win.evaluate(() => window.__stella.perch.dock());
+    const food = path.join(os.tmpdir(), `stella-food-${Date.now()}.txt`);
+    fs.writeFileSync(food, 'вкусный файл');
+    // перетаскивание файла над персонажем: он тянется и открывает рот
+    await win.evaluate(() => {
+      const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt', { type: 'text/plain' }));
+      document.querySelector('#avatar-canvas').dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }));
+    });
+    await win.waitForFunction(() => window.__stella.avatar.currentAction === 'hungry', null, { timeout: 5000 });
+    await shot('22-hungry');
+    await win.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt')); document.querySelector('#avatar-canvas').dispatchEvent(new DragEvent('dragleave', { dataTransfer: dt, bubbles: true })); });
+    const res = await win.evaluate((p) => window.__stella.eatPaths([p]), food);
+    assert.equal(res[0].ok, true);
+    assert.equal(fs.existsSync(food), false, 'файл исчез');
+    await win.waitForFunction(() => window.__stella.avatar.currentAction === 'eat', null, { timeout: 3000 }).catch(() => {});
+    await win.waitForSelector('.toast button', { timeout: 5000 });
+    await shot('23-eaten');
+    // желудок в Мастерской
+    await win.click('.tab[data-tab="workshop"]');
+    await win.click('#page-workshop [data-ptab="stomach"]');
+    await win.waitForSelector('.food-item');
+    assert.match(await win.textContent('.food-item'), /stella-food-/);
+    await shot('24-stomach');
+    await win.click('.food-item [data-spit]');
+    await win.waitForFunction(() => !document.querySelector('.food-item'), null, { timeout: 5000 });
+    assert.equal(fs.readFileSync(food, 'utf8'), 'вкусный файл', 'файл вернулся на место');
+    fs.rmSync(food);
+    // важное есть отказывается
+    const refused = await win.evaluate((p) => window.__stella.eatPaths([p]), os.homedir());
+    assert.equal(refused.length, 0);
+    assert.ok(fs.existsSync(os.homedir()));
+  });
   await step('нет ошибок JavaScript на странице', async () => assert.deepEqual(errors, []));
 } finally {
   await app.close();

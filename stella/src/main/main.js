@@ -19,7 +19,7 @@ if (process.env.STELLA_DATA_DIR) app.setPath('userData', process.env.STELLA_DATA
 app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-let mainWin = null, companionWin = null, tray = null;
+let mainWin = null, companionWin = null, tray = null, isQuitting = false, stomach = null;
 let store, accounts, executor;
 const pendingConfirms = new Map();
 let currentAbort = null;
@@ -173,6 +173,14 @@ function createMainWindow() {
   mainWin.on('blur', () => send('app:focus', { focused: false }));
   mainWin.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   mainWin.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/.test(url)) shell.openExternal(url); } });
+  // если включён компаньон — закрытие окна прячет его в трей, а персонаж остаётся на рабочем столе
+  mainWin.on('close', (e) => {
+    if (!isQuitting && companionWin && !companionWin.isDestroyed()) {
+      e.preventDefault();
+      mainWin.hide();
+      if (!store.data.trayHintShown) { store.data.trayHintShown = true; store.save(); new Notification({ title: 'Я тут!', body: 'Окно спрятано в трей, а я осталась на рабочем столе. Перетащи на меня ненужный файл — я его съем.' }).show(); }
+    }
+  });
   mainWin.on('closed', () => { mainWin = null; if (companionWin && !companionWin.isDestroyed()) companionWin.close(); });
   if (isDev) mainWin.webContents.openDevTools({ mode: 'detach' });
 }
@@ -181,7 +189,7 @@ function createCompanionWindow() {
   if (companionWin && !companionWin.isDestroyed()) { companionWin.show(); return; }
   const { workArea } = screen.getPrimaryDisplay();
   companionWin = new BrowserWindow({
-    width: 340, height: 520, x: workArea.x + workArea.width - 360, y: workArea.y + workArea.height - 540,
+    width: 360, height: 560, x: workArea.x + workArea.width - 380, y: workArea.y + workArea.height - 560,
     frame: false, transparent: true, alwaysOnTop: true, resizable: true, skipTaskbar: true, hasShadow: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
   });
@@ -208,7 +216,7 @@ function createTray() {
       { label: `Открыть ${persona().name}`, click: () => { if (!mainWin) createMainWindow(); mainWin.show(); mainWin.focus(); } },
       { label: 'Режим компаньона', type: 'checkbox', checked: !!companionWin, click: (i) => { if (i.checked) createCompanionWindow(); else companionWin?.close(); } },
       { type: 'separator' },
-      { label: 'Выход', click: () => app.quit() },
+      { label: 'Выход', click: () => { isQuitting = true; app.quit(); } },
     ]);
     tray.setToolTip('Stella Assistant');
     tray.setContextMenu(menu());
@@ -489,6 +497,17 @@ function registerIpc() {
   });
   handle('system:notify', (_e, { title, body }) => { new Notification({ title, body }).show(); return true; });
   handle('companion:toggle', (_e, on) => { if (on) createCompanionWindow(); else companionWin?.close(); store.updateSettings({ companionMode: !!on }); return !!on; });
+  handle('food:icon', async (_e, p) => { try { return (await app.getFileIcon(p, { size: 'large' })).toDataURL(); } catch { return null; } });
+  handle('food:check', (_e, paths) => paths.map((p) => ({ path: p, reason: getStomach().forbidden(p) })));
+  handle('food:eat', async (_e, paths) => {
+    const res = await getStomach().eat(paths);
+    for (const r of res) store.logAction({ name: 'eat_file', label: 'Съела файл', args: { path: r.original }, ok: r.ok, output: r.ok ? 'В желудке (можно выплюнуть 7 дней)' : r.error, level: 'risky' });
+    send('food:changed', getStomach().list());
+    return res;
+  });
+  handle('food:list', () => getStomach().list());
+  handle('food:spit', async (_e, id) => { const r = await getStomach().spit(id); send('food:changed', getStomach().list()); return r; });
+  handle('food:digest', async (_e, id) => { const r = await getStomach().digest(id); send('food:changed', getStomach().list()); return r; });
   handle('ar:start', async () => {
     const srv = getArServer();
     const r = await srv.start(Number(process.env.STELLA_AR_PORT) || 8790);
@@ -533,6 +552,19 @@ function modelFile(persona) {
   return path.join(dir, order.find(has) || 'mark.vrm');
 }
 
+// ---------- «Желудок»: съеденные файлы ----------
+function getStomach() {
+  if (stomach) return stomach;
+  const { createStomach } = require('./stomach');
+  stomach = createStomach({
+    dir: path.join(app.getPath('userData'), 'stomach'),
+    trash: (p) => shell.trashItem(p),
+    protect: [ROOT, path.dirname(app.getPath('exe')), app.getPath('userData')],
+    digestDays: 7,
+  });
+  return stomach;
+}
+
 // ---------- AR на телефоне ----------
 let arServer = null;
 function getArServer() {
@@ -560,8 +592,13 @@ app.whenReady().then(() => {
   createMainWindow();
   createTray();
   if (store.getSettings().companionMode) createCompanionWindow();
+  // переваривание старой еды (старше 7 дней) — в Корзину
+  const digestOld = () => getStomach().autoDigest().then((d) => { if (d.length) send('food:changed', getStomach().list()); }).catch(() => {});
+  setTimeout(digestOld, 15000);
+  setInterval(digestOld, 6 * 3600000).unref?.();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
 });
 
 app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } arServer?.stop(); });
+app.on('before-quit', () => { isQuitting = true; });
 app.on('window-all-closed', () => { executor?.cancelTimers(); if (process.platform !== 'darwin') app.quit(); });

@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const invoke = async (channel, ...args) => {
   const r = await ipcRenderer.invoke(channel, ...args);
@@ -20,4 +20,6 @@ contextBridge.exposeInMainWorld('stella', {
   },
   invoke,
   on,
+  /** Путь к файлу, перетащенному в окно (Electron 32+). */
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return file?.path || ''; } },
 });

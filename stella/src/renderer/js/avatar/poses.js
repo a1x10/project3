@@ -260,7 +260,25 @@ const run = {
   },
 };
 
-export const CLIPS = { walk, run, wave, dance, nod, shake, think, jump, bow, clap, stretch, spin, point, heart, laugh, shrug, victory, sleepy, shy, lookAround, surprised, greet };
+const eat = { // наклоняется, хватает и жуёт
+  duration: 2.6, loop: false,
+  fn: (t) => {
+    const grab = env(t, 2.6, 0.25, 0.5);
+    const chew = t > 0.6 ? Math.abs(S(t * 14)) : 0;
+    return {
+      spine: [0.22 * grab - 0.05 * chew, 0, 0], chest: [0.12 * grab, 0, 0], head: [0.15 * grab - 0.08 * chew, 0, 0.05 * S(t * 3)],
+      leftUpperArm: [0, -0.9 * grab, -1.2 + 0.4 * grab], rightUpperArm: [0, 0.9 * grab, 1.2 - 0.4 * grab],
+      leftLowerArm: [0, -1.7 * grab, 0], rightLowerArm: [0, 1.7 * grab, 0],
+      hipsPos: [0, -0.015 * chew, 0],
+    };
+  },
+};
+const hungry = { // тянется к файлу, который несут
+  duration: 1.2, loop: true,
+  fn: (t) => ({ spine: [0.1, 0, 0.05 * S(t * 4)], head: [0.08, 0, 0.1 * S(t * 4)], leftUpperArm: [0, -0.9, -0.6], rightUpperArm: [0, 0.9, 0.6], leftLowerArm: [0, -0.4, 0], rightLowerArm: [0, 0.4, 0], hipsPos: [0, 0.01 * Math.abs(S(t * 8)), 0] }),
+};
+
+export const CLIPS = { eat, hungry, walk, run, wave, dance, nod, shake, think, jump, bow, clap, stretch, spin, point, heart, laugh, shrug, victory, sleepy, shy, lookAround, surprised, greet };
 export const CLIP_NAMES = Object.keys(CLIPS);
 
 /** Возвращает позу клипа в момент t (поддерживает варианты танца). */

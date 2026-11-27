@@ -443,3 +443,16 @@ body.reality .avatar-layer { left: 50% !important; right: auto !important; trans
 .qr-box .qr { width: 210px; height: 210px; padding: 10px; border-radius: 18px; background: #fff; border: 1px solid var(--border); flex-shrink: 0; }
 .qr-box .qr svg { width: 100%; height: 100%; display: block; }
 .ar-url { font: 500 12px var(--mono); word-break: break-all; padding: 8px 10px; border-radius: 10px; background: var(--inset); user-select: all; }
+
+/* ---------- Съесть файл ---------- */
+.food-fly { position: fixed; z-index: 300; pointer-events: none; font-size: 40px; }
+.food-fly img { width: 56px; height: 56px; display: block; filter: drop-shadow(0 6px 12px rgba(0,0,0,.3)); }
+.eater-hover #avatar-canvas, #avatar-layer.eater-hover canvas { filter: drop-shadow(0 0 22px var(--accent)); }
+.cmp-note { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 4; display: none; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--glass); border: 1px solid var(--border-strong); font-size: 12px; box-shadow: 0 10px 30px var(--shadow); -webkit-app-region: no-drag; }
+.cmp-note.show { display: flex; }
+.cmp-note .row { gap: 6px; }
+.food-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--inset); border: 1px solid var(--border); margin-bottom: 6px; }
+.food-item img { width: 32px; height: 32px; }
+.food-item .t { flex: 1; min-width: 0; }
+.food-item .t b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.food-item .t small { color: var(--muted); font-weight: 500; }

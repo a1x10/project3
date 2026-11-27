@@ -19,6 +19,21 @@ export function toast(message, type = 'info', ms = 3800) {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
 }
 
+/** Уведомление с кнопками (например «Выплюнуть»). */
+export function toastActions(html, actions = [], ms = 9000) {
+  const root = $('#toasts');
+  const el = h(`<div class="toast info">${icon('info', 16)}<span>${html}</span></div>`);
+  for (const a of actions) {
+    const b = h(`<button class="btn sm">${escapeHtml(a.label)}</button>`);
+    b.onclick = () => { a.onClick(); el.remove(); };
+    el.appendChild(b);
+  }
+  root.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
+  return el;
+}
+
 /** Модальное окно. Возвращает Promise с результатом кнопки. */
 export function modal({ title, body = '', buttons = [{ label: 'OK', value: true, primary: true }], className = '', dismissValue = false }) {
   return new Promise((resolve) => {

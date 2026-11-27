@@ -10,7 +10,8 @@ import { Perch } from './ui/perch.js';
 import { Presence } from './ui/presence.js';
 import { showAuth } from './ui/auth.js';
 import { doodleTile } from './ui/doodles.js';
-import { $, $$, h, escapeHtml, toast, modal } from './ui/dom.js';
+import { $, $$, h, escapeHtml, toast, modal, toastActions } from './ui/dom.js';
+import { attachEater, eatPaths } from './ui/eater.js';
 import { icon, hydrateIcons } from './ui/icons.js';
 import { parseTags } from './core/tags.js';
 
@@ -319,6 +320,20 @@ async function startCompanion() {
   $('#cmp-open').onclick = () => window.stella.invoke('companion:focusMain');
   $('#cmp-close').onclick = () => window.stella.invoke('companion:toggle', false);
   ctx.avatar.on('touch', () => { ctx.avatar.play('wave'); ctx.avatar.setEmotion('happy', 3); });
+  // свои реплики компаньона (еда и т.п.) — с голосом; ответы чата озвучивает главное окно
+  const voice = new Speaker({ avatar: ctx.avatar, getSettings: () => ctx.settings, onSubtitle: showSubtitle });
+  ctx.say = (text) => { const { clean } = parseTags(text); voice.enqueue(clean); };
+  ctx.bubble = (t) => showSubtitle(t);
+  const note = h('<div class="cmp-note"><div class="txt"></div><div class="row"></div></div>');
+  $('#avatar-layer').appendChild(note);
+  let noteTimer;
+  ctx.notify = (html, actions = []) => {
+    note.querySelector('.txt').innerHTML = html;
+    const row = note.querySelector('.row'); row.innerHTML = '';
+    for (const a of actions) { const b = h(`<button class="btn sm">${escapeHtml(a.label)}</button>`); b.onclick = () => { a.onClick(); note.classList.remove('show'); }; row.appendChild(b); }
+    note.classList.add('show'); clearTimeout(noteTimer); noteTimer = setTimeout(() => note.classList.remove('show'), 9000);
+  };
+  attachEater(ctx, document.body, $('#avatar-layer'));
   await ctx.avatar.load(await window.stella.invoke('model:path', ctx.settings.persona));
   ctx.avatar.frame('full', true);
   let buf = '';
@@ -393,6 +408,10 @@ async function main() {
   bindChrome(); bindMenu(); bindMic(); bindConfirm(); bindGlobalEvents();
   ctx.perch = new Perch(ctx);
   bindArBridge(); bindReality();
+  ctx.notify = (html, actions) => toastActions(html, actions);
+  ctx.bubble = (t) => showSubtitle(t);
+  attachEater(ctx, $('#avatar-layer'), $('#avatar-layer'));
+  ctx.eatPaths = (paths) => eatPaths(ctx, paths, { x: innerWidth / 2, y: innerHeight / 2 }, $('#avatar-layer')); // для тестов и команд
   ctx.presence.start();
 
   if (!ctx.account) {

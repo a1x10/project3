@@ -15,7 +15,8 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
     "test:e2e": "node tests/e2e/app.e2e.mjs",
-    "test:all": "vitest run && node tests/e2e/app.e2e.mjs"
+    "test:all": "vitest run && node tests/e2e/app.e2e.mjs",
+    "installer": "node tools/build-installer.mjs"
   },
   "author": "Stella Team",
   "license": "MIT",

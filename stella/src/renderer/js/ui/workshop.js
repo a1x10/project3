@@ -20,6 +20,7 @@ export class WorkshopPage {
     this.tab = 'reality';
     this.state = { follow: false, agent: false };
     this.log = [];
+    window.stella.on('food:changed', () => { if (this.ctx.activeTab === 'workshop' && this.tab === 'stomach') this.render(); });
     window.stella.on('ar:clients', ({ count }) => { const el = $('#ar-clients', this.root); if (el) el.textContent = `Подключено телефонов: ${count}`; this.ctx.onArClients?.(count); });
     window.stella.on('game:state', (st) => { this.state = st; if (this.ctx.activeTab === 'workshop') this.render(); });
     window.stella.on('game:log', (e) => {
@@ -31,12 +32,42 @@ export class WorkshopPage {
     });
   }
 
+  async renderStomach() {
+    const p = this.ctx.persona();
+    const list = (await window.stella.invoke('food:list')).slice().reverse();
+    const total = list.reduce((s, x) => s + (x.size || 0), 0);
+    const fmt = (n) => (n > 1024 ** 3 ? (n / 1024 ** 3).toFixed(1) + ' ГБ' : n > 1024 ** 2 ? (n / 1024 ** 2).toFixed(1) + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ');
+    renderSettingsPage(this.root, {
+      title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['stomach', 'Желудок'], ['games', 'Игры'], ['agents', 'Агенты']], active: 'stomach', onTab: (t) => { this.tab = t; this.render(); },
+      sections: [
+        { id: 'food', icon: 'trash', label: `Желудок ${p.id === 'mark' ? 'Марка' : 'Стеллы'}`, desc: `Перетащи файл, папку или ярлык на ${p.id === 'mark' ? 'Марка' : 'Стеллу'} — ${p.id === 'mark' ? 'он' : 'она'} это съест. Съеденное лежит здесь 7 дней (можно выплюнуть обратно), потом переваривается в Корзину.`, html: `
+          <div class="set"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><span class="hint">${list.length ? `Внутри: ${list.length} шт., ${fmt(total)}` : 'Желудок пуст — покорми меня!'}</span>${list.length ? '<button class="btn sm danger" id="food-all">Переварить всё (в Корзину)</button>' : ''}</div><div id="food-list" style="margin-top:12px"></div></div>
+          <div class="set"><p class="hint" style="margin:0">Системные папки, целый диск, домашнюю папку, Рабочий стол целиком и файлы самой программы персонаж есть отказывается. Съеденный ярлык удаляет только ярлык — сама программа остаётся установленной.</p></div>` },
+        { id: 'top', icon: 'pip', label: 'Поверх всех окон', desc: 'Персонаж живёт на рабочем столе поверх других приложений — туда удобно бросать файлы прямо из Проводника.', html: `
+          ${sw(this.ctx.settings, 'companionMode', 'Персонаж поверх всех окон', 'Если закрыть главное окно — оно уйдёт в трей, а персонаж останется на рабочем столе.')}
+          ${sw(this.ctx.settings, 'launchAtStartup', 'Запускать вместе с Windows', '')}` },
+      ],
+    });
+    bindKeys(this.root, this.ctx);
+    const el = $('#food-list', this.root);
+    for (const x of list) {
+      const icon64 = await window.stella.invoke('food:icon', x.original).catch(() => null);
+      const days = Math.max(0, 7 - Math.floor((Date.now() - x.eatenAt) / 86400000));
+      const it = h(`<div class="food-item">${icon64 ? `<img src="${icon64}" alt="">` : '<span style="font-size:26px">📄</span>'}<div class="t"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.original)} · ${fmt(x.size || 0)} · переварится через ${days} дн.</small></div><button class="btn sm" data-spit>↩ Выплюнуть</button><button class="btn sm" data-digest>В Корзину</button></div>`);
+      it.querySelector('[data-spit]').onclick = async () => { try { const r = await window.stella.invoke('food:spit', x.id); toast('Возвращено: ' + r.restoredTo, 'success'); this.ctx.avatar.play('shrug'); } catch (e) { toast(e.message, 'error'); } this.render(); };
+      it.querySelector('[data-digest]').onclick = async () => { await window.stella.invoke('food:digest', x.id); toast('Отправлено в Корзину', 'info'); this.render(); };
+      el.appendChild(it);
+    }
+    const all = $('#food-all', this.root);
+    if (all) all.onclick = async () => { const d = await window.stella.invoke('food:digest'); toast(`В Корзину: ${d.length}`, 'info'); this.ctx.avatar.play('stretch'); this.render(); };
+  }
+
   async renderReality() {
     const p = this.ctx.persona();
     let st = { running: false, url: '', clients: 0 };
     try { st = await window.stella.invoke('ar:status'); } catch { /* */ }
     renderSettingsPage(this.root, {
-      title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['games', 'Игры'], ['agents', 'Агенты']], active: 'reality', onTab: (t) => { this.tab = t; this.render(); },
+      title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['stomach', 'Желудок'], ['games', 'Игры'], ['agents', 'Агенты']], active: 'reality', onTab: (t) => { this.tab = t; this.render(); },
       sections: [
         { id: 'phone', icon: 'monitor', label: 'В комнате (телефон, AR)', desc: `${escapeHtml(p.name)} выходит из компьютера: стоит на твоём полу или столе через камеру телефона, ходит, танцует и говорит — всё синхронно с компьютером.`, html: `
           <div class="set"><div class="qr-box">
@@ -79,6 +110,7 @@ export class WorkshopPage {
     const s = this.ctx.settings;
     const p = this.ctx.persona();
     if (this.tab === 'reality') return this.renderReality();
+    if (this.tab === 'stomach') return this.renderStomach();
     const sections = this.tab === 'games' ? [
       { id: 'follow', icon: 'sparkle', label: 'Компаньон в игре', desc: `${escapeHtml(p.name)} появляется поверх любой игры внизу экрана, бегает за курсором и комментирует происходящее.`, html: `
         ${block(this.state.follow ? '🟢 Компаньон в игре' : 'Позвать в игру', 'Окно не мешает кликам — все нажатия проходят в игру. Остановить: кнопкой ниже или Ctrl+Shift+F10.', `<div class="row"><button class="btn primary" id="g-follow">${this.state.follow ? 'Остановить' : `${icon('play', 14)} Запустить`}</button></div>`)}
@@ -101,7 +133,7 @@ export class WorkshopPage {
         ${sw(s, 'agentsEnabled', 'Разрешить передавать задачи агентам', 'Ассистент сможет вызывать Antigravity сам, когда задача большая.')}` },
       { id: 'how', icon: 'info', label: 'Как это работает', html: block('Порядок подключения', '', `<ol style="margin:0;padding-left:20px;line-height:1.9"><li>Нажми «Скачать и войти» — откроется сайт Antigravity.</li><li>Установи программу и войди своим аккаунтом Google.</li><li>Нажми «Проверить установку» — ассистент запустит Antigravity.</li><li>Дальше просто проси в чате: «передай Antigravity задачу …».</li></ol>`) },
     ];
-    renderSettingsPage(this.root, { title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['games', 'Игры'], ['agents', 'Агенты']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
+    renderSettingsPage(this.root, { title: 'Мастерская', tabs: [['reality', 'Реальный мир'], ['stomach', 'Желудок'], ['games', 'Игры'], ['agents', 'Агенты']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
     bindKeys(this.root, this.ctx);
     const r = this.root;
     if (this.tab === 'games') {
