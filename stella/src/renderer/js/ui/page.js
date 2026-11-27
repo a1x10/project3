@@ -63,7 +63,7 @@ export function bindKeys(root, ctx, onChange) {
 }
 
 export function keyField(id, s, hasKey, placeholder) {
-  return `<input class="input" type="password" id="${id}" placeholder="${hasKey ? '••••••••••••••••••••••' : placeholder}" autocomplete="off">
+  return `<div class="row"><input class="input" type="password" id="${id}" placeholder="${hasKey ? '••••••••••••••••••••••' : placeholder}" autocomplete="off"><button class="btn" id="${id}-save">Сохранить</button></div>
     <div class="note ${hasKey ? 'ok' : ''}">${hasKey ? icon('check', 14) + ' Ключ сохранён — введи новый, чтобы заменить' : 'Ключ не задан'}</div>`;
 }
 

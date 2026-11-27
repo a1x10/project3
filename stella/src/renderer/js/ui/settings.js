@@ -37,6 +37,7 @@ export class AIPage {
     if (this.tab !== 'main') return;
     const saveKey = async () => { const v = $('#or-key', r).value.trim(); if (!v) return; await this.ctx.updateSettings({ openrouterKey: v }); toast('Ключ сохранён', 'success'); this.render(); };
     $('#or-key', r).addEventListener('change', saveKey);
+    $('#or-key-save', r).onclick = saveKey;
     $('#or-key', r).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); });
     const mi = $('#model-input', r);
     mi.addEventListener('input', () => this.models && this._renderModels(mi.value));
@@ -94,7 +95,7 @@ export class VoicePage {
         ${block('Голос Марка', `<button class="btn sm" id="voices-load">${icon('refresh', 14)} Загрузить голоса из аккаунта</button> <span class="hint" id="el-usage"></span>`, voiceSel('voiceMark'))}
         ${range(s, 'volume', 'Громкость', '', 0, 1, 0.05, true)}
         ${adv(range(s, 'voiceStability', 'Стабильность', 'Ниже — эмоциональнее, выше — ровнее.', 0, 1, 0.05) + range(s, 'voiceStyle', 'Выразительность', '', 0, 1, 0.05) + range(s, 'voiceSpeed', 'Скорость речи', '', 0.7, 1.2, 0.05) + sw(s, 'systemVoiceFallback', 'Системный голос как запасной', 'Если ElevenLabs недоступен.'))}
-        ${block('Проверка', '', `<button class="btn" id="voice-test">${icon('play', 14)} Прослушать голос</button>`)}` },
+        ${block('Проверка', 'Если голос не работает — нажми «Проверить ключ»: покажу точную причину.', `<div class="row"><button class="btn" id="el-check">${icon('shield', 14)} Проверить ключ</button><button class="btn" id="voice-test">${icon('play', 14)} Прослушать голос</button></div>`)}` },
     ] : [
       { id: 'stt', icon: 'mic', label: 'Распознавание', html: `
         ${sw(s, 'wakeWordEnabled', 'Откликаться на имя', 'Микрофон слушает постоянно: скажи «Стелла, …» или «Марк, …». Распознавание — ElevenLabs Scribe (тратит символы тарифа).')}
@@ -107,11 +108,27 @@ export class VoicePage {
     const r = this.root;
     const saveKey = async () => { const v = $('#el-key', r).value.trim(); if (!v) return; await this.ctx.updateSettings({ elevenlabsKey: v }); toast('Ключ сохранён', 'success'); this.render(); };
     $('#el-key', r).addEventListener('change', saveKey);
+    $('#el-key-save', r).onclick = saveKey;
+    $('#el-check', r).onclick = () => this.checkKey();
     $('#el-key', r).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); });
     $('#voices-load', r).onclick = () => this.loadVoices(false);
     $('#voice-test', r).onclick = () => { this.ctx.speaker.stop(); this.ctx.say(this.ctx.persona().id === 'mark' ? 'Привет! Я Марк. Так звучит мой голос.' : 'Привет! Я Стелла, и так звучит мой голос!', { emotion: 'happy', action: 'wave' }); };
     if (s.hasElevenlabsKey) this.loadVoices(true);
   }
+  async checkKey() {
+    const btn = $('#el-check', this.root);
+    btn.disabled = true; btn.textContent = 'Проверяю…';
+    try {
+      const r = await window.stella.invoke('tts:check');
+      await modal({
+        title: `${icon(r.ok ? 'check' : 'alert')} ${r.ok ? 'ElevenLabs работает' : 'ElevenLabs: найдена проблема'}`,
+        body: `<div>${r.steps.map((st) => `<div class="set-row" style="padding:8px 0;border-bottom:1px solid var(--border);align-items:flex-start"><b style="min-width:170px">${st.ok ? '✅' : '❌'} ${escapeHtml(st.name)}</b><span style="flex:1;color:var(--${st.ok ? 'muted' : 'danger'})">${escapeHtml(st.info)}</span></div>`).join('')}</div>${r.ok ? '' : '<p class="hint">Важны «Пробный синтез» и первая ошибка в списке. «Тариф» и «Голоса» могут не работать у ключей с ограниченными правами — это не мешает озвучке.</p>'}`,
+      });
+      if (r.ok) { this.ctx.speaker.elevenFailed = false; this.ctx.say('Ура, голос работает!', { emotion: 'happy', action: 'victory' }); }
+    } catch (e) { toast(e.message, 'error', 8000); }
+    btn.disabled = false; btn.innerHTML = `${icon('shield', 14)} Проверить ключ`;
+  }
+
   async loadVoices(quiet) {
     try {
       this.voices ||= await window.stella.invoke('tts:voices');

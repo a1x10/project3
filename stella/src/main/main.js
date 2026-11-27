@@ -430,6 +430,7 @@ function registerIpc() {
     return buf ? buf.toString('base64') : null;
   });
   handle('tts:voices', () => { const s = store.getSettings(); return aiConn().cloud && !s.elevenlabsKey ? voice.cloudVoices({ base: s.cloudUrl, token: s.cloudToken }) : voice.listVoices({ apiKey: s.elevenlabsKey }); });
+  handle('tts:check', () => { const s = store.getSettings(); return voice.checkKey({ apiKey: s.elevenlabsKey, voiceId: s.persona === 'mark' ? s.voiceMark : s.voiceStella, modelId: s.elevenModel }); });
   handle('tts:subscription', () => voice.getSubscription({ apiKey: store.getSettings().elevenlabsKey }));
   handle('stt:transcribe', async (_e, { base64, mime }) => {
     const s = store.getSettings();

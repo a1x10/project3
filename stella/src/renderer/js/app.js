@@ -78,6 +78,7 @@ function applySettings() {
   document.body.classList.toggle('avatar-left', s.avatarSide === 'left');
   document.body.classList.toggle('avatar-right', s.avatarSide !== 'left');
   if (ctx.avatar) ctx.avatar.intensity = s.animationIntensity ?? 1;
+  if (ctx.speaker) ctx.speaker.elevenFailed = false; // после изменения настроек пробуем ElevenLabs снова
   $('#btn-companion').classList.toggle('on', !!s.companionMode);
   refreshChrome();
   refreshPills();

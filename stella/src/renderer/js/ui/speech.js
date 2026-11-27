@@ -46,7 +46,8 @@ export class Speaker {
       const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       return await this._ctx().decodeAudioData(bin.buffer);
     } catch (e) {
-      if (/401|402|ключ/i.test(e.message)) this.elevenFailed = true;
+      // не отключаем голос навсегда: только до смены настроек и только при проблеме с ключом/балансом
+      if (/ключ|разрешени|символы|тариф|оплат/i.test(e.message)) this.elevenFailed = true;
       this.onError?.(e.message);
       return null;
     }
