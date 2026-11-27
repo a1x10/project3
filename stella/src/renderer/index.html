@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file: 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: https:; media-src 'self' file: data: blob: https:; connect-src 'self' file: data: blob:; font-src 'self' data:">
+  <title>Stella</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "../../node_modules/three/build/three.module.js",
+      "three/addons/": "./vendor/three-addons/",
+      "@pixiv/three-vrm": "../../node_modules/@pixiv/three-vrm/lib/three-vrm.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="bg" class="bg"></div>
+
+  <!-- Заставка -->
+  <section id="splash" class="splash">
+    <div class="splash-center">
+      <div class="logo-orbit">
+        <div class="orbit o1"><span></span></div>
+        <div class="orbit o2"><span></span></div>
+        <svg class="logo-star" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 4 C54 36 64 46 96 50 C64 54 54 64 50 96 C46 64 36 54 4 50 C36 46 46 36 50 4Z" fill="currentColor"/></svg>
+      </div>
+      <h1 class="splash-title"><span id="splash-pre">твоя</span> <b id="splash-title">Стелла</b><i>✦</i></h1>
+      <p class="splash-sub" id="splash-sub">просыпается…</p>
+      <div class="splash-progress"><div id="splash-bar"></div></div>
+      <p class="splash-status" id="splash-status">Пробуждение…</p>
+    </div>
+  </section>
+
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="win-ctrl">
+        <button class="wc" id="wc-min" title="Свернуть"><i data-icon="minus" data-size="14"></i></button>
+        <button class="wc" id="wc-max" title="Развернуть"><i data-icon="square" data-size="12"></i></button>
+        <button class="wc close" id="wc-close" title="Закрыть"><i data-icon="x" data-size="14"></i></button>
+      </div>
+      <nav class="nav" id="tabs">
+        <button class="tab active" data-tab="home"><i data-icon="home"></i><span>Главная</span></button>
+        <button class="tab" data-tab="commands"><i data-icon="lines"></i><span>Команды</span></button>
+        <button class="tab" data-tab="model"><i data-icon="face"></i><span>Модель</span></button>
+        <button class="tab" data-tab="voice"><i data-icon="mic"></i><span>Голос</span></button>
+        <button class="tab" data-tab="ai"><i data-icon="sparkles"></i><span>ИИ</span></button>
+        <button class="tab" data-tab="computer"><i data-icon="cpu"></i><span>Компьютер</span></button>
+        <button class="tab" data-tab="workshop"><i data-icon="store"></i><span>Мастерская</span></button>
+        <button class="tab" data-tab="settings"><i data-icon="settings"></i><span>Настройки</span></button>
+      </nav>
+      <div class="top-right">
+        <button class="sq" id="btn-companion" title="Режим компаньона — аватар поверх всех окон"><i data-icon="grid"></i></button>
+        <button class="sq" id="btn-menu" title="Меню"><i data-icon="menu"></i></button>
+        <div class="menu" id="menu"></div>
+      </div>
+    </header>
+
+    <!-- Аватар поверх интерфейса -->
+    <div class="avatar-layer" id="avatar-layer">
+      <canvas id="avatar-canvas"></canvas>
+      <div class="subtitle" id="subtitle"></div>
+      <div class="listening" id="listening-badge"><span class="wave"><i></i><i></i><i></i><i></i></span><span id="listening-text">Слушаю…</span></div>
+      <div class="avatar-state" id="persona-chip"><span class="dot"></span><span id="persona-name">Стелла</span> · <span id="persona-state">онлайн</span></div>
+      <div class="dock" id="dock">
+        <button data-act="wave" title="Помахать">👋</button><button data-act="dance" title="Танец">💃</button><button data-act="heart" title="Сердечко">💖</button>
+        <button data-act="jump" title="Прыжок">🦘</button><button data-act="spin" title="Покружиться">🌀</button><button data-act="think" title="Задуматься">🤔</button>
+      </div>
+    </div>
+
+    <main class="pages" id="pages">
+      <!-- ГЛАВНАЯ -->
+      <section class="page home active" data-page="home" id="home">
+        <aside class="rail">
+          <button class="rail-btn active" id="btn-newchat" title="Новый чат"><i data-icon="sparkle"></i></button>
+          <button class="rail-btn" id="btn-history" title="История чатов"><i data-icon="panel"></i></button>
+          <button class="rail-btn" id="btn-rename" title="Переименовать чат"><i data-icon="edit"></i></button>
+        </aside>
+        <div class="history" id="history"></div>
+        <div class="home-inner">
+          <div class="hero">
+            <h1 class="hero-title"><span id="hero-pre">твоя</span> <b id="hero-name">Стелла</b><i>✦</i></h1>
+            <p class="hero-sub" id="hero-sub">Играть или работать?</p>
+          </div>
+          <div class="chat-top"><span id="chat-title">Новый чат</span><span class="chat-model" id="chat-sub"></span></div>
+          <div class="messages" id="messages"></div>
+          <div class="composer">
+            <div class="attach-preview" id="attach-preview"></div>
+            <div class="composer-box">
+              <button class="cbtn" id="btn-plus" title="Новый чат"><i data-icon="plus"></i></button>
+              <textarea id="input" rows="1" placeholder="Спроси о чём угодно..."></textarea>
+              <button class="cbtn framed" id="btn-slash" title="Команды"><i data-icon="slash"></i></button>
+              <button class="cbtn" id="btn-attach-screen" title="Показать экран ассистенту"><i data-icon="clip"></i></button>
+              <button class="cbtn" id="btn-quick" title="Быстрые действия"><i data-icon="chevron"></i></button>
+              <button class="cbtn" id="btn-mic" title="Нажми и говори"><i data-icon="mic"></i></button>
+              <button class="send-btn" id="btn-send" title="Отправить"><i data-icon="send"></i></button>
+            </div>
+            <div class="quick-pop" id="quick-pop"></div>
+          </div>
+          <div class="hero-links" id="hero-links">
+            <button data-link="last"><i data-icon="arrow"></i> Последний чат</button>
+            <button data-link="mic"><i data-icon="mic"></i> Включить микрофон</button>
+            <button data-link="skills">Что ты умеешь?</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="commands" id="page-commands"></section>
+      <section class="page" data-page="model" id="page-model"></section>
+      <section class="page" data-page="voice" id="page-voice"></section>
+      <section class="page" data-page="ai" id="page-ai"></section>
+      <section class="page" data-page="computer" id="page-computer"></section>
+      <section class="page" data-page="workshop" id="page-workshop"></section>
+      <section class="page" data-page="settings" id="page-settings"></section>
+    </main>
+
+    <footer class="statusbar">
+      <button class="sb-user" id="sb-user" title="Профиль"></button>
+      <div class="pills">
+        <button class="pill" data-pill="ai" title="Интеллект (OpenRouter)"><i data-icon="sparkles" data-size="14"></i>AI</button>
+        <button class="pill" data-pill="stt" title="Отклик на имя (распознавание речи)"><i data-icon="mic" data-size="14"></i>STT</button>
+        <button class="pill" data-pill="tts" title="Озвучка ответов"><i data-icon="volume" data-size="14"></i>TTS</button>
+      </div>
+      <button class="sb-help" id="sb-help"><i data-icon="info" data-size="14"></i> Поддержка</button>
+    </footer>
+  </div>
+
+  <section id="auth" class="auth hidden"></section>
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

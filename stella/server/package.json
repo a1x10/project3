@@ -1,0 +1,10 @@
+{
+  "name": "stella-cloud",
+  "version": "1.0.0",
+  "description": "Сервер Stella Cloud: аккаунты, подписки, лимиты и прокси к OpenRouter/ElevenLabs",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

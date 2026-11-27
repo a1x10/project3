@@ -1,0 +1,11 @@
+node_modules/
+dist/
+tests/e2e/screenshots/
+*.log
+release/
+# Модели с лицензией, запрещающей распространение — кладутся вручную (см. README)
+assets/models/stella.vrm
+assets/models/nick.vrm
+tools/source/
+server/data/
+server/.env

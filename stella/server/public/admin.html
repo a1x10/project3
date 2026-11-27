@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stella Cloud — админка</title>
+<style>
+:root{--bg:#fbfbfa;--card:#fff;--b:rgba(0,0,0,.09);--t:#1c1c1e;--m:#6b6b70;--a:#8b5cf6;--ok:#16a34a;--d:#dc2626;font:500 14px/1.5 'JetBrains Mono','Cascadia Mono',Consolas,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t)}
+header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:1px solid var(--b);background:#fff;position:sticky;top:0;z-index:2}
+header h1{margin:0;font:900 22px 'Segoe UI',system-ui,sans-serif}header .star{color:var(--a);font-size:22px}
+nav{display:flex;gap:4px;margin-left:24px}nav button{border:0;background:none;padding:8px 14px;border-radius:10px;font:inherit;font-weight:800;cursor:pointer;color:var(--m)}nav button.on{background:#ece9f8;color:var(--t)}
+main{max-width:1200px;margin:0 auto;padding:24px}
+.card{background:var(--card);border:1px solid var(--b);border-radius:20px;padding:20px;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.stat b{display:block;font:900 30px 'Segoe UI',system-ui}.stat span{color:var(--m);font-size:12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--b);vertical-align:middle;font-size:13px}th{color:var(--m);font-weight:700;font-size:12px}
+input,select,textarea{font:inherit;padding:8px 10px;border-radius:10px;border:1px solid var(--b);background:#fff}
+button.btn{font:inherit;font-weight:800;padding:8px 14px;border-radius:10px;border:1px solid var(--b);background:#f3f2ef;cursor:pointer}button.btn:hover{background:#e9e7e2}
+button.pri{background:#1c1c1e;color:#fff;border:0}button.dan{color:var(--d);border-color:rgba(220,38,38,.3);background:#fff}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:800;color:#fff}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.muted{color:var(--m)}.hidden{display:none}
+#login{max-width:380px;margin:12vh auto}#login h2{font:900 28px 'Segoe UI',system-ui;margin:0 0 12px}
+.err{color:var(--d);min-height:20px}.bar{height:6px;border-radius:6px;background:#eee;overflow:hidden;width:110px}.bar i{display:block;height:100%;background:var(--a)}
+code{background:#f3f2ef;padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<div id="login" class="card">
+  <h2>✦ Stella Cloud</h2><p class="muted">Вход для администратора</p>
+  <input id="pw" type="password" placeholder="ADMIN_PASSWORD" style="width:100%"><p class="err" id="lerr"></p>
+  <button class="btn pri" id="lgo" style="width:100%">Войти</button>
+</div>
+<div id="app" class="hidden">
+<header><span class="star">✦</span><h1>Stella Cloud</h1>
+  <nav><button data-v="dash" class="on">Обзор</button><button data-v="users">Пользователи</button><button data-v="plans">Тарифы</button><button data-v="codes">Коды подписок</button><button data-v="ips">IP</button><button data-v="log">Журнал</button></nav>
+  <button class="btn" id="logout" style="margin-left:auto">Выйти</button></header>
+<main>
+  <section data-s="dash"><div class="card stats" id="stats"></div>
+    <div class="card"><h3>Как подключить приложение</h3><p class="muted">В Stella: <b>Настройки → Stella Cloud</b> → адрес сервера <code id="srv"></code> → войти или зарегистрироваться. Ключи OpenRouter и ElevenLabs остаются на сервере, пользователи их не видят.</p></div></section>
+  <section data-s="users" class="hidden"><div class="card">
+    <div class="row" style="margin-bottom:12px"><input id="q" placeholder="Поиск по логину или IP"><span style="flex:1"></span>
+      <input id="nu" placeholder="логин"><input id="np" placeholder="пароль" type="password"><select id="nplan"></select><button class="btn pri" id="nadd">Создать</button></div>
+    <table><thead><tr><th>Пользователь</th><th>Тариф</th><th>Сообщения сегодня</th><th>Озвучка за месяц</th><th>IP</th><th></th></tr></thead><tbody id="users"></tbody></table></div></section>
+  <section data-s="plans" class="hidden"><div id="plans"></div><div class="card"><h3>Новый тариф</h3><div class="row"><input id="pid" placeholder="id (например vip)"><button class="btn pri" id="padd">Добавить</button></div></div></section>
+  <section data-s="codes" class="hidden"><div class="card"><h3>Выпустить коды подписки</h3><p class="muted">Пользователь вводит код в приложении (Настройки → Stella Cloud → «Активировать код») и получает тариф на N дней.</p>
+    <div class="row"><select id="cplan"></select><input id="cdays" type="number" value="30" style="width:90px"> дней × <input id="ccount" type="number" value="5" style="width:80px"> шт. <button class="btn pri" id="cgen">Выпустить</button></div></div>
+    <div class="card"><table><thead><tr><th>Код</th><th>Тариф</th><th>Дней</th><th>Использовал</th></tr></thead><tbody id="codes"></tbody></table></div></section>
+  <section data-s="ips" class="hidden"><div class="card"><h3>Заблокированные IP</h3><div class="row"><input id="bip" placeholder="1.2.3.4"><button class="btn dan" id="bban">Заблокировать</button></div><table><tbody id="ips"></tbody></table></div></section>
+  <section data-s="log" class="hidden"><div class="card"><table><thead><tr><th>Время</th><th>Событие</th><th>Пользователь</th><th>IP</th></tr></thead><tbody id="log"></tbody></table></div></section>
+</main></div>
+<script>
+let T = sessionStorage.getItem('sc_admin') || '';
+let PLANS = {};
+const $ = (s) => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'style') e.style.cssText = v; else e[k] = v; } for (const k of kids) e.append(k instanceof Node ? k : String(k ?? '')); return e; };
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && url !== '/api/admin/login') { T = ''; sessionStorage.removeItem('sc_admin'); show(); }
+  if (!r.ok) throw new Error(j.error?.message || r.status);
+  return j;
+}
+function show() { $('#login').classList.toggle('hidden', !!T); $('#app').classList.toggle('hidden', !T); if (T) view('dash'); }
+$('#lgo').onclick = async () => { try { T = (await api('POST', '/api/admin/login', { password: $('#pw').value })).token; sessionStorage.setItem('sc_admin', T); show(); } catch (e) { $('#lerr').textContent = e.message; } };
+$('#pw').onkeydown = (e) => { if (e.key === 'Enter') $('#lgo').click(); };
+$('#logout').onclick = () => { T = ''; sessionStorage.removeItem('sc_admin'); show(); };
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => view(b.dataset.v));
+$('#srv').textContent = location.origin;
+async function view(v) {
+  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  document.querySelectorAll('section').forEach((s) => s.classList.toggle('hidden', s.dataset.s !== v));
+  PLANS = await api('GET', '/api/admin/plans');
+  for (const sel of ['#nplan', '#cplan']) { $(sel).replaceChildren(...Object.values(PLANS).map((p) => el('option', { value: p.id, textContent: p.name }))); }
+  ({ dash, users, plans, codes, ips, log })[v]();
+}
+async function dash() {
+  const s = await api('GET', '/api/admin/stats');
+  const card = (n, t) => el('div', { className: 'stat' }, el('b', {}, n), el('span', {}, t));
+  $('#stats').replaceChildren(card(s.users, 'пользователей'), card(s.activeToday, 'активны сегодня'), card(s.messagesToday, 'сообщений сегодня'), card(s.codesFree, 'свободных кодов'),
+    ...Object.entries(s.byPlan).map(([p, n]) => card(n, 'на тарифе ' + (PLANS[p]?.name || p))), card(s.ai ? '✓' : '✗', 'ключ OpenRouter'), card(s.voice ? '✓' : '✗', 'ключ ElevenLabs'));
+}
+const bar = (v, max) => el('div', { className: 'bar', title: v + ' / ' + max }, el('i', { style: `width:${Math.min(100, max ? v / max * 100 : 0)}%` }));
+async function users() {
+  const list = await api('GET', '/api/admin/users');
+  const q = $('#q').value.toLowerCase();
+  $('#users').replaceChildren(...list.filter((u) => !q || u.username.toLowerCase().includes(q) || (u.ips || []).some((i) => i.includes(q))).map((u) => {
+    const plan = el('select', { onchange: async (e) => { await api('PATCH', '/api/admin/users/' + u.id, { plan: e.target.value }); users(); } }, ...Object.values(PLANS).map((p) => el('option', { value: p.id, textContent: p.name, selected: p.id === u.plan })));
+    const days = el('input', { type: 'number', placeholder: 'дней', style: 'width:70px', title: 'Срок тарифа в днях (0 — бессрочно)' });
+    const exp = u.planExpiresAt ? 'до ' + new Date(u.planExpiresAt).toLocaleDateString('ru-RU') : 'бессрочно';
+    return el('tr', {},
+      el('td', {}, el('b', {}, u.username), el('div', { className: 'muted' }, u.email || ''), u.banned ? el('span', { className: 'pill', style: 'background:#dc2626' }, 'заблокирован') : ''),
+      el('td', {}, el('div', { className: 'row' }, plan, days, el('button', { className: 'btn', textContent: 'Срок', onclick: async () => { await api('PATCH', '/api/admin/users/' + u.id, { days: Number(days.value) || 0 }); users(); } })), el('div', { className: 'muted' }, exp)),
+      el('td', {}, bar(u.usage.messagesToday, u.limits.messagesPerDay), el('span', { className: 'muted' }, `${u.usage.messagesToday} / ${u.limits.messagesPerDay}`)),
+      el('td', {}, bar(u.usage.ttsCharsMonth, u.limits.ttsCharsPerMonth), el('span', { className: 'muted' }, `${u.usage.ttsCharsMonth} / ${u.limits.ttsCharsPerMonth}`)),
+      el('td', {}, el('div', {}, u.lastIp || '—'), el('div', { className: 'muted', title: (u.ips || []).join(', ') }, (u.ipLock?.length ? '🔒 ' + u.ipLock.join(', ') : (u.ips || []).length + ' IP'))),
+      el('td', {}, el('div', { className: 'row' },
+        el('button', { className: 'btn', textContent: 'IP-замок', onclick: async () => { const v = prompt('Разрешённые IP через запятую (пусто — без ограничений)', (u.ipLock || []).join(', ')); if (v !== null) { await api('PATCH', '/api/admin/users/' + u.id, { ipLock: v }); users(); } } }),
+        el('button', { className: 'btn', textContent: 'Сброс лимитов', onclick: async () => { await api('PATCH', '/api/admin/users/' + u.id, { resetUsage: true }); users(); } }),
+        el('button', { className: 'btn', textContent: u.banned ? 'Разблокировать' : 'Бан', onclick: async () => { await api('PATCH', '/api/admin/users/' + u.id, { banned: !u.banned }); users(); } }),
+        el('button', { className: 'btn dan', textContent: '✕', title: 'Удалить', onclick: async () => { if (confirm('Удалить ' + u.username + '?')) { await api('DELETE', '/api/admin/users/' + u.id); users(); } } }))));
+  }));
+}
+$('#q').oninput = () => users();
+$('#nadd').onclick = async () => { try { await api('POST', '/api/admin/users', { username: $('#nu').value, password: $('#np').value, plan: $('#nplan').value }); $('#nu').value = $('#np').value = ''; users(); } catch (e) { alert(e.message); } };
+async function plans() {
+  $('#plans').replaceChildren(...Object.values(PLANS).map((p) => {
+    const f = (k, label, type = 'text') => el('label', { style: 'display:flex;flex-direction:column;gap:4px' }, el('span', { className: 'muted' }, label), el('input', { type, value: Array.isArray(p[k]) ? p[k].join(', ') : p[k], dataset: { k } }));
+    const box = el('div', { className: 'card' }, el('h3', {}, el('span', { className: 'pill', style: 'background:' + p.color }, p.id), ' ', p.name),
+      el('div', { className: 'row', style: 'align-items:flex-end' }, f('name', 'Название'), f('price', 'Цена'), f('color', 'Цвет'), f('messagesPerDay', 'Сообщений/день', 'number'), f('ttsCharsPerMonth', 'Символов озвучки/мес', 'number'), f('sttPerDay', 'Распознаваний/день', 'number'), f('models', 'Модели (* — все)')),
+      el('div', { className: 'row', style: 'margin-top:10px' }, el('label', {}, el('input', { type: 'checkbox', checked: p.tools !== false, dataset: { k: 'tools' } }), ' Управление ПК (инструменты)'),
+        el('button', { className: 'btn pri', textContent: 'Сохранить', onclick: async () => { const b = {}; box.querySelectorAll('[data-k]').forEach((i) => { b[i.dataset.k] = i.type === 'checkbox' ? i.checked : i.value; }); await api('PUT', '/api/admin/plans/' + p.id, b); view('plans'); } }),
+        el('button', { className: 'btn dan', textContent: 'Удалить', onclick: async () => { try { await api('DELETE', '/api/admin/plans/' + p.id); view('plans'); } catch (e) { alert(e.message); } } })));
+    return box;
+  }));
+}
+$('#padd').onclick = async () => { if ($('#pid').value) { await api('PUT', '/api/admin/plans/' + $('#pid').value, { name: $('#pid').value }); $('#pid').value = ''; view('plans'); } };
+async function codes() {
+  const list = await api('GET', '/api/admin/codes');
+  $('#codes').replaceChildren(...list.map((c) => el('tr', {}, el('td', {}, el('code', {}, c.code)), el('td', {}, PLANS[c.plan]?.name || c.plan), el('td', {}, c.days), el('td', {}, c.usedBy ? c.usedBy + ' · ' + new Date(c.usedAt).toLocaleDateString('ru-RU') : '—'))));
+}
+$('#cgen').onclick = async () => { await api('POST', '/api/admin/codes', { plan: $('#cplan').value, days: $('#cdays').value, count: $('#ccount').value }); codes(); };
+async function ips() {
+  const list = await api('GET', '/api/admin/ips');
+  $('#ips').replaceChildren(...list.map((ip) => el('tr', {}, el('td', {}, ip), el('td', {}, el('button', { className: 'btn', textContent: 'Разблокировать', onclick: async () => { await api('POST', '/api/admin/ips/unban', { ip }); ips(); } })))));
+}
+$('#bban').onclick = async () => { if ($('#bip').value) { await api('POST', '/api/admin/ips/ban', { ip: $('#bip').value.trim() }); $('#bip').value = ''; ips(); } };
+async function log() {
+  const list = await api('GET', '/api/admin/log');
+  const names = { register: 'регистрация', login: 'вход', login_fail: 'неудачный вход', chat: 'сообщение', redeem: 'активация кода', admin_login: 'вход админа', admin_fail: 'неудачный вход админа', admin_update: 'изменение пользователя' };
+  $('#log').replaceChildren(...list.map((e) => el('tr', {}, el('td', {}, new Date(e.ts).toLocaleString('ru-RU')), el('td', {}, names[e.type] || e.type, e.model ? ' · ' + e.model : '', e.code ? ' · ' + e.code : ''), el('td', {}, e.user || ''), el('td', {}, e.ip || ''))));
+}
+show();
+</script>
+</body>
+</html>
