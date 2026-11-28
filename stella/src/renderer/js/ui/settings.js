@@ -5,7 +5,7 @@ import { renderSettingsPage, block, sw, range, select, adv, bindKeys, keyField }
 import { profileSection } from './profile.js';
 import { cloudSection } from './cloud.js';
 
-const EL_MODELS = [['eleven_multilingual_v2', 'Multilingual v2 — лучшее качество'], ['eleven_flash_v2_5', 'Flash v2.5 — самая быстрая'], ['eleven_turbo_v2_5', 'Turbo v2.5 — баланс'], ['eleven_v3', 'Eleven v3 — максимум эмоций']];
+const EL_MODELS = [['eleven_v3', 'Eleven v3 — максимум эмоций (по умолчанию)'], ['eleven_multilingual_v2', 'Multilingual v2 — стабильнее, все ползунки'], ['eleven_flash_v2_5', 'Flash v2.5 — самая быстрая, дешевле'], ['eleven_turbo_v2_5', 'Turbo v2.5 — баланс']];
 const THEMES = [['white', 'Белый', '#fbfbfa'], ['paper', 'Бумага', '#f4efe4'], ['chalk', 'Мел', '#1b1b1d'], ['graphite', 'Графит', '#121212'], ['midnight', 'Полночь', '#151a24']];
 const ACCENTS = ['#8b5cf6', '#a78bfa', '#f472b6', '#38bdf8', '#34d399', '#fbbf24', '#fb7185', '#e4e4e7'];
 const ANIMS = [['wave', '👋', 'Помахать'], ['dance', '💃', 'Танец'], ['heart', '💖', 'Сердечко'], ['clap', '👏', 'Хлопки'], ['jump', '🦘', 'Прыжок'], ['spin', '🌀', 'Кружение'], ['bow', '🙇', 'Поклон'], ['think', '🤔', 'Думать'], ['victory', '✌️', 'Победа'], ['laugh', '😆', 'Смех'], ['shrug', '🤷', 'Пожать плечами'], ['stretch', '🙆', 'Потянуться'], ['nod', '🙂', 'Кивнуть'], ['shake', '🙅', 'Нет-нет'], ['shy', '☺️', 'Смущение'], ['sleepy', '😴', 'Сонная']];
@@ -94,7 +94,9 @@ export class VoicePage {
         ${block('Голос Стеллы', '', voiceSel('voiceStella'))}
         ${block('Голос Марка', `<button class="btn sm" id="voices-load">${icon('refresh', 14)} Загрузить голоса из аккаунта</button> <span class="hint" id="el-usage"></span>`, voiceSel('voiceMark'))}
         ${range(s, 'volume', 'Громкость', '', 0, 1, 0.05, true)}
-        ${adv(range(s, 'voiceStability', 'Стабильность', 'Ниже — эмоциональнее, выше — ровнее.', 0, 1, 0.05) + range(s, 'voiceStyle', 'Выразительность', '', 0, 1, 0.05) + range(s, 'voiceSpeed', 'Скорость речи', '', 0.7, 1.2, 0.05) + sw(s, 'systemVoiceFallback', 'Системный голос как запасной', 'Если ElevenLabs недоступен.'))}
+        ${String(s.elevenModel).startsWith('eleven_v3')
+          ? select(s, 'voiceStability', 'Stability (Eleven v3)', 'У v3 только три режима: Creative — эмоциональнее, Robust — ровнее и стабильнее.', [['0', 'Creative'], ['0.5', 'Natural'], ['1', 'Robust']]) + adv(sw(s, 'systemVoiceFallback', 'Системный голос как запасной', 'Если ElevenLabs недоступен.') + '<p class="hint">Выразительность и скорость у Eleven v3 не настраиваются — выбери Multilingual v2, если они нужны.</p>')
+          : adv(range(s, 'voiceStability', 'Стабильность', 'Ниже — эмоциональнее, выше — ровнее.', 0, 1, 0.05) + range(s, 'voiceStyle', 'Выразительность', '', 0, 1, 0.05) + range(s, 'voiceSpeed', 'Скорость речи', '', 0.7, 1.2, 0.05) + sw(s, 'systemVoiceFallback', 'Системный голос как запасной', 'Если ElevenLabs недоступен.'))}
         ${block('Проверка', 'Если голос не работает — нажми «Проверить ключ»: покажу точную причину.', `<div class="row"><button class="btn" id="el-check">${icon('shield', 14)} Проверить ключ</button><button class="btn" id="voice-test">${icon('play', 14)} Прослушать голос</button></div>`)}` },
     ] : [
       { id: 'stt', icon: 'mic', label: 'Распознавание', html: `
@@ -103,7 +105,7 @@ export class VoicePage {
         ${range(s, 'micSensitivity', 'Чувствительность микрофона', 'Выше — слышит тише, но чаще реагирует на шум.', 0, 1, 0.05, true)}` },
     ];
     renderSettingsPage(this.root, { title: 'Голос', tabs: [['tts', 'Синтез (TTS)'], ['stt', 'Распознавание (STT)']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
-    bindKeys(this.root, this.ctx);
+    bindKeys(this.root, this.ctx, (patch) => { if ('elevenModel' in patch) this.render(); });
     if (this.tab !== 'tts') return;
     const r = this.root;
     const saveKey = async () => { const v = $('#el-key', r).value.trim(); if (!v) return; await this.ctx.updateSettings({ elevenlabsKey: v }); toast('Ключ сохранён', 'success'); this.render(); };

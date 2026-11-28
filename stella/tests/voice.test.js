@@ -111,3 +111,21 @@ describe('Проверка ключа по шагам', () => {
   });
   it('пустой ключ', async () => expect((await checkKey({ apiKey: '' })).ok).toBe(false));
 });
+
+describe('Голос Стеллы по умолчанию: Вероника на Eleven v3', async () => {
+  const { voiceSettingsFor, STELLA_VOICE } = await import('../src/main/voice.js');
+  it('id голоса Вероники', () => expect(STELLA_VOICE).toBe('OowtKaZH9N7iuGbsd00l'));
+  it('v3: только stability, ровно 0 / 0.5 / 1', () => {
+    expect(voiceSettingsFor('eleven_v3', { stability: 1, style: 0.9, speed: 1.1 })).toEqual({ stability: 1 });
+    expect(voiceSettingsFor('eleven_v3', { stability: 0.45 })).toEqual({ stability: 0.5 });
+    expect(voiceSettingsFor('eleven_v3', { stability: 0.1 })).toEqual({ stability: 0 });
+  });
+  it('v2: все ползунки', () => expect(voiceSettingsFor('eleven_multilingual_v2', { stability: 0.4, similarity: 0.8, style: 0.3, speed: 1 })).toEqual({ stability: 0.4, similarity_boost: 0.8, style: 0.3, use_speaker_boost: true, speed: 1 }));
+  it('запрос как в ElevenLabs: Вероника, eleven_v3, stability 1.0, mp3 44.1 кГц', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer }));
+    await synthesize({ apiKey: 'k', voiceId: STELLA_VOICE, text: 'Привет! Это Стелла.', modelId: 'eleven_v3', stability: 1, fetchImpl });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://api.elevenlabs.io/v1/text-to-speech/OowtKaZH9N7iuGbsd00l?output_format=mp3_44100_128');
+    expect(JSON.parse(init.body)).toEqual({ text: 'Привет! Это Стелла.', model_id: 'eleven_v3', voice_settings: { stability: 1 } });
+  });
+});

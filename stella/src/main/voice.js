@@ -2,6 +2,19 @@
 // ElevenLabs: синтез речи (TTS), список голосов, распознавание (STT).
 const BASE = 'https://api.elevenlabs.io/v1';
 
+/** Голос Стеллы по умолчанию: «Veronica - Energetic, Clear and Rich» (русский, женский). */
+const STELLA_VOICE = 'OowtKaZH9N7iuGbsd00l';
+
+/**
+ * Настройки голоса под модель. У Eleven v3 есть только Stability и только три значения:
+ * 0 — Creative, 0.5 — Natural, 1 — Robust. Остальное (similarity, style, speed) шлём только для v2/Flash/Turbo.
+ */
+function voiceSettingsFor(modelId, { stability = 0.45, similarity = 0.8, style = 0.35, speed = 1 } = {}) {
+  const st = Math.min(1, Math.max(0, Number(stability) || 0));
+  if (/^eleven_v3/.test(modelId || '')) return { stability: st < 0.25 ? 0 : st < 0.75 ? 0.5 : 1 };
+  return { stability: st, similarity_boost: similarity, style, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, speed || 1)) };
+}
+
 const STATUS_HINTS = {
   invalid_api_key: 'Неверный ключ ElevenLabs. Скопируй ключ заново: elevenlabs.io → Developers → API Keys.',
   missing_permissions: 'У ключа ElevenLabs не хватает разрешений. В настройках ключа включи: Text to Speech, Speech to Text, Voices (Read) и User (Read) — или создай ключ без ограничений.',
@@ -65,7 +78,7 @@ async function synthesize({ apiKey, voiceId, text, modelId = 'eleven_multilingua
     body: JSON.stringify({
       text: t,
       model_id: modelId,
-      voice_settings: { stability, similarity_boost: similarity, style, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, speed)) },
+      voice_settings: voiceSettingsFor(modelId, { stability, similarity, style, speed }),
     }),
     signal,
   });
@@ -115,7 +128,7 @@ async function cloudSynthesize({ base, token, voiceId, text, modelId, stability,
   if (!t) return null;
   const res = await fetchImpl(base.replace(/\/$/, '') + '/api/tts', {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: t, voiceId, modelId, voiceSettings: { stability, similarity_boost: similarity, style, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, speed || 1)) } }),
+    body: JSON.stringify({ text: t, voiceId, modelId, voiceSettings: voiceSettingsFor(modelId, { stability, similarity, style, speed }) }),
   });
   if (!res.ok) throw cloudErr(res.status, await res.text());
   return Buffer.from(await res.arrayBuffer());
@@ -152,4 +165,4 @@ async function checkKey({ apiKey, voiceId, modelId, fetchImpl = fetch }) {
   return { ok: !!synth?.ok, steps };
 }
 
-module.exports = { checkKey, elError, cloudSynthesize, cloudTranscribe, cloudVoices, synthesize, listVoices, transcribe, getSubscription, cleanForSpeech, BASE };
+module.exports = { STELLA_VOICE, voiceSettingsFor, checkKey, elError, cloudSynthesize, cloudTranscribe, cloudVoices, synthesize, listVoices, transcribe, getSubscription, cleanForSpeech, BASE };

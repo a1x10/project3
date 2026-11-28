@@ -170,3 +170,26 @@ describe('Store: чаты, память, статистика', () => {
     expect(store.getSettings().persona).toBe('stella');
   });
 });
+
+describe('Голос по умолчанию и миграция', () => {
+  it('новые пользователи: Вероника, Eleven v3, Robust', () => {
+    const s = new Store(tmp()).getSettings();
+    expect(s).toMatchObject({ voiceStella: 'OowtKaZH9N7iuGbsd00l', elevenModel: 'eleven_v3', voiceStability: 1 });
+  });
+  it('старые настройки по умолчанию переводятся на Веронику', () => {
+    const d = tmp();
+    fs.writeFileSync(path.join(d, 'stella-data.json'), JSON.stringify({ settings: { voiceStella: '21m00Tcm4TlvDq8ikWAM', elevenModel: 'eleven_multilingual_v2', voiceStability: 0.45 } }));
+    expect(new Store(d).getSettings()).toMatchObject({ voiceStella: 'OowtKaZH9N7iuGbsd00l', elevenModel: 'eleven_v3', voiceStability: 1 });
+  });
+  it('свой выбор пользователя не трогаем', () => {
+    const d = tmp();
+    fs.writeFileSync(path.join(d, 'stella-data.json'), JSON.stringify({ settings: { voiceStella: 'my-voice', elevenModel: 'eleven_flash_v2_5', voiceStability: 0.3 } }));
+    expect(new Store(d).getSettings()).toMatchObject({ voiceStella: 'my-voice', elevenModel: 'eleven_flash_v2_5', voiceStability: 0.3 });
+  });
+  it('миграция один раз: после неё можно вернуть старый голос', () => {
+    const d = tmp();
+    const s = new Store(d);
+    s.updateSettings({ voiceStella: '21m00Tcm4TlvDq8ikWAM' });
+    expect(new Store(d).getSettings().voiceStella).toBe('21m00Tcm4TlvDq8ikWAM');
+  });
+});

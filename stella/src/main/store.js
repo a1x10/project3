@@ -26,10 +26,10 @@ const DEFAULT_SETTINGS = Object.freeze({
   // Голос
   ttsEnabled: true,
   elevenlabsKey: '',
-  elevenModel: 'eleven_multilingual_v2',
-  voiceStella: '21m00Tcm4TlvDq8ikWAM',
+  elevenModel: 'eleven_v3',
+  voiceStella: 'OowtKaZH9N7iuGbsd00l', // Veronica - Energetic, Clear and Rich
   voiceMark: 'pNInz6obpgDQGcFmaJgB',
-  voiceStability: 0.45,
+  voiceStability: 1,
   voiceSimilarity: 0.8,
   voiceStyle: 0.35,
   voiceSpeed: 1.0,
@@ -75,7 +75,7 @@ class Store {
     this.dir = dir;
     this.file = path.join(dir, 'stella-data.json');
     this.crypto = crypto;
-    this.data = { settings: { ...DEFAULT_SETTINGS }, accounts: [], currentAccount: null, conversations: {}, memories: {}, stats: {}, actionLog: [], commands: {} };
+    this.data = { settings: { ...DEFAULT_SETTINGS }, accounts: [], currentAccount: null, conversations: {}, memories: {}, stats: {}, actionLog: [], commands: {}, settingsVersion: 2 };
     this._load();
   }
 
@@ -84,6 +84,8 @@ class Store {
       if (!fs.existsSync(this.file)) return;
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       this.data = { ...this.data, ...raw, settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) } };
+      this.data.settingsVersion = raw.settingsVersion || 1; // в старых файлах версии нет
+      migrateVoice(this.data);
       for (const k of SECRET_KEYS) {
         const v = this.data.settings[k];
         if (typeof v === 'string' && v.startsWith('enc:') && this.crypto.decrypt) {
@@ -242,7 +244,7 @@ class Store {
   }
 
   resetAll() {
-    this.data = { settings: { ...DEFAULT_SETTINGS }, accounts: [], currentAccount: null, conversations: {}, memories: {}, stats: {}, actionLog: [], commands: {} };
+    this.data = { settings: { ...DEFAULT_SETTINGS }, accounts: [], currentAccount: null, conversations: {}, memories: {}, stats: {}, actionLog: [], commands: {}, settingsVersion: 2 };
     this.save();
   }
 }
@@ -260,7 +262,17 @@ function normalizeCommand(cmd = {}) {
   return { id: cmd.id || 'cmd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, triggers, actions, enabled: cmd.enabled !== false };
 }
 
+/** v2: голос Стеллы по умолчанию — Вероника на Eleven v3. Меняем только то, что пользователь не трогал. */
+function migrateVoice(data) {
+  if ((data.settingsVersion || 1) >= 2) return;
+  const s = data.settings;
+  if (s.voiceStella === '21m00Tcm4TlvDq8ikWAM') s.voiceStella = DEFAULT_SETTINGS.voiceStella;
+  if (s.elevenModel === 'eleven_multilingual_v2') s.elevenModel = DEFAULT_SETTINGS.elevenModel;
+  if (s.voiceStability === 0.45) s.voiceStability = DEFAULT_SETTINGS.voiceStability;
+  data.settingsVersion = 2;
+}
+
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 function maskKey(k) { return k.length <= 8 ? '••••' : k.slice(0, 5) + '••••••' + k.slice(-4); }
 
-module.exports = { Store, DEFAULT_SETTINGS, SECRET_KEYS, maskKey, normalizeCommand, ACTION_TYPES };
+module.exports = { Store, DEFAULT_SETTINGS, SECRET_KEYS, maskKey, normalizeCommand, ACTION_TYPES, migrateVoice };
