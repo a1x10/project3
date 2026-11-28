@@ -249,6 +249,18 @@ function showSubtitle(text) {
   else subTimer = setTimeout(() => el.classList.remove('show'), 1200);
 }
 
+// ---------- что услышал микрофон ----------
+ctx.heard = [];
+function onHeard(h) {
+  ctx.heard.unshift({ ...h, ts: Date.now() });
+  ctx.heard.length = Math.min(ctx.heard.length, 30);
+  window.dispatchEvent(new CustomEvent('stella:heard'));
+  const name = ctx.persona().name;
+  if (h.result === 'command') showSubtitle(`🎤 «${h.command}»`);
+  else if (h.result === 'no-name') { showSubtitle(`🎤 «${h.text}»`); toast(`Услышала «${h.text}», но без имени. Скажи: «${name}, ${h.text}» — или включи «Отвечать без имени» во вкладке Голос → Распознавание.`, 'info', 7000); }
+  else if (h.result === 'empty' || h.result === 'short') toast('Ничего не расслышала — скажи погромче или ближе к микрофону', 'info', 4000);
+}
+
 // ---------- мост на телефон (AR) ----------
 function arSend(ev) { if (ctx.arClients > 0) window.stella.invoke('ar:broadcast', ev).catch(() => {}); }
 function bindArBridge() {
@@ -387,6 +399,7 @@ async function main() {
     isBusy: () => ctx.speaker.busy || ctx.chat?.busy,
     onCommand: (text) => { ctx.presence.userInteracted(); switchTab('home'); ctx.chat.send(text, { voice: true }); },
     onWake: () => ctx.presence.onWake(),
+    onHeard: (h) => onHeard(h),
     onState: (s) => { micState = s; $('#listening-badge').classList.toggle('show', ['hearing', 'recognizing', 'ptt'].includes(s)); $('#listening-text').textContent = s === 'recognizing' ? 'Распознаю…' : 'Слушаю…'; setState(chatState); },
     onError: (m) => toast(m, 'error', 6000),
   });

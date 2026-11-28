@@ -338,6 +338,28 @@ try {
     assert.equal(refused.length, 0);
     assert.ok(fs.existsSync(os.homedir()));
   });
+  await step('голос: без имени — подсказка, с именем — ответ, во время ответа — очередь', async () => {
+    await win.click('.tab[data-tab="home"]');
+    await win.click('#btn-plus');
+    // распознавание вернуло фразу без имени
+    await win.evaluate(() => window.__stella.listener.onHeard({ text: 'открой ютуб', result: 'no-name' }));
+    await win.waitForFunction(() => [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('без имени')), null, { timeout: 5000 });
+    // команда с именем → ответ модели
+    const before = await win.evaluate(() => document.querySelectorAll('.msg.assistant').length);
+    await win.evaluate(() => window.__stella.listener.onCommand('привет', 'Стелла, привет'));
+    // вторая команда во время ответа встаёт в очередь
+    await win.waitForFunction(() => window.__stella.chat.busy, null, { timeout: 5000 });
+    await win.evaluate(() => window.__stella.chat.send('как дела', { voice: true }));
+    await win.waitForFunction((n) => !window.__stella.chat.busy && document.querySelectorAll('.msg.assistant').length >= n + 2, before, { timeout: 30000 });
+    const users = await win.evaluate(() => [...document.querySelectorAll('.msg.user .bubble')].slice(-2).map((b) => b.textContent.trim()));
+    assert.deepEqual(users, ['привет', 'как дела']);
+    // история распознавания во вкладке Голос
+    await win.click('.tab[data-tab="voice"]');
+    await win.click('#page-voice [data-ptab="stt"]');
+    await win.waitForSelector('#heard-log');
+    assert.match(await win.textContent('#heard-log'), /открой ютуб.*нет имени/s);
+    await shot('25-heard-log');
+  });
   await step('нет ошибок JavaScript на странице', async () => assert.deepEqual(errors, []));
 } finally {
   await app.close();

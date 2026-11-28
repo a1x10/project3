@@ -39,3 +39,18 @@ describe('Упоминание имени и утилиты', () => {
   it('normalize: ё, регистр, пунктуация', () => expect(normalize('  Ёжик, СТЕЛЛА!! ')).toBe('ежик стелла'));
   it('levenshtein', () => { expect(levenshtein('стелла', 'стела')).toBe(1); expect(levenshtein('', 'abc')).toBe(3); expect(levenshtein('кот', 'кот')).toBe(0); });
 });
+
+describe('Что делать с услышанной фразой', async () => {
+  const { decideVoice } = await import('../src/renderer/js/ui/listen.js');
+  const o = { names: S, fromWake: true, requireName: true };
+  it('с именем — команда без имени', () => expect(decideVoice('Стелла, открой ютуб', o)).toEqual({ result: 'command', command: 'открой ютуб' }));
+  it('без имени — пропуск (видно в истории, а не молча)', () => expect(decideVoice('открой ютуб', o).result).toBe('no-name'));
+  it('только имя — ждём команду', () => expect(decideVoice('Стелла!', o).result).toBe('wake'));
+  it('после имени следующая фраза без имени — команда', () => expect(decideVoice('открой ютуб', { ...o, awaiting: true })).toEqual({ result: 'command', command: 'открой ютуб' }));
+  it('режим «без имени»: любая фраза — команда, имя убирается', () => {
+    expect(decideVoice('открой ютуб', { ...o, requireName: false })).toEqual({ result: 'command', command: 'открой ютуб' });
+    expect(decideVoice('Стелла, открой ютуб', { ...o, requireName: false }).command).toBe('открой ютуб');
+  });
+  it('кнопка микрофона: имя не нужно', () => expect(decideVoice('сколько времени', { ...o, fromWake: false })).toEqual({ result: 'command', command: 'сколько времени' }));
+  it('пустой или мусорный текст', () => { expect(decideVoice('', o).result).toBe('empty'); expect(decideVoice(' ... ', o).result).toBe('empty'); expect(decideVoice('(музыка)', { ...o, fromWake: false }).result).toBe('command'); });
+});

@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   systemVoiceFallback: true,
   // Слух
   wakeWordEnabled: false,
+  wakeRequireName: true,
   sttLanguage: 'rus',
   micSensitivity: 0.5,
   // Команды

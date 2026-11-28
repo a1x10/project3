@@ -5,9 +5,28 @@ import { detectWakeWord } from '../core/wakeword.js';
 
 const TARGET_RATE = 16000;
 
+/**
+ * Что делать с распознанной фразой.
+ * @returns {{result: 'empty'|'command'|'wake'|'no-name', command: string}}
+ */
+export function decideVoice(text, { fromWake, requireName = true, names = [], awaiting = false }) {
+  const t = String(text || '').trim();
+  if (!t || !/[\p{L}\p{N}]/u.test(t)) return { result: 'empty', command: '' };
+  if (!fromWake || awaiting || !requireName) {
+    // имя в начале всё равно убираем, чтобы оно не мешало команде
+    const w = detectWakeWord(t, names);
+    if (w.matched && w.onlyName && fromWake && !awaiting) return { result: 'wake', command: '' };
+    return { result: 'command', command: w.matched && w.command ? w.command : t };
+  }
+  const w = detectWakeWord(t, names);
+  if (!w.matched) return { result: 'no-name', command: '' };
+  if (w.onlyName) return { result: 'wake', command: '' };
+  return { result: 'command', command: w.command };
+}
+
 export class Listener {
-  constructor({ getSettings, getNames, onCommand, onWake, onState, onError, isBusy }) {
-    Object.assign(this, { getSettings, getNames, onCommand, onWake, onState, onError, isBusy });
+  constructor({ getSettings, getNames, onCommand, onWake, onState, onError, isBusy, onHeard }) {
+    Object.assign(this, { getSettings, getNames, onCommand, onWake, onState, onError, isBusy, onHeard });
     this.mode = 'off'; // off | ptt | wake
     this.awaitingCommandUntil = 0;
   }
@@ -47,7 +66,7 @@ export class Listener {
 
   async _recognize(parts, fromWake) {
     const total = parts.reduce((n, p) => n + p.length, 0);
-    if (total < this.ctx.sampleRate * 0.25) return;
+    if (total < this.ctx.sampleRate * 0.25) { if (!fromWake) this.onHeard?.({ text: '', result: 'short' }); return; }
     const pcm = new Float32Array(total);
     let o = 0; for (const p of parts) { pcm.set(p, o); o += p.length; }
     const wav = encodeWav(downsample(pcm, this.ctx.sampleRate, TARGET_RATE), TARGET_RATE);
@@ -55,16 +74,15 @@ export class Listener {
     try {
       this.onState?.('recognizing');
       text = await window.stella.invoke('stt:transcribe', { base64: bytesToBase64(wav), mime: 'audio/wav' });
-    } catch (e) { this.onError?.(e.message); this.onState?.(this.mode === 'wake' ? 'wake' : 'off'); return; }
+    } catch (e) {
+      this.onHeard?.({ text: '', result: 'error', error: e.message });
+      this.onError?.(e.message); this.onState?.(this.mode === 'wake' ? 'wake' : 'off'); return;
+    }
     this.onState?.(this.mode === 'wake' ? 'wake' : 'off');
-    if (!text) return;
-    if (!fromWake) { this.onCommand?.(text); return; }
-    const now = performance.now();
-    if (now < this.awaitingCommandUntil) { this.awaitingCommandUntil = 0; this.onCommand?.(text); return; }
-    const w = detectWakeWord(text, this.getNames());
-    if (!w.matched) return;
-    if (w.onlyName) { this.awaitingCommandUntil = now + 9000; this.onWake?.(); return; }
-    this.onCommand?.(w.command, text);
+    const d = decideVoice(text, { fromWake, requireName: this.getSettings().wakeRequireName !== false, names: this.getNames(), awaiting: performance.now() < this.awaitingCommandUntil });
+    this.onHeard?.({ text, result: d.result, command: d.command });
+    if (d.result === 'command') { this.awaitingCommandUntil = 0; this.onCommand?.(d.command, text); }
+    if (d.result === 'wake') { this.awaitingCommandUntil = performance.now() + 15000; this.onWake?.(); }
   }
 
   // --- нажми и говори ---

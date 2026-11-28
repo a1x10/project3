@@ -101,12 +101,14 @@ export class VoicePage {
     ] : [
       { id: 'stt', icon: 'mic', label: 'Распознавание', html: `
         ${sw(s, 'wakeWordEnabled', 'Откликаться на имя', 'Микрофон слушает постоянно: скажи «Стелла, …» или «Марк, …». Распознавание — ElevenLabs Scribe (тратит символы тарифа).')}
+        ${sw(s, 'wakeRequireName', 'Требовать имя', 'Включено: отвечает только на «Стелла, …». Выключено: любая услышанная фраза — команда (удобно, если дома тихо).')}
+        ${block('Что я услышала', 'Последние распознанные фразы и что с ними произошло — если не отвечает, смотри сюда.', '<div id="heard-log"></div>')}
         ${select(s, 'sttLanguage', 'Язык распознавания', '', [['rus', 'Русский'], ['eng', 'English'], ['ukr', 'Українська'], ['auto', 'Автоопределение']])}
         ${range(s, 'micSensitivity', 'Чувствительность микрофона', 'Выше — слышит тише, но чаще реагирует на шум.', 0, 1, 0.05, true)}` },
     ];
     renderSettingsPage(this.root, { title: 'Голос', tabs: [['tts', 'Синтез (TTS)'], ['stt', 'Распознавание (STT)']], active: this.tab, onTab: (t) => { this.tab = t; this.render(); }, sections });
     bindKeys(this.root, this.ctx, (patch) => { if ('elevenModel' in patch) this.render(); });
-    if (this.tab !== 'tts') return;
+    if (this.tab !== 'tts') { this.renderHeard(); window.removeEventListener('stella:heard', this._onHeard); this._onHeard = () => this.renderHeard(); window.addEventListener('stella:heard', this._onHeard); return; }
     const r = this.root;
     const saveKey = async () => { const v = $('#el-key', r).value.trim(); if (!v) return; await this.ctx.updateSettings({ elevenlabsKey: v }); toast('Ключ сохранён', 'success'); this.render(); };
     $('#el-key', r).addEventListener('change', saveKey);
@@ -117,6 +119,14 @@ export class VoicePage {
     $('#voice-test', r).onclick = () => { this.ctx.speaker.stop(); this.ctx.say(this.ctx.persona().id === 'mark' ? 'Привет! Я Марк. Так звучит мой голос.' : 'Привет! Я Стелла, и так звучит мой голос!', { emotion: 'happy', action: 'wave' }); };
     if (s.hasElevenlabsKey) this.loadVoices(true);
   }
+  renderHeard() {
+    const el = $('#heard-log', this.root);
+    if (!el) return;
+    const R = { command: ['✅', 'выполняю как команду'], 'no-name': ['🔇', 'нет имени — пропущено'], wake: ['👂', 'позвали по имени — жду команду 15 сек'], empty: ['…', 'пусто'], short: ['…', 'слишком коротко'], error: ['❌', 'ошибка распознавания'] };
+    const list = this.ctx.heard || [];
+    el.innerHTML = list.length ? list.slice(0, 12).map((x) => `<div class="set-row" style="padding:6px 0;border-bottom:1px dashed var(--border)"><span style="flex:1">${R[x.result]?.[0] || ''} «${escapeHtml(x.text || '')}»</span><span class="hint">${escapeHtml(x.error || R[x.result]?.[1] || '')} · ${new Date(x.ts).toLocaleTimeString('ru-RU')}</span></div>`).join('') : '<p class="hint" style="margin:0">Пока ничего не слышала. Включи «Откликаться на имя» или нажми микрофон на главной.</p>';
+  }
+
   async checkKey() {
     const btn = $('#el-check', this.root);
     btn.disabled = true; btn.textContent = 'Проверяю…';

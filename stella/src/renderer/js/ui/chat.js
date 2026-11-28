@@ -229,7 +229,10 @@ export class ChatView {
   }
 
   async send(text, { voice = false } = {}) {
-    if (this.busy) { toast('Подожди, я ещё отвечаю на прошлое сообщение', 'info'); return; }
+    if (this.busy) {
+      if (voice) { (this.queue ||= []).push(text); toast(`Запомнила: «${text}» — отвечу сразу после этого ответа`, 'info'); return; }
+      toast('Подожди, я ещё отвечаю на прошлое сообщение', 'info'); return;
+    }
     this.ctx.speaker.stop();
     this.ctx.presence?.userInteracted();
     if (await this.runCustomCommand(text)) return;
@@ -260,6 +263,15 @@ export class ChatView {
 
   _setBusy(b) {
     this.busy = b;
+    clearInterval(this._watch);
+    if (b) {
+      // сторож: если модель долго молчит — отменяем, а не висим бесконечно
+      this._lastEvent = Date.now();
+      this._watch = setInterval(() => {
+        if (document.querySelector('.modal-backdrop')) { this._lastEvent = Date.now(); return; } // ждём подтверждения действия
+        if (Date.now() - this._lastEvent > 120000) { clearInterval(this._watch); this._timedOut = true; this.abort(); }
+      }, 5000);
+    } else if (this.queue?.length) setTimeout(() => this.send(this.queue.shift(), { voice: true }), 400);
     this.els.composer.classList.toggle('busy', b);
     this.els.send.classList.toggle('stop', b);
     this.els.send.innerHTML = icon(b ? 'stop' : 'send', 18);
@@ -270,6 +282,7 @@ export class ChatView {
   _bindStream() {
     const on = window.stella.on;
     on('chat:token', ({ token }) => {
+      this._lastEvent = Date.now();
       const r = this.req; if (!r) return;
       this._typing(false);
       r.raw += token;
@@ -279,6 +292,7 @@ export class ChatView {
       this._renderLive();
     });
     on('chat:tool', (t) => {
+      this._lastEvent = Date.now();
       const r = this.req; if (!r) return;
       this._typing(false);
       if (t.phase === 'start') {
@@ -311,10 +325,12 @@ export class ChatView {
     const r = this.req;
     this._typing(false);
     if (r) {
-      r.turn.querySelector('.bubble').appendChild(h(`<div class="warn-line">${aborted ? '⏹ Остановлено' : '⚠️ ' + escapeHtml(message)}</div>`));
+      const why = this._timedOut ? '⏱ Модель не ответила за 2 минуты — попробуй ещё раз или выбери другую модель во вкладке «ИИ»' : aborted ? '⏹ Остановлено' : '⚠️ ' + escapeHtml(message);
+      this._timedOut = false;
+      r.turn.querySelector('.bubble').appendChild(h(`<div class="warn-line">${why}</div>`));
       this.req = null;
     }
-    if (!aborted) { this.ctx.avatar.setEmotion('sad', 4); this.ctx.avatar.play('shrug'); }
+    if (!aborted) { this.ctx.avatar.setEmotion('sad', 4); this.ctx.avatar.play('shrug'); this.ctx.bubble?.('⚠️ ' + String(message).slice(0, 140)); }
     this._setBusy(false);
   }
 

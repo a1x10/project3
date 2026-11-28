@@ -64,8 +64,9 @@ export class Presence {
   onWake() {
     const { avatar, settings } = this.ctx;
     avatar.setEmotion('happy', 4);
-    avatar.play('wave');
-    this.ctx.say(pick(linesFor(settings.persona, 'wake')), {});
+    avatar.play('nod');
+    // не говорим вслух: пока она говорит, микрофон не слушает — а человек хочет сразу сказать команду
+    this.ctx.bubble?.(pick(linesFor(settings.persona, 'wake')) + ' 🎤');
   }
 
   async tick() {
